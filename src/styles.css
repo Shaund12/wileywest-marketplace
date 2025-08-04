@@ -1393,3 +1393,23 @@ body {
     font-size: 0.7rem;
   }
 }
+
+/* Page Loader for Lazy Loading */
+.page-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  gap: 16px;
+}
+
+.page-loader p {
+  color: var(--text-muted);
+  font-size: 1rem;
+}
+
+.page-loader .loader {
+  width: 40px;
+  height: 40px;
+}

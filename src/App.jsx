@@ -1,5 +1,5 @@
 import './styles.css';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ethers } from 'ethers';
 import MarketplaceAbi from './abi/Marketplace.json';
@@ -9,17 +9,27 @@ import { createClient } from '@supabase/supabase-js';
 import Navigation from './components/Navigation';
 import Footer from './components/Footer';
 import ErrorBoundary, { WalletErrorBoundary, MarketplaceErrorBoundary } from './components/ErrorBoundary';
-import HomePage from './pages/HomePage';
-import ProfilePage from './pages/ProfilePage';
-import MarketplacePage from './pages/MarketplacePage';
-import HotListingsPage from './pages/HotListingsPage';
-import TermsPage from './pages/TermsPage';
-import PrivacyPage from './pages/PrivacyPage';
-import SellPage from './pages/SellPage';
+
+// Lazy loaded pages for code splitting
+const HomePage = React.lazy(() => import('./pages/HomePage'));
+const ProfilePage = React.lazy(() => import('./pages/ProfilePage'));
+const MarketplacePage = React.lazy(() => import('./pages/MarketplacePage'));
+const HotListingsPage = React.lazy(() => import('./pages/HotListingsPage'));
+const TermsPage = React.lazy(() => import('./pages/TermsPage'));
+const PrivacyPage = React.lazy(() => import('./pages/PrivacyPage'));
+const SellPage = React.lazy(() => import('./pages/SellPage'));
 
 // Providers
 import { WalletProvider } from './context/WalletContext';
 import { MarketplaceProvider } from './context/MarketplaceContext';
+
+// Loading component for lazy loaded pages
+const PageLoader = () => (
+  <div className="page-loader">
+    <div className="loader"></div>
+    <p>Loading...</p>
+  </div>
+);
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL || '',
@@ -41,15 +51,17 @@ function App() {
                   <Navigation />
                   <div className="main-content">
                     <ErrorBoundary>
-                      <Routes>
-                        <Route path="/" element={<HomePage />} />
-                        <Route path="/profile" element={<ProfilePage />} />
-                        <Route path="/marketplace" element={<MarketplacePage />} />
-                        <Route path="/hot-listings" element={<HotListingsPage />} />
-                        <Route path="/sell" element={<SellPage />} />
-                        <Route path="/terms" element={<TermsPage />} />
-                        <Route path="/privacy" element={<PrivacyPage />} />
-                      </Routes>
+                      <Suspense fallback={<PageLoader />}>
+                        <Routes>
+                          <Route path="/" element={<HomePage />} />
+                          <Route path="/profile" element={<ProfilePage />} />
+                          <Route path="/marketplace" element={<MarketplacePage />} />
+                          <Route path="/hot-listings" element={<HotListingsPage />} />
+                          <Route path="/sell" element={<SellPage />} />
+                          <Route path="/terms" element={<TermsPage />} />
+                          <Route path="/privacy" element={<PrivacyPage />} />
+                        </Routes>
+                      </Suspense>
                     </ErrorBoundary>
                   </div>
                   <Footer />

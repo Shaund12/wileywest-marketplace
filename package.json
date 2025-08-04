@@ -12,6 +12,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",
     "eslint": "^9.32.0",
+    "terser": "^5.43.1",
     "vite": "^6.0.0"
   },
   "scripts": {
