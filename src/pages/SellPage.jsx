@@ -3,6 +3,12 @@ import { ethers } from 'ethers';
 import { useSearchParams } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import { 
+  getTokenPriceWithFallback, 
+  getMultipleTokenPrices, 
+  clearPriceCache,
+  getPriceCacheStats 
+} from '../services/priceService';
 
 // ERC721/ERC1155 metadata interfaces
 const ERC721_ABI = [
@@ -24,13 +30,6 @@ const ERC20_ABI = [
 // Token addresses with proper EIP-55 checksums
 const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
 const USDC_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
-
-// Default token prices for testing
-const DEFAULT_TOKEN_PRICES = {
-    'VTRU': 25.0,
-    'WVTRU': 25.0,
-    'USDC': 1.0
-};
 
 function SellPage() {
     const { createListing, status, setStatus } = useMarketplace();
@@ -168,7 +167,7 @@ function SellPage() {
         }
     }, [provider]);
 
-    // Live price ticker
+    // Live price ticker with real data
     useEffect(() => {
         let intervalId;
 
@@ -176,10 +175,10 @@ function SellPage() {
             // Initial update
             updateLivePrices();
 
-            // Set up interval for updates
+            // Set up interval for updates (longer interval for real API calls)
             intervalId = setInterval(() => {
                 updateLivePrices();
-            }, 15000); // Update every 15 seconds
+            }, 60000); // Update every 60 seconds for real price data
         }
 
         return () => {
@@ -194,58 +193,77 @@ function SellPage() {
         }
     }, [tokenList]);
 
-    // Update live prices - simulates price fluctuations for demonstration
-    const updateLivePrices = () => {
+    // Update live prices with real data
+    const updateLivePrices = async () => {
         try {
             const now = new Date();
-            const previousPrices = { ...livePrice };
-            const newPrices = {};
-            const changes = {};
+            setStatus('Updating prices...');
 
-            // For each token with a price
-            for (const [address, token] of Object.entries(tokenList)) {
-                if (token.price) {
-                    // Add small random fluctuation (-2% to +2%)
-                    const fluctuation = (Math.random() * 4 - 2) / 100;
-                    const newPrice = token.price * (1 + fluctuation);
+            // Clear cache to force fresh data (optional)
+            // clearPriceCache();
 
-                    newPrices[address] = newPrice;
+            const tokenAddresses = Object.keys(tokenList);
+            const pricePromises = tokenAddresses.map(async (address) => {
+                const token = tokenList[address];
+                const priceData = await getTokenPriceWithFallback(provider, address, token.symbol);
+                return { address, priceData };
+            });
 
-                    // Calculate price change
-                    if (previousPrices[address]) {
-                        const changePercent = ((newPrice - previousPrices[address]) / previousPrices[address]) * 100;
-                        changes[address] = changePercent;
-                    } else {
-                        changes[address] = 0;
-                    }
+            const priceResults = await Promise.allSettled(pricePromises);
+            const newPrices = { ...livePrice };
+            const changes = { ...priceChange };
+            const updatedTokens = { ...tokenList };
+            const updatedPriceSource = { ...priceSource };
 
-                    // Update token price in tokenList
-                    setTokenList(prev => ({
-                        ...prev,
-                        [address]: {
-                            ...prev[address],
-                            price: newPrice
+            priceResults.forEach((result, index) => {
+                if (result.status === 'fulfilled') {
+                    const { address, priceData } = result.value;
+                    if (priceData && priceData.price > 0) {
+                        const oldPrice = newPrices[address];
+                        const newPrice = priceData.price;
+                        
+                        newPrices[address] = newPrice;
+                        updatedTokens[address].price = newPrice;
+                        updatedPriceSource[address] = priceData.source;
+
+                        // Calculate price change percentage
+                        if (oldPrice && oldPrice > 0) {
+                            const changePercent = ((newPrice - oldPrice) / oldPrice) * 100;
+                            changes[address] = changePercent;
+                        } else {
+                            changes[address] = 0;
                         }
-                    }));
+                    }
+                } else {
+                    console.warn(`Failed to update price for ${tokenAddresses[index]}:`, result.reason);
                 }
-            }
+            });
 
             setLivePrice(newPrices);
             setPriceChange(changes);
+            setTokenList(updatedTokens);
+            setPriceSource(updatedPriceSource);
             setLastUpdateTime(now);
+            setStatus('');
 
             // Update price display if needed
             if (formData.price && formData.paymentToken) {
                 updatePriceDisplay(formData.price, formData.paymentToken);
             }
+
+            // Log cache stats for debugging
+            console.log('Price cache stats:', getPriceCacheStats());
+
         } catch (error) {
             console.error("Error updating live prices", error);
+            setStatus('Error updating prices');
         }
     };
 
-    // Initialize tokens with static data
+    // Initialize tokens with real price fetching
     const initializeTokens = async () => {
         setLoadingPrices(true);
+        setStatus('Loading token prices...');
 
         const initialTokens = {};
 
@@ -257,7 +275,7 @@ function SellPage() {
                 name: 'Native VTRU',
                 decimals: 18,
                 isNative: true,
-                price: DEFAULT_TOKEN_PRICES.VTRU
+                price: null // Will be fetched
             };
 
             // Add WVTRU token
@@ -281,7 +299,7 @@ function SellPage() {
                     symbol: wvtruSymbol,
                     name: wvtruName,
                     decimals: wvtruDecimals,
-                    price: DEFAULT_TOKEN_PRICES.WVTRU
+                    price: null // Will be fetched
                 };
             } catch (error) {
                 console.warn("Could not load WVTRU token, using defaults", error);
@@ -290,7 +308,7 @@ function SellPage() {
                     symbol: 'WVTRU',
                     name: 'Wrapped VTRU',
                     decimals: 18,
-                    price: DEFAULT_TOKEN_PRICES.WVTRU
+                    price: null
                 };
             }
 
@@ -315,7 +333,7 @@ function SellPage() {
                     symbol: usdcSymbol,
                     name: usdcName,
                     decimals: usdcDecimals,
-                    price: DEFAULT_TOKEN_PRICES.USDC
+                    price: null // Will be fetched
                 };
             } catch (error) {
                 console.warn("Could not load USDC token, using defaults", error);
@@ -324,31 +342,50 @@ function SellPage() {
                     symbol: 'USDC',
                     name: 'USD Coin',
                     decimals: 6,
-                    price: DEFAULT_TOKEN_PRICES.USDC
+                    price: null
                 };
             }
 
-            // Set token list with initial data
+            // Set token list with initial data (no prices yet)
             setTokenList(initialTokens);
 
-            // Set price sources
-            setPriceSource({
-                [ethers.ZeroAddress]: 'Default market price',
-                [WVTRU_ADDRESS]: 'Default market price',
-                [USDC_ADDRESS]: 'USD pegged stablecoin'
+            // Fetch prices for all tokens
+            setStatus('Fetching real-time prices...');
+            const tokenAddresses = Object.keys(initialTokens);
+            const pricePromises = tokenAddresses.map(async (address) => {
+                const token = initialTokens[address];
+                const priceData = await getTokenPriceWithFallback(provider, address, token.symbol);
+                return { address, priceData };
             });
 
-            // Initialize live prices
-            setLivePrice({
-                [ethers.ZeroAddress]: DEFAULT_TOKEN_PRICES.VTRU,
-                [WVTRU_ADDRESS]: DEFAULT_TOKEN_PRICES.WVTRU,
-                [USDC_ADDRESS]: DEFAULT_TOKEN_PRICES.USDC
+            const priceResults = await Promise.allSettled(pricePromises);
+            const updatedTokens = { ...initialTokens };
+            const newPriceSource = {};
+            const newLivePrice = {};
+
+            priceResults.forEach((result, index) => {
+                if (result.status === 'fulfilled') {
+                    const { address, priceData } = result.value;
+                    if (priceData) {
+                        updatedTokens[address].price = priceData.price;
+                        newPriceSource[address] = priceData.source;
+                        newLivePrice[address] = priceData.price;
+                    }
+                } else {
+                    console.error(`Failed to fetch price for ${tokenAddresses[index]}:`, result.reason);
+                }
             });
 
+            // Update states with price data
+            setTokenList(updatedTokens);
+            setPriceSource(newPriceSource);
+            setLivePrice(newLivePrice);
             setLastUpdateTime(new Date());
+            setStatus('');
 
         } catch (error) {
             console.error("Error initializing tokens", error);
+            setStatus('Error loading token data. Using defaults.');
         } finally {
             setLoadingPrices(false);
             buildPaymentOptions();
@@ -385,7 +422,7 @@ function SellPage() {
         });
     };
 
-    // Add custom token
+    // Add custom token with real price fetching
     const addCustomToken = async () => {
         setCustomTokenError('');
 
@@ -420,7 +457,25 @@ function SellPage() {
                 decimals = parseInt(customTokenData.decimals) || 18;
             }
 
-            const price = customTokenData.price ? parseFloat(customTokenData.price) : null;
+            // Fetch real price or use manual price
+            let price = null;
+            let priceSourceText = 'No price data';
+
+            if (customTokenData.price && parseFloat(customTokenData.price) > 0) {
+                // Use manually entered price
+                price = parseFloat(customTokenData.price);
+                priceSourceText = 'Manually entered';
+            } else {
+                // Try to fetch real price
+                setStatus('Fetching price data for custom token...');
+                const priceData = await getTokenPriceWithFallback(provider, checksumAddress, symbol);
+                if (priceData && priceData.price > 0) {
+                    price = priceData.price;
+                    priceSourceText = priceData.source;
+                } else {
+                    console.warn(`Could not fetch price for token ${symbol}`);
+                }
+            }
 
             // Add token to list
             const newToken = {
@@ -437,13 +492,13 @@ function SellPage() {
             }));
 
             // Record price source
-            if (price) {
-                setPriceSource(prev => ({
-                    ...prev,
-                    [checksumAddress]: 'Manually entered'
-                }));
+            setPriceSource(prev => ({
+                ...prev,
+                [checksumAddress]: priceSourceText
+            }));
 
-                // Add to live price
+            // Add to live price if we have a price
+            if (price) {
                 setLivePrice(prev => ({
                     ...prev,
                     [checksumAddress]: price
@@ -460,6 +515,8 @@ function SellPage() {
             });
 
             setShowAddTokenForm(false);
+            setStatus('');
+
         } catch (error) {
             setCustomTokenError(`Error adding token: ${error.message}`);
             console.error("Error adding custom token", error);
@@ -695,7 +752,10 @@ function SellPage() {
                                 </div>
                             );
                         })}
-                        <div className="ticker-refresh" onClick={updateLivePrices} title="Refresh Prices">
+                        <div className="ticker-refresh" onClick={() => {
+                            clearPriceCache();
+                            updateLivePrices();
+                        }} title="Force Refresh Prices">
                             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                 <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                             </svg>
