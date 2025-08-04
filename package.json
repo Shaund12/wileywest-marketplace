@@ -1,0 +1,23 @@
+{
+  "name": "wileywest-marketplace",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@supabase/supabase-js": "^2.0.0",
+    "ethers": "^6.9.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.7.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^3.0.0",
+    "eslint": "^9.32.0",
+    "vite": "^4.0.0"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "description": "WileyW€$T: Cyberpunk NFT marketplace on Vitruveo"
+}
