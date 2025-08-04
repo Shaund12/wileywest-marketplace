@@ -8,6 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 // Components
 import Navigation from './components/Navigation';
 import Footer from './components/Footer';
+import ErrorBoundary, { WalletErrorBoundary, MarketplaceErrorBoundary } from './components/ErrorBoundary';
 import HomePage from './pages/HomePage';
 import ProfilePage from './pages/ProfilePage';
 import MarketplacePage from './pages/MarketplacePage';
@@ -30,27 +31,35 @@ const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '';
 
 function App() {
   return (
-    <WalletProvider rpcUrl={rpcUrl}>
-      <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi}>
-        <BrowserRouter>
-          <div className="app-container">
-            <Navigation />
-            <div className="main-content">
-              <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/profile" element={<ProfilePage />} />
-                <Route path="/marketplace" element={<MarketplacePage />} />
-                <Route path="/hot-listings" element={<HotListingsPage />} />
-                <Route path="/sell" element={<SellPage />} />
-                <Route path="/terms" element={<TermsPage />} />
-                <Route path="/privacy" element={<PrivacyPage />} />
-              </Routes>
-            </div>
-            <Footer />
-          </div>
-        </BrowserRouter>
-      </MarketplaceProvider>
-    </WalletProvider>
+    <ErrorBoundary>
+      <WalletErrorBoundary>
+        <WalletProvider rpcUrl={rpcUrl}>
+          <MarketplaceErrorBoundary>
+            <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi}>
+              <BrowserRouter>
+                <div className="app-container">
+                  <Navigation />
+                  <div className="main-content">
+                    <ErrorBoundary>
+                      <Routes>
+                        <Route path="/" element={<HomePage />} />
+                        <Route path="/profile" element={<ProfilePage />} />
+                        <Route path="/marketplace" element={<MarketplacePage />} />
+                        <Route path="/hot-listings" element={<HotListingsPage />} />
+                        <Route path="/sell" element={<SellPage />} />
+                        <Route path="/terms" element={<TermsPage />} />
+                        <Route path="/privacy" element={<PrivacyPage />} />
+                      </Routes>
+                    </ErrorBoundary>
+                  </div>
+                  <Footer />
+                </div>
+              </BrowserRouter>
+            </MarketplaceProvider>
+          </MarketplaceErrorBoundary>
+        </WalletProvider>
+      </WalletErrorBoundary>
+    </ErrorBoundary>
   );
 }
 

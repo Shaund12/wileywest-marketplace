@@ -1179,3 +1179,217 @@ body {
   visibility: visible;
   opacity: 1;
 }
+
+/* Error Boundary Styles */
+.error-boundary {
+  min-height: 400px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  background: linear-gradient(135deg, rgba(255, 51, 102, 0.1), rgba(85, 51, 255, 0.1));
+  border-radius: 12px;
+  border: 1px solid var(--error);
+}
+
+.error-container {
+  max-width: 600px;
+  text-align: center;
+  background-color: var(--background-card);
+  padding: 40px;
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+}
+
+.error-icon {
+  font-size: 4rem;
+  margin-bottom: 20px;
+  opacity: 0.8;
+}
+
+.error-container h2 {
+  color: var(--error);
+  margin-bottom: 16px;
+  font-size: 1.5rem;
+}
+
+.error-container h3 {
+  color: var(--error);
+  margin-bottom: 12px;
+  font-size: 1.3rem;
+}
+
+.error-container p {
+  color: var(--text-muted);
+  margin-bottom: 24px;
+  line-height: 1.6;
+}
+
+.error-details {
+  margin: 24px 0;
+  text-align: left;
+  background-color: rgba(255, 51, 102, 0.1);
+  border-radius: 8px;
+  border: 1px solid var(--error);
+}
+
+.error-details summary {
+  padding: 12px 16px;
+  cursor: pointer;
+  color: var(--error);
+  font-weight: 500;
+  border-radius: 8px 8px 0 0;
+  background-color: rgba(255, 51, 102, 0.05);
+}
+
+.error-details summary:hover {
+  background-color: rgba(255, 51, 102, 0.1);
+}
+
+.error-stack {
+  padding: 16px;
+}
+
+.error-stack h4 {
+  color: var(--error);
+  margin-bottom: 8px;
+  font-size: 0.9rem;
+}
+
+.error-stack pre {
+  background-color: var(--background-dark);
+  color: var(--text-light);
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  margin-bottom: 16px;
+  border: 1px solid var(--border-color);
+}
+
+.error-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.error-actions button {
+  min-width: 120px;
+}
+
+/* Specific Error Types */
+.wallet-error,
+.marketplace-error,
+.nft-error {
+  text-align: center;
+  padding: 32px;
+  background-color: var(--background-card);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  margin: 20px;
+}
+
+.wallet-error .error-icon,
+.marketplace-error .error-icon,
+.nft-error .error-icon {
+  font-size: 3rem;
+  margin-bottom: 16px;
+  opacity: 0.7;
+}
+
+.wallet-error h3,
+.marketplace-error h3,
+.nft-error h3 {
+  color: var(--warning);
+  margin-bottom: 12px;
+}
+
+.wallet-error p,
+.marketplace-error p,
+.nft-error p {
+  color: var(--text-muted);
+  margin-bottom: 20px;
+}
+
+/* Loading Error States */
+.loading-error {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+}
+
+.loading-error .error-icon {
+  font-size: 2rem;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+/* Network Error Indicator */
+.network-error {
+  background-color: rgba(255, 170, 51, 0.1);
+  border: 1px solid var(--warning);
+  color: var(--warning);
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin: 16px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.network-error .error-icon {
+  font-size: 1.2rem;
+  margin: 0;
+}
+
+/* Transaction Error States */
+.transaction-error {
+  background-color: rgba(255, 51, 102, 0.1);
+  border: 1px solid var(--error);
+  color: var(--error);
+  padding: 16px;
+  border-radius: 8px;
+  margin: 16px 0;
+}
+
+.transaction-error h4 {
+  margin-bottom: 8px;
+  font-size: 1rem;
+}
+
+.transaction-error p {
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.transaction-error .error-actions {
+  justify-content: flex-start;
+}
+
+/* Responsive Error Handling */
+@media (max-width: 768px) {
+  .error-container {
+    padding: 24px;
+    margin: 16px;
+  }
+  
+  .error-icon {
+    font-size: 3rem;
+  }
+  
+  .error-actions {
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .error-actions button {
+    width: 100%;
+    max-width: 200px;
+  }
+  
+  .error-stack pre {
+    font-size: 0.7rem;
+  }
+}

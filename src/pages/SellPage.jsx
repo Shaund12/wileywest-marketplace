@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { useSearchParams } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import { NFTErrorBoundary } from '../components/ErrorBoundary';
 import { 
   getTokenPriceWithFallback, 
   getMultipleTokenPrices, 
@@ -1040,12 +1041,13 @@ function SellPage() {
                 </div>
 
                 <div className="nft-preview">
-                    {loading ? (
-                        <div className="preview-loading">
-                            <div className="loader"></div>
-                            <p>Loading NFT data...</p>
-                        </div>
-                    ) : metadata ? (
+                    <NFTErrorBoundary>
+                        {loading ? (
+                            <div className="preview-loading">
+                                <div className="loader"></div>
+                                <p>Loading NFT data...</p>
+                            </div>
+                        ) : metadata ? (
                         <div className="premium-preview">
                             <div className="preview-header">
                                 <div className="preview-badge">
@@ -1262,13 +1264,14 @@ function SellPage() {
                                 )}
                             </div>
                         </div>
-                    ) : (
-                        <div className="empty-preview">
-                            <div className="empty-preview-icon">🖼️</div>
-                            <h3>NFT Preview</h3>
-                            <p>Enter contract address and token ID to load NFT details</p>
-                        </div>
-                    )}
+                        ) : (
+                            <div className="empty-preview">
+                                <div className="empty-preview-icon">🖼️</div>
+                                <h3>NFT Preview</h3>
+                                <p>Enter contract address and token ID to load NFT details</p>
+                            </div>
+                        )}
+                    </NFTErrorBoundary>
                 </div>
             </div>
         </div>
