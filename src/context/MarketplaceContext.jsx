@@ -39,13 +39,76 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             for (let i = 1; i < 20; i++) {
                 try {
                     const listing = await marketplace.listings(i);
+
+                    // Make sure the listing exists and is active
                     if (listing && listing.active) {
-                        res.push({ id: i, ...listing });
+                        // Ensure all fields have valid values to prevent errors in ListingCard
+                        const sanitizedListing = {
+                            id: i,
+                            seller: listing.seller || ethers.ZeroAddress,
+                            nftContract: listing.nftContract || ethers.ZeroAddress,
+                            tokenId: listing.tokenId?.toString() || '0',
+                            quantity: listing.quantity?.toString() || '0',
+                            pricePerUnit: listing.pricePerUnit?.toString() || '0',
+                            paymentToken: listing.paymentToken || ethers.ZeroAddress,
+                            isERC1155: !!listing.isERC1155,
+                            active: !!listing.active,
+                            // Add metadata placeholders
+                            metadata: null,
+                            imageUrl: null,
+                            name: `NFT #${listing.tokenId?.toString()}`
+                        };
+
+                        // Fetch NFT metadata to get the actual image
+                        try {
+                            // Create contract instance for the NFT
+                            const nftContract = new ethers.Contract(
+                                listing.nftContract,
+                                // Use appropriate ABI based on token type
+                                listing.isERC1155 ?
+                                    ['function uri(uint256 id) view returns (string)'] :
+                                    ['function tokenURI(uint256 tokenId) view returns (string)'],
+                                provider
+                            );
+
+                            // Get token URI
+                            const tokenURI = listing.isERC1155 ?
+                                await nftContract.uri(listing.tokenId) :
+                                await nftContract.tokenURI(listing.tokenId);
+
+                            // Resolve IPFS or HTTP URI
+                            const resolvedURI = tokenURI.startsWith('ipfs://')
+                                ? tokenURI.replace('ipfs://', 'https://ipfs.io/ipfs/')
+                                : tokenURI;
+
+                            console.log(`Fetching metadata for listing ${i} from: ${resolvedURI}`);
+
+                            // Fetch metadata
+                            const metadataResponse = await fetch(resolvedURI);
+                            if (metadataResponse.ok) {
+                                const metadata = await metadataResponse.json();
+                                sanitizedListing.metadata = metadata;
+                                sanitizedListing.name = metadata.name || sanitizedListing.name;
+
+                                // Resolve image URL
+                                if (metadata.image) {
+                                    sanitizedListing.imageUrl = metadata.image.startsWith('ipfs://')
+                                        ? metadata.image.replace('ipfs://', 'https://ipfs.io/ipfs/')
+                                        : metadata.image;
+                                }
+                            }
+                        } catch (metadataError) {
+                            console.warn(`Failed to fetch metadata for listing ${i}:`, metadataError);
+                        }
+
+                        res.push(sanitizedListing);
                     }
                 } catch (err) {
                     // Skip this listing ID if it doesn't exist
+                    console.log(`Skipping listing ${i}:`, err.message);
                 }
             }
+
             setListings(res);
 
             // Set the top 5 as hot listings (could use other criteria)
@@ -53,7 +116,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             setStatus('');
         } catch (error) {
             setStatus('Failed to fetch listings');
-            console.error(error);
+            console.error("Error in fetchListings:", error);
         }
     };
 
@@ -73,46 +136,68 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         }
     };
 
+    // Fix for "marketplace.createListing is not a function" error
+    // Fixed createListing function to use the correct variables
+    // Fix for createListing function that correctly uses the function from the ABI
     const createListing = async (nftContract, tokenId, quantity, price, paymentToken) => {
-        if (!signer || !marketplace) return;
-        setStatus('Creating listing...');
-
         try {
-            // Try to approve via ERC721
-            try {
-                const erc721 = new ethers.Contract(nftContract, [
-                    'function approve(address to, uint256 tokenId) public',
-                    'function ownerOf(uint256 tokenId) view returns (address)'
-                ], signer);
-                await erc721.approve(marketplaceAddress, tokenId);
-            } catch (e) {
-                try {
-                    // Try to approve via ERC1155
-                    const erc1155 = new ethers.Contract(nftContract, [
-                        'function setApprovalForAll(address operator, bool approved) external'
-                    ], signer);
-                    await erc1155.setApprovalForAll(marketplaceAddress, true);
-                } catch (e2) {
-                    console.warn('Approval failed', e2);
-                }
+            if (!signer) {
+                setStatus("Error: Wallet not connected. Please connect your wallet first");
+                return;
             }
 
-            const tx = await marketplace.createListing(
+            setStatus("Creating listing...");
+
+            if (!marketplace) {
+                throw new Error("Marketplace contract not initialized");
+            }
+
+            console.log("Creating listing with parameters:", {
                 nftContract,
                 tokenId,
-                quantity || 1,
+                quantity,
                 price,
-                paymentToken === '' ? ethers.ZeroAddress : paymentToken
+                paymentToken
+            });
+
+            // Make sure we're using the contract with the signer
+            const marketplaceWithSigner = marketplace.connect(signer);
+
+            // Add safety checks before using functions
+            if (!marketplaceWithSigner || !marketplaceWithSigner.interface) {
+                throw new Error("Failed to connect contract with signer");
+            }
+
+            console.log("Attempting to create listing...");
+
+            // Direct call without logging functions
+            const tx = await marketplaceWithSigner.createListing(
+                nftContract,
+                tokenId,
+                quantity,
+                price,
+                paymentToken
             );
 
+            setStatus("Transaction submitted. Waiting for confirmation...");
             await tx.wait();
-            setStatus('Listing created successfully!');
+            setStatus("Listing created successfully!");
+
+            // Refresh listings
             fetchListings();
-            return true;
-        } catch (e) {
-            console.error(e);
-            setStatus('Create listing failed: ' + (e.message || e));
-            return false;
+
+        } catch (error) {
+            console.error("Error in createListing:", error);
+
+            // Better error handling
+            if (error.message.includes("contract runner does not support")) {
+                setStatus("Error: Wallet not properly connected. Please disconnect and reconnect your wallet.");
+            } else if (error.message.includes("user rejected transaction")) {
+                setStatus("Transaction was rejected in your wallet");
+            } else {
+                setStatus(`Error: ${error.message || "Failed to create listing"}`);
+            }
+            throw error;
         }
     };
 
