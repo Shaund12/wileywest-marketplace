@@ -1,1 +1,7 @@
 .env
+# Environment variables should not be committed to the repository
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
