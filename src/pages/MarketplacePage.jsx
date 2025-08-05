@@ -2,6 +2,7 @@
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import ListingCard from '../components/ListingCard';
+import { convertToUSDCValue } from '../utils/tokenUtils';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 
@@ -41,7 +42,7 @@ const ListIcon = () => (
 
 function MarketplacePage() {
     const { listings, hotListings, fetchListings, status, setStatus, isInitialized } = useMarketplace();
-    const { wallet, connect } = useWallet();
+    const { wallet, connect, provider } = useWallet();
     const [searchTerm, setSearchTerm] = useState('');
     const [filteredListings, setFilteredListings] = useState([]);
     const [viewMode, setViewMode] = useState('grid');
@@ -117,63 +118,132 @@ function MarketplacePage() {
         };
     }, [isInitialized, fetchListings]);
 
-    // Process listings and extract metadata
+    // Process listings and extract metadata with USDC pricing
     useEffect(() => {
-        if (listings.length > 0) {
-            // Extract collections and set up stats
-            const collectionMap = {};
-            let totalVolume = 0;
-            let lowestPrice = Infinity;
+        async function processListingsWithUSDC() {
+            if (listings.length > 0 && provider) {
+                try {
+                    // Extract collections and set up stats
+                    const collectionMap = {};
+                    let totalVolumeUSDC = 0;
+                    let lowestPriceUSDC = Infinity;
+                    const pricePromises = [];
 
-            listings.forEach(listing => {
-                const collectionAddress = listing.nftContract;
-                if (!collectionMap[collectionAddress]) {
-                    collectionMap[collectionAddress] = {
-                        address: collectionAddress,
-                        name: listing.metadata?.collection?.name || `Collection ${collectionAddress.slice(0, 6)}...`,
-                        items: [],
-                        floorPrice: Infinity,
-                        totalVolume: 0
-                    };
+                    // Process listings and collect price conversion promises
+                    for (const listing of listings) {
+                        const collectionAddress = listing.nftContract;
+                        if (!collectionMap[collectionAddress]) {
+                            collectionMap[collectionAddress] = {
+                                address: collectionAddress,
+                                name: listing.metadata?.collection?.name || `Collection ${collectionAddress.slice(0, 6)}...`,
+                                items: [],
+                                floorPrice: Infinity,
+                                totalVolume: 0
+                            };
+                        }
+
+                        collectionMap[collectionAddress].items.push(listing);
+
+                        // Add promise to convert this listing's price to USDC
+                        pricePromises.push(
+                            convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider)
+                                .then(usdcPrice => ({ listing, usdcPrice }))
+                                .catch(err => {
+                                    console.warn(`Failed to convert price for listing ${listing.id}:`, err);
+                                    return { listing, usdcPrice: 0 };
+                                })
+                        );
+                    }
+
+                    // Wait for all price conversions
+                    const priceResults = await Promise.all(pricePromises);
+
+                    // Update collections and stats with USDC prices
+                    priceResults.forEach(({ listing, usdcPrice }) => {
+                        const collectionAddress = listing.nftContract;
+                        
+                        collectionMap[collectionAddress].totalVolume += usdcPrice;
+                        
+                        if (usdcPrice < collectionMap[collectionAddress].floorPrice) {
+                            collectionMap[collectionAddress].floorPrice = usdcPrice;
+                        }
+
+                        totalVolumeUSDC += usdcPrice;
+                        if (usdcPrice < lowestPriceUSDC) lowestPriceUSDC = usdcPrice;
+                    });
+
+                    const collectionsList = Object.values(collectionMap).sort(
+                        (a, b) => b.items.length - a.items.length
+                    );
+
+                    setCollections(collectionsList);
+
+                    setStats({
+                        totalVolume: totalVolumeUSDC.toFixed(2),
+                        totalListings: listings.length,
+                        avgPrice: (totalVolumeUSDC / listings.length).toFixed(2),
+                        floorPrice: lowestPriceUSDC === Infinity ? '0.00' : lowestPriceUSDC.toFixed(2)
+                    });
+
+                    // Set a featured NFT (most expensive or first hot listing)
+                    if (hotListings && hotListings.length > 0) {
+                        setFeaturedNFT(hotListings[0]);
+                    } else if (listings.length > 0) {
+                        // Find the highest priced NFT based on USDC value
+                        const highestPricedResult = priceResults.reduce((max, current) => {
+                            return current.usdcPrice > max.usdcPrice ? current : max;
+                        }, { usdcPrice: 0, listing: listings[0] });
+                        setFeaturedNFT(highestPricedResult.listing);
+                    }
+                } catch (error) {
+                    console.error('Error processing listings with USDC pricing:', error);
+                    // Fallback to basic processing without USDC conversion
+                    const collectionMap = {};
+                    let totalVolume = 0;
+                    let lowestPrice = Infinity;
+
+                    listings.forEach(listing => {
+                        const collectionAddress = listing.nftContract;
+                        if (!collectionMap[collectionAddress]) {
+                            collectionMap[collectionAddress] = {
+                                address: collectionAddress,
+                                name: listing.metadata?.collection?.name || `Collection ${collectionAddress.slice(0, 6)}...`,
+                                items: [],
+                                floorPrice: Infinity,
+                                totalVolume: 0
+                            };
+                        }
+
+                        const priceInEth = parseFloat(ethers.formatEther(listing.pricePerUnit));
+                        collectionMap[collectionAddress].items.push(listing);
+                        collectionMap[collectionAddress].totalVolume += priceInEth;
+
+                        if (priceInEth < collectionMap[collectionAddress].floorPrice) {
+                            collectionMap[collectionAddress].floorPrice = priceInEth;
+                        }
+
+                        totalVolume += priceInEth;
+                        if (priceInEth < lowestPrice) lowestPrice = priceInEth;
+                    });
+
+                    const collectionsList = Object.values(collectionMap).sort(
+                        (a, b) => b.items.length - a.items.length
+                    );
+
+                    setCollections(collectionsList);
+
+                    setStats({
+                        totalVolume: `${totalVolume.toFixed(2)} (est.)`,
+                        totalListings: listings.length,
+                        avgPrice: `${(totalVolume / listings.length).toFixed(3)} (est.)`,
+                        floorPrice: lowestPrice === Infinity ? '0.00 (est.)' : `${lowestPrice.toFixed(3)} (est.)`
+                    });
                 }
-
-                const priceInEth = parseFloat(ethers.formatEther(listing.pricePerUnit));
-                collectionMap[collectionAddress].items.push(listing);
-                collectionMap[collectionAddress].totalVolume += priceInEth;
-
-                if (priceInEth < collectionMap[collectionAddress].floorPrice) {
-                    collectionMap[collectionAddress].floorPrice = priceInEth;
-                }
-
-                totalVolume += priceInEth;
-                if (priceInEth < lowestPrice) lowestPrice = priceInEth;
-            });
-
-            const collectionsList = Object.values(collectionMap).sort(
-                (a, b) => b.items.length - a.items.length
-            );
-
-            setCollections(collectionsList);
-
-            setStats({
-                totalVolume: totalVolume.toFixed(2),
-                totalListings: listings.length,
-                avgPrice: (totalVolume / listings.length).toFixed(3),
-                floorPrice: lowestPrice === Infinity ? 0 : lowestPrice.toFixed(3)
-            });
-
-            // Set a featured NFT (most expensive or first hot listing)
-            if (hotListings && hotListings.length > 0) {
-                setFeaturedNFT(hotListings[0]);
-            } else if (listings.length > 0) {
-                // Find the highest priced NFT
-                const highestPriced = [...listings].sort(
-                    (a, b) => parseFloat(b.pricePerUnit) - parseFloat(a.pricePerUnit)
-                )[0];
-                setFeaturedNFT(highestPriced);
             }
         }
-    }, [listings, hotListings]);
+
+        processListingsWithUSDC();
+    }, [listings, hotListings, provider]);
 
     // Filter and sort listings
     useEffect(() => {
@@ -325,16 +395,16 @@ function MarketplacePage() {
                     <p>Active Listings</p>
                 </div>
                 <div className="stat-card">
-                    <h3>{stats.totalVolume} VTRU</h3>
-                    <p>Trading Volume</p>
+                    <h3>${stats.totalVolume}</h3>
+                    <p>Trading Volume (USDC)</p>
                 </div>
                 <div className="stat-card">
-                    <h3>{stats.floorPrice} VTRU</h3>
-                    <p>Floor Price</p>
+                    <h3>${stats.floorPrice}</h3>
+                    <p>Floor Price (USDC)</p>
                 </div>
                 <div className="stat-card">
-                    <h3>{stats.avgPrice} VTRU</h3>
-                    <p>Average Price</p>
+                    <h3>${stats.avgPrice}</h3>
+                    <p>Average Price (USDC)</p>
                 </div>
             </div>
 
@@ -366,8 +436,8 @@ function MarketplacePage() {
                                         <span className="label">items</span>
                                     </div>
                                     <div className="stat">
-                                        <span className="value">{collection.floorPrice.toFixed(3)}</span>
-                                        <span className="label">floor</span>
+                                        <span className="value">${collection.floorPrice.toFixed(2)}</span>
+                                        <span className="label">floor (USDC)</span>
                                     </div>
                                 </div>
                             </div>
