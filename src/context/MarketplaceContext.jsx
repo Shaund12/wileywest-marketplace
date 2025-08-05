@@ -166,6 +166,19 @@ const ERC20_ABI = [
     'function symbol() view returns (string)'
 ];
 
+// ERC721 ABI for approval operations
+const ERC721_APPROVAL_ABI = [
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
+    'function getApproved(uint256 tokenId) view returns (address)',
+    'function setApprovalForAll(address operator, bool approved)'
+];
+
+// ERC1155 ABI for approval operations  
+const ERC1155_APPROVAL_ABI = [
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
+    'function setApprovalForAll(address operator, bool approved)'
+];
+
     // Replace the current buyListing function with this version
     const buyListing = async (id, pricePerUnit, paymentToken) => {
         if (!signer) {
