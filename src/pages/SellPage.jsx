@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { useSearchParams } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import './SellPage.css';
 
 // ERC721/ERC1155 metadata interfaces
 const ERC721_ABI = [
@@ -43,6 +44,18 @@ const UNISWAP_V3_FACTORY_ADDRESS = '0x6196a7a6108B15a2cc24DdaB41C8CC3098C06351';
 
 // Fee tiers: 0.05%, 0.3%, and 1%
 const FEE_TIERS = [500, 3000, 10000];
+
+const ERC721_APPROVAL_ABI = [
+    'function setApprovalForAll(address operator, bool approved) returns ()',
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
+    'function approve(address to, uint256 tokenId) returns ()',
+    'function getApproved(uint256 tokenId) view returns (address)'
+];
+
+const ERC1155_APPROVAL_ABI = [
+    'function setApprovalForAll(address operator, bool approved) returns ()',
+    'function isApprovedForAll(address owner, address operator) view returns (bool)'
+];
 
 function SellPage() {
     const { createListing, status, setStatus } = useMarketplace();
@@ -120,7 +133,12 @@ function SellPage() {
                         let usdValue = 'Unknown';
                         const currentPrice = livePrice[formData.paymentToken];
                         if (currentPrice) {
-                            usdValue = (parseFloat(value) * currentPrice).toFixed(2);
+                            // For USDC, the USD value is the same as the input (1:1)
+                            if (formData.paymentToken === USDC_ADDRESS) {
+                                usdValue = parseFloat(value).toFixed(2);
+                            } else {
+                                usdValue = (parseFloat(value) * currentPrice).toFixed(2);
+                            }
                         }
 
                         // Store both human-readable and wei values
@@ -145,6 +163,114 @@ function SellPage() {
             // For non-price fields, handle normally
             setFormData({ ...formData, [id]: value });
         }
+    };
+
+    // Handle form submission
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+
+        if (!wallet) {
+            await connect();
+            return;
+        }
+
+        if (!ownershipVerified) {
+            setStatus('Error: Ownership not verified. You must own this NFT to list it.');
+            return;
+        }
+
+        try {
+            // First check if the marketplace has approval
+            const marketplaceAddress = await getMarketplaceAddress();
+            if (!marketplaceAddress) {
+                throw new Error("Couldn't determine marketplace address");
+            }
+            
+            // Check NFT type and handle approval
+            if (nftType === 'ERC721') {
+                setStatus('Checking NFT approval status...');
+                const nftContract = new ethers.Contract(
+                    formData.nftContract,
+                    ERC721_APPROVAL_ABI,
+                    signer
+                );
+                
+                // Check if approved for all
+                const isApprovedForAll = await nftContract.isApprovedForAll(wallet, marketplaceAddress);
+                if (!isApprovedForAll) {
+                    // Check specific token approval
+                    const approved = await nftContract.getApproved(formData.tokenId);
+                    const isApproved = approved.toLowerCase() === marketplaceAddress.toLowerCase();
+                    
+                    if (!isApproved) {
+                        setStatus('Requesting approval to sell your NFT...');
+                        // Request approval for all tokens (more convenient for user)
+                        const tx = await nftContract.setApprovalForAll(marketplaceAddress, true);
+                        setStatus('Confirming approval transaction...');
+                        await tx.wait();
+                        setStatus('Approval confirmed! Creating listing...');
+                    }
+                }
+            } else if (nftType === 'ERC1155') {
+                setStatus('Checking NFT approval status...');
+                const nftContract = new ethers.Contract(
+                    formData.nftContract,
+                    ERC1155_APPROVAL_ABI,
+                    signer
+                );
+                
+                // Check if approved for all (ERC1155 only has approveForAll)
+                const isApproved = await nftContract.isApprovedForAll(wallet, marketplaceAddress);
+                if (!isApproved) {
+                    setStatus('Requesting approval to sell your NFT...');
+                    const tx = await nftContract.setApprovalForAll(marketplaceAddress, true);
+                    setStatus('Confirming approval transaction...');
+                    await tx.wait();
+                    setStatus('Approval confirmed! Creating listing...');
+                }
+            }
+            
+            // Now proceed with creating the listing
+            setStatus('Creating listing...');
+
+            // Convert human-readable price to wei for blockchain
+            const token = tokenList[formData.paymentToken];
+            const decimals = token ? token.decimals : 18;
+
+            let priceInWei;
+            try {
+                console.log(`Converting price ${formData.price} with ${decimals} decimals for ${token?.symbol}`);
+                priceInWei = ethers.parseUnits(formData.price, decimals).toString();
+                console.log(`Price in wei: ${priceInWei}`);
+            } catch (err) {
+                console.error("Price conversion error:", err);
+                setStatus('Error: Invalid price format');
+                return;
+            }
+
+            await createListing(
+                formData.nftContract,
+                formData.tokenId,
+                formData.quantity,
+                priceInWei,
+                formData.paymentToken
+            );
+        } catch (error) {
+            console.error("Error creating listing:", error);
+            setStatus(`Error: ${error.message || 'Could not create listing'}`);
+        }
+    };
+
+    // Helper function to get marketplace address
+    const getMarketplaceAddress = async () => {
+        // Use the marketplace context to get the address
+        if (useMarketplace().marketplaceAddress) {
+            return useMarketplace().marketplaceAddress;
+        }
+        
+        // Fallback option - this is not ideal but can work as a temporary solution
+        // You might want to properly expose marketplaceAddress in your context
+        throw new Error("Marketplace address not available");
     };
 
     // Handle payment token selection with human-readable price handling
@@ -784,47 +910,7 @@ function SellPage() {
         }
     }, [formData.nftContract, formData.tokenId, wallet, provider]);
 
-    // Handle form submission
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-
-        if (!wallet) {
-            await connect();
-            return;
-        }
-
-        if (!ownershipVerified) {
-            setStatus('Error: Ownership not verified. You must own this NFT to list it.');
-            return;
-        }
-
-        try {
-            setStatus('Creating listing...');
-
-            // Convert human-readable price to wei for blockchain
-            const token = tokenList[formData.paymentToken];
-            const decimals = token ? token.decimals : 18;
-
-            let priceInWei;
-            try {
-                priceInWei = ethers.parseUnits(formData.price, decimals).toString();
-            } catch (err) {
-                setStatus('Error: Invalid price format');
-                return;
-            }
-
-            await createListing(
-                formData.nftContract,
-                formData.tokenId,
-                formData.quantity,
-                priceInWei,  // Send wei to contract
-                formData.paymentToken
-            );
-        } catch (error) {
-            console.error("Error creating listing:", error);
-            setStatus(`Error: ${error.message || 'Could not create listing'}`);
-        }
-    };
+    
 
     // Calculate proceeds
     const calculateProceeds = () => {
@@ -1186,6 +1272,14 @@ function SellPage() {
                             )}
 
                             <div className="form-actions">
+                                {/* Note about approval */}
+                                <div className="approval-note">
+                                    <svg viewBox="0 0 24 24" width="16" height="16">
+                                        <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+                                    </svg>
+                                    <span>Note: You'll need to approve the marketplace to transfer your NFT. This is a one-time action per collection.</span>
+                                </div>
+
                                 {!wallet ? (
                                     <button type="button" className="secondary-button" onClick={connect}>
                                         Connect Wallet First
@@ -1290,8 +1384,96 @@ function SellPage() {
                             </div>
 
                             <div className="preview-tab-content">
+                                {activePreviewTab === 'details' && (
+                                    <div className="details-tab">
+                                        <div className="preview-description">
+                                            <h4>Description</h4>
+                                            <p>{metadata.description || 'No description available'}</p>
+                                        </div>
+                                        
+                                        <div className="preview-details">
+                                            <div className="detail-row">
+                                                <span className="detail-label">Token Standard</span>
+                                                <span className="detail-value">{nftType}</span>
+                                            </div>
+                                            <div className="detail-row">
+                                                <span className="detail-label">Contract</span>
+                                                <span className="detail-value">
+                                                    <a href={`https://explorer.vitruveo.xyz/address/${formData.nftContract}`} target="_blank" rel="noopener noreferrer">
+                                                        {`${formData.nftContract.slice(0, 6)}...${formData.nftContract.slice(-4)}`}
+                                                    </a>
+                                                </span>
+                                            </div>
+                                            <div className="detail-row">
+                                                <span className="detail-label">Token ID</span>
+                                                <span className="detail-value">#{formData.tokenId}</span>
+                                            </div>
+                                            {nftType === 'ERC1155' && (
+                                                <div className="detail-row">
+                                                    <span className="detail-label">Quantity Owned</span>
+                                                    <span className="detail-value">{balance}</span>
+                                                </div>
+                                            )}
+                                            <div className="detail-row">
+                                                <span className="detail-label">Owner</span>
+                                                <span className="detail-value">
+                                                    {ownershipVerified ? (
+                                                        <>
+                                                            <span className="owner-you">You</span>
+                                                            <span className="owner-address">({`${wallet.slice(0, 6)}...${wallet.slice(-4)}`})</span>
+                                                        </>
+                                                    ) : (
+                                                        <span className="not-owned">Not owned by you</span>
+                                                    )}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        
+                                        {metadata.external_url && (
+                                            <div className="external-link">
+                                                <h4>External Link</h4>
+                                                <a href={metadata.external_url} target="_blank" rel="noopener noreferrer">
+                                                    {metadata.external_url}
+                                                </a>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                
+                                {activePreviewTab === 'properties' && (
+                                    <div className="properties-tab">
+                                        <h4>Properties</h4>
+                                                
+                                        {metadata.attributes && metadata.attributes.length > 0 ? (
+                                            <div className="attributes-grid">
+                                                {metadata.attributes.map((attr, index) => {
+                                                    const rarity = getTraitRarity(attr);
+                                                    return (
+                                                        <div key={index} className="attribute-box" style={{ borderColor: rarity.color }}>
+                                                            <div className="attribute-type" style={{ color: rarity.color }}>
+                                                                {attr.trait_type || 'Property'}
+                                                            </div>
+                                                            <div className="attribute-value">
+                                                                {attr.value?.toString() || 'Unknown'}
+                                                            </div>
+                                                            <div className="attribute-rarity" style={{ backgroundColor: rarity.color }}>
+                                                                {rarity.label} ({rarity.percentage})
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <div className="no-attributes">
+                                                <p>This NFT doesn't have any properties</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                
                                 {activePreviewTab === 'pricing' && (
                                     <div className="pricing-tab">
+                                        {/* Existing pricing tab content */}
                                         <div className="pricing-summary">
                                             <div className="pricing-row">
                                                 <div className="pricing-label">Listing Subtotal</div>
