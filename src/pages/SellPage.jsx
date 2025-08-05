@@ -58,7 +58,7 @@ const ERC1155_APPROVAL_ABI = [
 ];
 
 function SellPage() {
-    const { createListing, status, setStatus } = useMarketplace();
+    const { createListing, status, setStatus, marketplaceAddress } = useMarketplace();
     const { wallet, connect, provider, signer } = useWallet();
     const [searchParams] = useSearchParams();
     const priceIntervalRef = useRef(null);
@@ -264,8 +264,8 @@ function SellPage() {
     // Helper function to get marketplace address
     const getMarketplaceAddress = async () => {
         // Use the marketplace context to get the address
-        if (useMarketplace().marketplaceAddress) {
-            return useMarketplace().marketplaceAddress;
+        if (marketplaceAddress) {
+            return marketplaceAddress;
         }
         
         // Fallback option - this is not ideal but can work as a temporary solution
