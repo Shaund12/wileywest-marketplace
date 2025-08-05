@@ -562,6 +562,7 @@ function SellPage() {
                             changes[address] = 0;
                         }
                         console.log(`[DEBUG] WVTRU price fetched successfully: $${price}`);
+                        console.log(`[DEBUG] Assigned to address ${address} in newPrices: ${newPrices[address]}`);
                     } else {
                         throw new Error("Invalid price (zero or negative)");
                     }
@@ -580,8 +581,8 @@ function SellPage() {
                     }
                 }
 
-                // Update state with WVTRU price for fallback use
-                setLivePrice(prev => ({ ...prev, [address]: newPrices[address] }));
+                // Update state with WVTRU price for fallback use - remove this early update to prevent conflicts
+                // setLivePrice(prev => ({ ...prev, [address]: newPrices[address] }));
             }
 
             // Fetch prices for remaining tokens
@@ -607,6 +608,7 @@ function SellPage() {
                             changes[address] = 0;
                         }
                         console.log(`[DEBUG] ${token.symbol} price: $${price}`);
+                        console.log(`[DEBUG] Assigned to address ${address} in newPrices: ${newPrices[address]}`);
                     } else {
                         throw new Error("Invalid price (zero or negative)");
                     }
@@ -630,7 +632,23 @@ function SellPage() {
             }
 
             // Update all state at once
-            setLivePrice(newPrices);
+            console.log(`[DEBUG] Final price assignments before state update:`, newPrices);
+            console.log(`[DEBUG] VTRU final price: ${newPrices[ethers.ZeroAddress]}`);
+            console.log(`[DEBUG] WVTRU final price: ${newPrices[WVTRU_ADDRESS]}`);
+            console.log(`[DEBUG] USDC final price: ${newPrices[USDC_ADDRESS]}`);
+            
+            // Validate prices before setting state
+            const validatedPrices = {};
+            Object.entries(newPrices).forEach(([address, price]) => {
+                if (typeof price === 'number' && price >= 0) {
+                    validatedPrices[address] = price;
+                } else {
+                    console.warn(`[DEBUG] Invalid price for ${address}: ${price}`);
+                    validatedPrices[address] = null;
+                }
+            });
+            
+            setLivePrice(validatedPrices);
             setPriceChange(changes);
             setPriceSources(newSources);
             setPriceErrors(errors);
@@ -808,15 +826,27 @@ function SellPage() {
             return;
         }
 
-        const options = Object.entries(tokenList).map(([address, token]) => ({
-            address,
-            name: `${token.symbol}${token.isNative ? ' (Native)' : ''}`,
-            fullName: token.name,
-            symbol: token.symbol,
-            price: livePrice[address] || null,
-            priceSource: priceSources[address] || 'Unknown',
-            error: priceErrors[address]
-        }));
+        const options = Object.entries(tokenList).map(([address, token]) => {
+            const price = livePrice[address];
+            const priceSource = priceSources[address] || 'Unknown';
+            const error = priceErrors[address];
+            
+            // Debug logging for price assignment
+            console.log(`[DEBUG] Payment option for ${token.symbol} (${address}): price=${price}, source=${priceSource}`);
+            
+            // Ensure price is properly validated
+            const validPrice = (typeof price === 'number' && price > 0) ? price : null;
+            
+            return {
+                address,
+                name: `${token.symbol}${token.isNative ? ' (Native)' : ''}`,
+                fullName: token.name,
+                symbol: token.symbol,
+                price: validPrice,
+                priceSource,
+                error
+            };
+        });
 
         console.log(`[DEBUG] Built ${options.length} payment options`);
         setPaymentOptions(options);
@@ -1428,7 +1458,9 @@ function SellPage() {
                                                             </div>
                                                             <div className="token-price-info">
                                                                 {option.price !== null ? (
-                                                                    <div className="token-price">${option.price.toFixed(2)} USD</div>
+                                                                    <div className="token-price">
+                                                                        ${option.price < 0.01 ? option.price.toFixed(6) : option.price.toFixed(2)} USD
+                                                                    </div>
                                                                 ) : (
                                                                     <div className="token-price-unknown">No price data</div>
                                                                 )}
