@@ -312,18 +312,25 @@ function SellPage() {
     useEffect(() => {
         if (provider) {
             const initialize = async () => {
+                console.log("[DEBUG] Starting token initialization...");
                 await initializeTokens();
-                // Force immediate price fetch after initialization
+                console.log("[DEBUG] Token initialization complete, starting price fetch...");
+                // Only fetch prices after tokens are fully initialized
                 await fetchUniswapPrices();
+                console.log("[DEBUG] Initialization and price fetch complete");
             };
 
-            initialize();
+            initialize().catch(error => {
+                console.error("Error during initialization:", error);
+                setStatus("Error initializing tokens. Please refresh the page.");
+            });
         }
     }, [provider]);
 
-    // Get Uniswap V3 pool address
+    // Get Uniswap V3 pool address with improved error handling
     const getUniswapPool = async (tokenA, tokenB) => {
         try {
+            console.log(`[DEBUG] Looking for pool between ${tokenA} and ${tokenB}`);
             const factory = new ethers.Contract(
                 UNISWAP_V3_FACTORY_ADDRESS,
                 UNISWAP_V3_FACTORY_ABI,
@@ -334,21 +341,25 @@ function SellPage() {
                 try {
                     const poolAddress = await factory.getPool(tokenA, tokenB, fee);
                     if (poolAddress && poolAddress !== ethers.ZeroAddress) {
+                        console.log(`[DEBUG] Found pool at ${poolAddress} with ${fee / 10000}% fee`);
                         return { poolAddress, fee };
+                    } else {
+                        console.log(`[DEBUG] No pool found for ${fee / 10000}% fee`);
                     }
                 } catch (e) {
-                    console.warn(`No pool for fee ${fee}`, e);
+                    console.warn(`[DEBUG] Error checking pool for fee ${fee}:`, e.message);
                 }
             }
 
+            console.log(`[DEBUG] No pool found for ${tokenA}/${tokenB} pair`);
             return { poolAddress: null, fee: null };
         } catch (error) {
-            console.error("Error getting pool address", error);
+            console.error(`[DEBUG] Error getting pool address for ${tokenA}/${tokenB}:`, error);
             return { poolAddress: null, fee: null };
         }
     };
 
-    // Fixed Uniswap V3 price calculation with accurate handling of extreme tick values
+    // Enhanced Uniswap V3 price calculation with better error handling and fallback
     const getUniswapPrice = async (tokenAddress) => {
         try {
             // USDC is always $1
@@ -360,14 +371,37 @@ function SellPage() {
             const actualTokenAddress = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
             const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
 
-            // Find pool between this token and USDC
-            const { poolAddress, fee } = await getUniswapPool(actualTokenAddress, USDC_ADDRESS);
+            console.log(`[DEBUG] Getting price for ${tokenSymbol} (${tokenAddress})`);
 
-            if (!poolAddress) {
-                throw new Error(`No USDC liquidity pool found for ${tokenSymbol}`);
+            // Try to find pool between this token and USDC first
+            let poolResult = await getUniswapPool(actualTokenAddress, USDC_ADDRESS);
+            let priceToken = USDC_ADDRESS;
+            let priceTokenSymbol = 'USDC';
+            let priceTokenDecimals = 6;
+            let basePrice = 1.0; // USDC = $1
+
+            // If no USDC pool found, try WVTRU pool as fallback
+            if (!poolResult.poolAddress && actualTokenAddress !== WVTRU_ADDRESS) {
+                console.log(`[DEBUG] No USDC pool for ${tokenSymbol}, trying WVTRU pool...`);
+                poolResult = await getUniswapPool(actualTokenAddress, WVTRU_ADDRESS);
+                if (poolResult.poolAddress) {
+                    priceToken = WVTRU_ADDRESS;
+                    priceTokenSymbol = 'WVTRU';
+                    priceTokenDecimals = 18;
+                    // Get WVTRU price first (should be available from USDC pool)
+                    basePrice = livePrice[WVTRU_ADDRESS];
+                    if (!basePrice) {
+                        throw new Error(`WVTRU price not available for ${tokenSymbol} calculation`);
+                    }
+                }
             }
 
-            console.log(`[DEBUG] Found pool ${poolAddress} for ${tokenSymbol} with fee ${fee / 10000}%`);
+            if (!poolResult.poolAddress) {
+                throw new Error(`No liquidity pool found for ${tokenSymbol} (tried USDC and WVTRU pairs)`);
+            }
+
+            const { poolAddress, fee } = poolResult;
+            console.log(`[DEBUG] Found pool ${poolAddress} for ${tokenSymbol}/${priceTokenSymbol} with fee ${fee / 10000}%`);
 
             const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
 
@@ -377,66 +411,71 @@ function SellPage() {
 
             console.log(`[DEBUG] Pool tokens: token0=${token0}, token1=${token1}`);
 
-            // CRITICAL: We need the tick value for correct calculation
-            const { tick } = await pool.slot0();
+            // Get the current tick value
+            const poolData = await pool.slot0();
+            const tick = poolData.tick;
             console.log(`[DEBUG] Pool tick: ${tick}`);
 
             // Get token decimals
             const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
-            const usdcContract = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, provider);
+            const priceTokenContract = new ethers.Contract(priceToken, ERC20_ABI, provider);
 
             const tokenDecimals = Number(await tokenContract.decimals());
-            const usdcDecimals = Number(await usdcContract.decimals());
+            const priceTokenDecimalsActual = Number(await priceTokenContract.decimals());
 
-            console.log(`[DEBUG] Token decimals: ${tokenDecimals}, USDC decimals: ${usdcDecimals}`);
+            console.log(`[DEBUG] Token decimals: ${tokenDecimals}, ${priceTokenSymbol} decimals: ${priceTokenDecimalsActual}`);
 
             // Determine token position in the pool
             const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-            // For VTRU/WVTRU, the tick is around -309073, which is extreme
-            // Use logarithmic calculation for numerical stability with extreme tick values
+            // Calculate price from tick with better precision handling
             const tickNum = Number(tick);
             let rawPrice;
 
-            // For extreme tick values, use logarithmic approach to avoid precision issues
-            if (Math.abs(tickNum) > 10000) {
-                const logBase = Math.log(1.0001);
-                const logResult = tickNum * logBase;
-                rawPrice = Math.exp(logResult);
-            } else {
-                // For normal ticks, direct calculation is fine
-                rawPrice = Math.pow(1.0001, tickNum);
+            // Use high-precision calculation for all tick values
+            try {
+                if (Math.abs(tickNum) > 50000) {
+                    // For very extreme tick values, use logarithmic approach
+                    const logBase = Math.log(1.0001);
+                    const logResult = tickNum * logBase;
+                    rawPrice = Math.exp(logResult);
+                    console.log(`[DEBUG] Used logarithmic calculation for extreme tick ${tickNum}`);
+                } else {
+                    // For normal ticks, direct calculation
+                    rawPrice = Math.pow(1.0001, tickNum);
+                }
+            } catch (mathError) {
+                console.warn(`[DEBUG] Math calculation failed for tick ${tickNum}, using fallback`, mathError);
+                // Fallback calculation for extreme values
+                rawPrice = Math.exp(tickNum * Math.log(1.0001));
             }
 
             // Apply token position adjustment
             let price;
             if (isTokenToken0) {
-                // If our token is token0, we need price0/price1 (inverse)
+                // If our token is token0, we need the inverse
                 price = 1 / rawPrice;
             } else {
-                // If our token is token1, we need price1/price0 (direct)
+                // If our token is token1, we use direct price
                 price = rawPrice;
             }
 
-            // Apply decimal adjustment (CRITICAL for correct price)
-            const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
+            // Apply decimal adjustment
+            const decimalAdjustment = Math.pow(10, priceTokenDecimalsActual - tokenDecimals);
             price = price * decimalAdjustment;
+
+            // Apply base price (for USDC this is 1.0, for WVTRU it's the WVTRU/USD price)
+            price = price * basePrice;
 
             console.log(`[DEBUG] Raw calculated price for ${tokenSymbol}: $${price}`);
 
-            // VTRU price should be around 0.037, verify by checking if tick is extreme negative
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
-                tickNum < -300000) {
-                // This is valid scientific calculation, NOT a hardcoded price
-                const expectedPrice = 0.037;
-                const tolerance = 0.01; // Allow 1% deviation
-                const deviation = Math.abs((price - expectedPrice) / expectedPrice);
+            // Sanity check for unreasonable prices
+            if (price <= 0 || !isFinite(price)) {
+                throw new Error(`Invalid price calculated: ${price}`);
+            }
 
-                if (deviation > tolerance) {
-                    console.log(`[DEBUG] Price calculation verification failed. Using scientific formula for extreme tick.`);
-                    // Use scientific formula for tick to price conversion - mathematically derived
-                    price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                }
+            if (price > 1000000) {
+                console.warn(`[DEBUG] Very high price calculated (${price}), might be incorrect`);
             }
 
             console.log(`[DEBUG] Final calculated price for ${tokenSymbol}: $${price}`);
@@ -444,9 +483,11 @@ function SellPage() {
             // Source description
             let source;
             if (tokenAddress === ethers.ZeroAddress) {
-                source = `Uniswap V3 (${fee / 10000}% WVTRU/USDC pool)`;
+                source = `Uniswap V3 (${fee / 10000}% WVTRU/${priceTokenSymbol} pool)`;
+            } else if (priceToken === WVTRU_ADDRESS) {
+                source = `Uniswap V3 (${fee / 10000}% ${tokenSymbol}/WVTRU pool)`;
             } else {
-                source = `Uniswap V3 (${fee / 10000}% pool)`;
+                source = `Uniswap V3 (${fee / 10000}% ${tokenSymbol}/${priceTokenSymbol} pool)`;
             }
 
             return { price, source };
@@ -456,9 +497,19 @@ function SellPage() {
         }
     };
 
-    // Fetch all token prices from Uniswap
-    const fetchUniswapPrices = async () => {
-        console.log("[DEBUG] Fetching prices for all tokens");
+    // Fetch all token prices from Uniswap with retry logic and better error handling
+    const fetchUniswapPrices = async (retryCount = 0) => {
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 2000; // 2 seconds
+
+        console.log(`[DEBUG] Fetching prices for all tokens (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+        
+        // Check if tokenList is populated
+        if (!tokenList || Object.keys(tokenList).length === 0) {
+            console.warn("[DEBUG] Token list is empty, cannot fetch prices");
+            return;
+        }
+
         try {
             const previousPrices = { ...livePrice };
             const newPrices = {};
@@ -466,8 +517,61 @@ function SellPage() {
             const newSources = { ...priceSources };
             const errors = {};
 
-            // Fetch prices for each token
-            for (const [address, token] of Object.entries(tokenList)) {
+            // First, ensure USDC price is set (it's always $1)
+            newPrices[USDC_ADDRESS] = 1.0;
+            newSources[USDC_ADDRESS] = 'USD Stablecoin';
+            changes[USDC_ADDRESS] = 0;
+
+            // Fetch WVTRU price first (needed for fallback calculations)
+            const tokenEntries = Object.entries(tokenList);
+            const wvtruEntry = tokenEntries.find(([address]) => address === WVTRU_ADDRESS);
+            
+            if (wvtruEntry) {
+                const [address, token] = wvtruEntry;
+                console.log(`[DEBUG] Getting WVTRU price first for fallback calculations`);
+                try {
+                    const { price, source } = await getUniswapPrice(address);
+
+                    if (price && price > 0) {
+                        newPrices[address] = price;
+                        newSources[address] = source;
+
+                        if (previousPrices[address]) {
+                            const changePercent = ((price - previousPrices[address]) / previousPrices[address]) * 100;
+                            changes[address] = changePercent;
+                        } else {
+                            changes[address] = 0;
+                        }
+                        console.log(`[DEBUG] WVTRU price fetched successfully: $${price}`);
+                    } else {
+                        throw new Error("Invalid price (zero or negative)");
+                    }
+                } catch (error) {
+                    console.warn(`Failed to get WVTRU price:`, error);
+                    errors[address] = error.message || 'Unknown error';
+                    
+                    // Keep old price if available
+                    if (previousPrices[address]) {
+                        newPrices[address] = previousPrices[address];
+                        changes[address] = 0;
+                        newSources[address] = 'Outdated (fetch failed)';
+                    } else {
+                        newPrices[address] = null;
+                        newSources[address] = 'No price data available';
+                    }
+                }
+
+                // Update state with WVTRU price for fallback use
+                setLivePrice(prev => ({ ...prev, [address]: newPrices[address] }));
+            }
+
+            // Fetch prices for remaining tokens
+            for (const [address, token] of tokenEntries) {
+                // Skip USDC (already set) and WVTRU (already processed)
+                if (address === USDC_ADDRESS || address === WVTRU_ADDRESS) {
+                    continue;
+                }
+
                 console.log(`[DEBUG] Getting price for ${token.symbol} (${address})`);
                 try {
                     const { price, source } = await getUniswapPrice(address);
@@ -483,6 +587,7 @@ function SellPage() {
                         } else {
                             changes[address] = 0;
                         }
+                        console.log(`[DEBUG] ${token.symbol} price: $${price}`);
                     } else {
                         throw new Error("Invalid price (zero or negative)");
                     }
@@ -500,9 +605,12 @@ function SellPage() {
                         newSources[address] = 'No price data available';
                     }
                 }
+
+                // Small delay between requests to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
 
-            // Update state
+            // Update all state at once
             setLivePrice(newPrices);
             setPriceChange(changes);
             setPriceSources(newSources);
@@ -521,14 +629,40 @@ function SellPage() {
                 }
             }
 
-            console.log("[DEBUG] Price update completed");
+            console.log("[DEBUG] Price update completed successfully");
+            
+            // Count successful vs failed prices
+            const totalTokens = Object.keys(tokenList).length;
+            const successfulPrices = Object.values(newPrices).filter(price => price !== null).length;
+            const failedPrices = totalTokens - successfulPrices;
+            
+            if (failedPrices > 0) {
+                console.warn(`[DEBUG] ${failedPrices}/${totalTokens} tokens failed to get prices`);
+            }
+
         } catch (error) {
             console.error("Error updating prices:", error);
+            
+            // Retry logic for network errors
+            if (retryCount < MAX_RETRIES && (
+                error.message.includes('network') || 
+                error.message.includes('timeout') ||
+                error.message.includes('fetch')
+            )) {
+                console.log(`[DEBUG] Retrying price fetch in ${RETRY_DELAY}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+                setTimeout(() => {
+                    fetchUniswapPrices(retryCount + 1);
+                }, RETRY_DELAY);
+            } else {
+                console.error(`[DEBUG] Price fetching failed after ${retryCount + 1} attempts`);
+                setStatus("Warning: Some token prices could not be fetched. You can still create listings.");
+            }
         }
     };
 
     // Initialize tokens
     const initializeTokens = async () => {
+        console.log("[DEBUG] Initializing tokens...");
         setLoadingPrices(true);
 
         const initialTokens = {};
@@ -552,6 +686,7 @@ function SellPage() {
                     wvtruSymbol = await wvtruContract.symbol();
                     wvtruName = await wvtruContract.name();
                     wvtruDecimals = await wvtruContract.decimals();
+                    console.log(`[DEBUG] WVTRU token details: ${wvtruName} (${wvtruSymbol}) - ${wvtruDecimals} decimals`);
                 } catch (e) {
                     console.warn("Could not fetch WVTRU details, using defaults", e);
                     wvtruSymbol = 'WVTRU';
@@ -584,6 +719,7 @@ function SellPage() {
                     usdcSymbol = await usdcContract.symbol();
                     usdcName = await usdcContract.name();
                     usdcDecimals = await usdcContract.decimals();
+                    console.log(`[DEBUG] USDC token details: ${usdcName} (${usdcSymbol}) - ${usdcDecimals} decimals`);
                 } catch (e) {
                     console.warn("Could not fetch USDC details, using defaults", e);
                     usdcSymbol = 'USDC';
@@ -598,7 +734,7 @@ function SellPage() {
                     decimals: usdcDecimals
                 };
 
-                // USDC is always $1
+                // USDC is always $1 - set immediately
                 setLivePrice(prev => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
                 setPriceSources(prev => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
 
@@ -615,20 +751,43 @@ function SellPage() {
                 setPriceSources(prev => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
             }
 
-            // Set token list with initial data
+            // Set token list with initial data - CRITICAL: Do this before any price fetching
+            console.log(`[DEBUG] Setting token list with ${Object.keys(initialTokens).length} tokens`);
             setTokenList(initialTokens);
             setLastUpdateTime(new Date());
 
+            // Build payment options now that token list is set
+            console.log("[DEBUG] Building initial payment options...");
+            const options = Object.entries(initialTokens).map(([address, token]) => ({
+                address,
+                name: `${token.symbol}${token.isNative ? ' (Native)' : ''}`,
+                fullName: token.name,
+                symbol: token.symbol,
+                price: address === USDC_ADDRESS ? 1.0 : null,
+                priceSource: address === USDC_ADDRESS ? 'USD Stablecoin' : 'Price pending...',
+                error: null
+            }));
+            setPaymentOptions(options);
+
+            console.log("[DEBUG] Token initialization completed successfully");
         } catch (error) {
             console.error("Error initializing tokens", error);
+            setStatus("Error loading token information. Please refresh the page.");
+            throw error; // Re-throw to prevent price fetching
         } finally {
             setLoadingPrices(false);
-            buildPaymentOptions();
         }
     };
 
     // Build payment options from token list
     const buildPaymentOptions = () => {
+        console.log("[DEBUG] Building payment options from token list");
+        if (!tokenList || Object.keys(tokenList).length === 0) {
+            console.warn("[DEBUG] Token list is empty, cannot build payment options");
+            setPaymentOptions([]);
+            return;
+        }
+
         const options = Object.entries(tokenList).map(([address, token]) => ({
             address,
             name: `${token.symbol}${token.isNative ? ' (Native)' : ''}`,
@@ -639,6 +798,7 @@ function SellPage() {
             error: priceErrors[address]
         }));
 
+        console.log(`[DEBUG] Built ${options.length} payment options`);
         setPaymentOptions(options);
     };
 
