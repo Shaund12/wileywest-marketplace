@@ -573,7 +573,7 @@ function MarketplacePage() {
                         {!isInitialized ? (
                             <div className="loading-container">
                                 <div className="loading-spinner"></div>
-                                <p>Initializing marketplace...</p>
+                                <p>{status || "Initializing marketplace..."}</p>
                             </div>
                         ) : isLoading ? (
                             <div className="loading-container">

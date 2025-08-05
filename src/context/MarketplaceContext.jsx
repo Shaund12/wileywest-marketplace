@@ -16,6 +16,12 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     // Initialize marketplace contract
     useEffect(() => {
         const initializeMarketplace = async () => {
+            if (!marketplaceAddress) {
+                console.warn("Marketplace contract address not configured");
+                setStatus("Marketplace not configured. Please check environment variables.");
+                return;
+            }
+            
             if (marketplaceAddress && provider) {
                 try {
                     console.log("Initializing marketplace contract...");
@@ -25,7 +31,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     console.log("Marketplace contract initialized successfully");
                 } catch (error) {
                     console.error("Error initializing marketplace contract:", error);
+                    setStatus("Failed to initialize marketplace contract. Please check network connection.");
                 }
+            } else if (!provider) {
+                setStatus("Connecting to blockchain network...");
             }
         };
 
@@ -164,6 +173,20 @@ const ERC20_ABI = [
     'function balanceOf(address owner) view returns (uint256)',
     'function decimals() view returns (uint8)',
     'function symbol() view returns (string)'
+];
+
+// ERC721 ABI for approvals
+const ERC721_APPROVAL_ABI = [
+    'function approve(address to, uint256 tokenId)',
+    'function setApprovalForAll(address operator, bool approved)',
+    'function getApproved(uint256 tokenId) view returns (address)',
+    'function isApprovedForAll(address owner, address operator) view returns (bool)'
+];
+
+// ERC1155 ABI for approvals
+const ERC1155_APPROVAL_ABI = [
+    'function setApprovalForAll(address operator, bool approved)',
+    'function isApprovedForAll(address account, address operator) view returns (bool)'
 ];
 
     // Replace the current buyListing function with this version

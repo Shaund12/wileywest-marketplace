@@ -78,7 +78,7 @@ const createParticles = (canvas) => {
 const collectionDetailsCache = {};
 
 function HotListingsPage() {
-    const { hotListings, fetchListings } = useMarketplace();
+    const { hotListings, fetchListings, status, isInitialized } = useMarketplace();
     const { provider } = useWallet();
     const particleCanvas = useRef(null);
     const cardsContainer = useRef(null);
@@ -325,7 +325,12 @@ function HotListingsPage() {
 
             {/* Collections view */}
             <div className="collections-container" ref={cardsContainer}>
-                {collectionsLoading ? (
+                {!isInitialized ? (
+                    <div className="loading-collections">
+                        <div className="loading-spinner"></div>
+                        <p>{status || "Marketplace not configured. Please check environment variables."}</p>
+                    </div>
+                ) : collectionsLoading ? (
                     <div className="loading-collections">
                         <div className="loading-spinner"></div>
                         <p>Loading collection information...</p>

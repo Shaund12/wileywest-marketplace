@@ -3,7 +3,6 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ethers } from 'ethers';
 import MarketplaceAbi from './abi/Marketplace.json';
-import { createClient } from '@supabase/supabase-js';
 
 // Components
 import Navigation from './components/Navigation';
@@ -19,11 +18,6 @@ import SellPage from './pages/SellPage';
 // Providers
 import { WalletProvider } from './context/WalletContext';
 import { MarketplaceProvider } from './context/MarketplaceContext';
-
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL || '',
-  import.meta.env.VITE_SUPABASE_ANON_KEY || ''
-);
 
 const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
 const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '';
