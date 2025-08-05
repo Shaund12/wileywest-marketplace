@@ -1,0 +1,17 @@
+<svg width="220" height="60" viewBox="0 0 220 60" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#5533ff"/>
+      <stop offset="50%" stop-color="#ff33cc"/>
+      <stop offset="100%" stop-color="#33ffff"/>
+    </linearGradient>
+  </defs>
+  <text x="10" y="40" font-family="Segoe UI" font-size="36" font-weight="700" fill="url(#grad)" filter="url(#glow)">WileyW€$T</text>
+</svg>

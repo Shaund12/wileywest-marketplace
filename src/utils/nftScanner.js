@@ -829,7 +829,7 @@ export class NFTScanner {
                 const allTransfers = [];
                 let startBlock = 0;
                 const currentBlock = await this.provider.getBlockNumber();
-                const chunkSize = 500000; // 500k blocks at a time
+                let chunkSize = 500000; // 500k blocks at a time
                 
                 while (startBlock <= currentBlock) {
                     const endBlock = Math.min(startBlock + chunkSize - 1, currentBlock);

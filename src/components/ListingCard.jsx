@@ -2,13 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
-import { formatTokenAmount, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
+import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
 
 function ListingCard({ listing, featured = false, showSeller = true }) {
     const { buyListing, status } = useMarketplace();
     const { wallet, connect, provider } = useWallet();
     const [tokenSymbol, setTokenSymbol] = useState('TOKEN'); // Default to generic symbol
-    const [displayPrice, setDisplayPrice] = useState('...');
+    const [priceDisplay, setPriceDisplay] = useState({
+        tokenAmount: '...',
+        tokenSymbol: 'TOKEN',
+        usdcValue: '0.00',
+        formatted: '...'
+    });
 
     const handleBuy = async () => {
         if (!wallet) {
@@ -30,24 +35,39 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
 
     // Format price and fetch token details when component mounts or listing changes
     useEffect(() => {
-        // Format the price
-        if (listing.pricePerUnit) {
-            const formattedPrice = formatTokenAmount(listing.pricePerUnit, listing.paymentToken);
-            setDisplayPrice(formattedPrice);
+        async function updatePriceDisplay() {
+            if (!listing.pricePerUnit || !provider) return;
+
+            try {
+                // Use the enhanced USDC price formatting
+                const priceInfo = await formatPriceWithUSDC(
+                    listing.pricePerUnit, 
+                    listing.paymentToken, 
+                    provider,
+                    false // Show only USDC value for cleaner display
+                );
+                
+                setPriceDisplay(priceInfo);
+                setTokenSymbol(priceInfo.tokenSymbol);
+            } catch (error) {
+                console.error('Error formatting price with USDC:', error);
+                // Fallback to basic formatting
+                const tokenDetails = await fetchTokenDetails(listing.paymentToken, provider).catch(() => ({
+                    symbol: getTokenSymbol(listing.paymentToken),
+                    decimals: 18
+                }));
+                
+                setPriceDisplay({
+                    tokenAmount: listing.pricePerUnit.toString(),
+                    tokenSymbol: tokenDetails.symbol,
+                    usdcValue: '0.00',
+                    formatted: `${listing.pricePerUnit.toString()} ${tokenDetails.symbol}`
+                });
+                setTokenSymbol(tokenDetails.symbol);
+            }
         }
 
-        // Fetch token symbol from blockchain
-        if (provider && listing.paymentToken && listing.paymentToken.startsWith('0x')) {
-            console.log(`Fetching token details for ${listing.paymentToken}`);
-            fetchTokenDetails(listing.paymentToken, provider)
-                .then(details => {
-                    console.log(`Token details for ${listing.paymentToken}:`, details);
-                    setTokenSymbol(details.symbol);
-                })
-                .catch(err => {
-                    console.error(`Error fetching token details:`, err);
-                });
-        }
+        updatePriceDisplay();
     }, [listing, provider]);
 
     return (
@@ -71,11 +91,16 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
 
                 <div className="listing-price">
                     <div className="price-amount">
-                        {displayPrice}
+                        ${priceDisplay.usdcValue}
                     </div>
                     <div className="price-currency">
-                        {tokenSymbol}
+                        USDC
                     </div>
+                    {priceDisplay.tokenSymbol !== 'USDC.pol' && (
+                        <div className="price-original">
+                            {priceDisplay.tokenAmount} {priceDisplay.tokenSymbol}
+                        </div>
+                    )}
                 </div>
 
                 {showSeller && (
