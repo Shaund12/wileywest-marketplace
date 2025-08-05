@@ -408,24 +408,37 @@
     }
 
     /**
-     * Format price display with USDC conversion
+     * Format price display with USDC conversion and enhanced error handling
      * @param {string|BigNumber} tokenAmount - Amount in token's base units
      * @param {string} tokenAddress - Token address
      * @param {ethers.providers.Provider} provider - Ethers provider
      * @param {boolean} showBothPrices - Whether to show both token amount and USDC value
-     * @returns {Promise<{tokenAmount: string, tokenSymbol: string, usdcValue: string, formatted: string}>}
+     * @returns {Promise<{tokenAmount: string, tokenSymbol: string, usdcValue: string, formatted: string, hasUSDCRate: boolean}>}
      */
     export async function formatPriceWithUSDC(tokenAmount, tokenAddress, provider, showBothPrices = true) {
         try {
             const tokenDetails = await fetchTokenDetails(tokenAddress, provider);
             const tokenAmountFormatted = formatTokenAmount(tokenAmount, tokenAddress);
-            const usdcValue = await convertToUSDCValue(tokenAmount, tokenAddress, provider);
+            
+            let usdcValue;
+            let hasUSDCRate = true;
+            
+            try {
+                usdcValue = await convertToUSDCValue(tokenAmount, tokenAddress, provider);
+            } catch (error) {
+                console.warn(`No USDC rate available for ${tokenAddress}:`, error);
+                usdcValue = 0;
+                hasUSDCRate = false;
+            }
             
             // Use higher precision for low-value tokens (same logic as SellPage)
             const usdcValueFormatted = usdcValue < 0.01 ? usdcValue.toFixed(6) : usdcValue.toFixed(2);
             
             let formatted;
-            if (tokenAddress === USDC_POL_ADDRESS) {
+            if (!hasUSDCRate) {
+                // When no USDC rate is available
+                formatted = `${tokenAmountFormatted} ${tokenDetails.symbol} (no USDC rate available)`;
+            } else if (tokenAddress === USDC_POL_ADDRESS) {
                 // For USDC.pol, just show the USDC amount
                 formatted = `$${tokenAmountFormatted}`;
             } else if (showBothPrices) {
@@ -439,8 +452,9 @@
             return {
                 tokenAmount: tokenAmountFormatted,
                 tokenSymbol: tokenDetails.symbol,
-                usdcValue: usdcValueFormatted,
-                formatted
+                usdcValue: hasUSDCRate ? usdcValueFormatted : '0.00',
+                formatted,
+                hasUSDCRate
             };
         } catch (error) {
             console.error(`Error formatting price with USDC:`, error);
@@ -450,7 +464,8 @@
                 tokenAmount: tokenAmountFormatted,
                 tokenSymbol,
                 usdcValue: '0.00',
-                formatted: `${tokenAmountFormatted} ${tokenSymbol}`
+                formatted: `${tokenAmountFormatted} ${tokenSymbol} (no USDC rate available)`,
+                hasUSDCRate: false
             };
         }
     }

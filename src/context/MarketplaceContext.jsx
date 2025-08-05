@@ -1,6 +1,7 @@
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
+import { convertToUSDCValue } from '../utils/tokenUtils';
 
 const MarketplaceContext = createContext();
 
@@ -12,6 +13,18 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const [status, setStatus] = useState('');
     const [isInitialized, setIsInitialized] = useState(false);
     const isConnectedRef = useRef(false);
+    
+    // New state for tracking sales and statistics
+    const [salesHistory, setSalesHistory] = useState([]);
+    const [canceledListings, setCanceledListings] = useState(new Set());
+    const [marketplaceStats, setMarketplaceStats] = useState({
+        totalSales: 0,
+        actualSoldVolume: 0,
+        currentListingVolume: 0,
+        transactionHistory: [],
+        topTokens: [],
+        mostActiveSellers: []
+    });
 
     // Initialize marketplace contract
     useEffect(() => {
@@ -23,6 +36,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     setMarketplace(contract);
                     setIsInitialized(true);
                     console.log("Marketplace contract initialized successfully");
+                    
+                    // Set up event listeners for sales tracking
+                    setupEventListeners(contract);
                 } catch (error) {
                     console.error("Error initializing marketplace contract:", error);
                 }
@@ -42,6 +58,129 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             isConnectedRef.current = false;
         }
     }, [signer, marketplace]);
+
+    // Set up event listeners for marketplace events
+    const setupEventListeners = (contract) => {
+        try {
+            // Listen for purchases (sales)
+            contract.on("NFTPurchased", (listingId, buyer, quantity, totalPrice, paymentToken) => {
+                console.log("NFT Purchased event:", { listingId, buyer, quantity, totalPrice, paymentToken });
+                
+                const saleData = {
+                    listingId: listingId.toString(),
+                    buyer,
+                    quantity: quantity.toString(),
+                    totalPrice: totalPrice.toString(),
+                    paymentToken,
+                    timestamp: Date.now(),
+                    type: 'sale'
+                };
+                
+                setSalesHistory(prev => [...prev, saleData]);
+            });
+
+            // Listen for canceled listings
+            contract.on("ListingCanceled", (listingId) => {
+                console.log("Listing Canceled event:", { listingId });
+                setCanceledListings(prev => new Set([...prev, listingId.toString()]));
+            });
+
+            // Listen for new listings
+            contract.on("ListingCreated", (listingId, seller, nftContract, tokenId, quantity, pricePerUnit, paymentToken, isERC1155) => {
+                console.log("New listing created:", { listingId, seller, nftContract });
+                // Refresh listings when new ones are created
+                setTimeout(fetchListings, 2000);
+            });
+
+            console.log("Event listeners set up successfully");
+        } catch (error) {
+            console.error("Error setting up event listeners:", error);
+        }
+    };
+
+    // Calculate comprehensive marketplace statistics
+    const calculateMarketplaceStats = async () => {
+        if (!provider) return;
+
+        try {
+            // Calculate actual sold volume from sales history
+            let actualSoldVolumeUSDC = 0;
+            const topTokensMap = {};
+            const sellerStatsMap = {};
+            
+            for (const sale of salesHistory) {
+                try {
+                    const usdcValue = await convertToUSDCValue(sale.totalPrice, sale.paymentToken, provider);
+                    actualSoldVolumeUSDC += usdcValue;
+                    
+                    // Track top tokens
+                    const tokenKey = sale.paymentToken || 'VTRU';
+                    if (!topTokensMap[tokenKey]) {
+                        topTokensMap[tokenKey] = { volume: 0, sales: 0, token: tokenKey };
+                    }
+                    topTokensMap[tokenKey].volume += usdcValue;
+                    topTokensMap[tokenKey].sales += 1;
+                } catch (error) {
+                    console.warn("Error calculating sale value:", error);
+                }
+            }
+
+            // Calculate current listing volume (excluding canceled listings)
+            let currentListingVolumeUSDC = 0;
+            const activeListings = listings.filter(listing => 
+                listing.active && !canceledListings.has(listing.id.toString())
+            );
+            
+            for (const listing of activeListings) {
+                try {
+                    const usdcValue = await convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider);
+                    currentListingVolumeUSDC += usdcValue;
+                    
+                    // Track seller stats
+                    if (!sellerStatsMap[listing.seller]) {
+                        sellerStatsMap[listing.seller] = { address: listing.seller, listingsCount: 0, totalVolume: 0 };
+                    }
+                    sellerStatsMap[listing.seller].listingsCount += 1;
+                    sellerStatsMap[listing.seller].totalVolume += usdcValue;
+                } catch (error) {
+                    console.warn("Error calculating listing value:", error);
+                }
+            }
+
+            // Process transaction history
+            const transactionHistory = salesHistory.map(sale => ({
+                ...sale,
+                formattedTimestamp: new Date(sale.timestamp).toLocaleString()
+            })).sort((a, b) => b.timestamp - a.timestamp).slice(0, 50); // Last 50 transactions
+
+            // Get top tokens sorted by volume
+            const topTokens = Object.values(topTokensMap)
+                .sort((a, b) => b.volume - a.volume)
+                .slice(0, 10);
+
+            // Get most active sellers
+            const mostActiveSellers = Object.values(sellerStatsMap)
+                .sort((a, b) => b.listingsCount - a.listingsCount)
+                .slice(0, 10);
+
+            setMarketplaceStats({
+                totalSales: salesHistory.length,
+                actualSoldVolume: actualSoldVolumeUSDC,
+                currentListingVolume: currentListingVolumeUSDC,
+                transactionHistory,
+                topTokens,
+                mostActiveSellers
+            });
+
+        } catch (error) {
+            console.error("Error calculating marketplace stats:", error);
+        }
+    };
+
+    // Recalculate stats when data changes
+    useEffect(() => {
+        calculateMarketplaceStats();
+    }, [salesHistory, listings, canceledListings, provider]);
 
     const fetchListings = async () => {
         if (!marketplace) {
@@ -404,7 +543,12 @@ const ERC1155_APPROVAL_ABI = [
             fetchListings,
             buyListing,
             createListing,
-            isInitialized
+            isInitialized,
+            // New marketplace statistics and data
+            salesHistory,
+            canceledListings,
+            marketplaceStats,
+            calculateMarketplaceStats
         }}>
             {children}
         </MarketplaceContext.Provider>
