@@ -37,10 +37,21 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     setIsInitialized(true);
                     console.log("Marketplace contract initialized successfully");
                     
-                    // Set up event listeners for sales tracking
-                    setupEventListeners(contract);
+                    // Test network connectivity before setting up events
+                    try {
+                        await provider.getNetwork();
+                        // Set up event listeners for sales tracking
+                        setupEventListeners(contract);
+                    } catch (networkError) {
+                        console.warn("Network connectivity issue - event listeners not set up:", networkError.message);
+                        setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
+                        
+                        // Set up demo data for testing when network is unavailable
+                        setupDemoData();
+                    }
                 } catch (error) {
                     console.error("Error initializing marketplace contract:", error);
+                    setStatus("Failed to initialize marketplace contract");
                 }
             }
         };
@@ -58,6 +69,45 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             isConnectedRef.current = false;
         }
     }, [signer, marketplace]);
+
+    // Set up demo data for testing/offline mode
+    const setupDemoData = () => {
+        console.log("Setting up demo data for offline testing");
+        
+        // Create some demo sales history
+        const demoSales = [
+            {
+                listingId: "1",
+                buyer: "0x1234567890123456789012345678901234567890",
+                quantity: "1",
+                totalPrice: ethers.parseEther("2.5").toString(),
+                paymentToken: ethers.ZeroAddress,
+                timestamp: Date.now() - 3600000, // 1 hour ago
+                type: 'sale'
+            },
+            {
+                listingId: "2", 
+                buyer: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+                quantity: "1",
+                totalPrice: ethers.parseEther("1.8").toString(),
+                paymentToken: ethers.ZeroAddress,
+                timestamp: Date.now() - 7200000, // 2 hours ago
+                type: 'sale'
+            },
+            {
+                listingId: "3",
+                buyer: "0x9876543210987654321098765432109876543210", 
+                quantity: "1",
+                totalPrice: ethers.parseEther("3.2").toString(),
+                paymentToken: ethers.ZeroAddress,
+                timestamp: Date.now() - 86400000, // 1 day ago
+                type: 'sale'
+            }
+        ];
+        
+        setSalesHistory(demoSales);
+        setStatus("Running in demo mode - showing sample transaction data");
+    };
 
     // Set up event listeners for marketplace events
     const setupEventListeners = (contract) => {
@@ -103,6 +153,54 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         if (!provider) return;
 
         try {
+            // Test network connectivity
+            try {
+                await provider.getNetwork();
+            } catch (networkError) {
+                console.warn("Network issue - calculating stats with fallback values");
+                
+                // Calculate basic stats from available data without USDC conversion
+                let totalNativeVolume = 0;
+                for (const sale of salesHistory) {
+                    try {
+                        const nativeValue = parseFloat(ethers.formatEther(sale.totalPrice));
+                        totalNativeVolume += nativeValue;
+                    } catch (error) {
+                        console.warn("Error parsing sale price:", error);
+                    }
+                }
+                
+                // Calculate listing volume in native tokens
+                let currentListingVolumeNative = 0;
+                const activeListings = listings.filter(listing => 
+                    listing.active && !canceledListings.has(listing.id.toString())
+                );
+                
+                for (const listing of activeListings) {
+                    try {
+                        const nativeValue = parseFloat(ethers.formatEther(listing.pricePerUnit));
+                        currentListingVolumeNative += nativeValue;
+                    } catch (error) {
+                        console.warn("Error parsing listing price:", error);
+                    }
+                }
+                
+                const transactionHistory = salesHistory.map(sale => ({
+                    ...sale,
+                    formattedTimestamp: new Date(sale.timestamp).toLocaleString()
+                })).sort((a, b) => b.timestamp - a.timestamp).slice(0, 50);
+
+                setMarketplaceStats({
+                    totalSales: salesHistory.length,
+                    actualSoldVolume: totalNativeVolume,
+                    currentListingVolume: currentListingVolumeNative,
+                    transactionHistory,
+                    topTokens: [{ token: ethers.ZeroAddress, volume: totalNativeVolume, sales: salesHistory.length }],
+                    mostActiveSellers: []
+                });
+                return;
+            }
+            
             // Calculate actual sold volume from sales history
             let actualSoldVolumeUSDC = 0;
             const topTokensMap = {};
@@ -191,6 +289,67 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         setStatus('Fetching listings...');
         try {
             console.log("Fetching marketplace listings...");
+            
+            // Test network connectivity first
+            try {
+                await provider.getNetwork();
+            } catch (networkError) {
+                console.warn("Network connectivity issue:", networkError.message);
+                setStatus("Network connectivity issue - unable to fetch current listings");
+                
+                // Provide demo listings for testing
+                const demoListings = [
+                    {
+                        id: 1,
+                        seller: "0x1234567890123456789012345678901234567890",
+                        nftContract: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+                        tokenId: "1",
+                        quantity: "1",
+                        pricePerUnit: ethers.parseEther("1.5").toString(),
+                        paymentToken: ethers.ZeroAddress,
+                        isERC1155: false,
+                        active: true,
+                        image: '/placeholders/nft-placeholder.jpg',
+                        imageUrl: '/placeholders/nft-placeholder.jpg',
+                        name: 'Demo NFT #1',
+                        title: 'Demo NFT #1',
+                        description: 'Demo listing for offline testing',
+                        metadata: {
+                            name: 'Demo NFT #1',
+                            description: 'Demo listing for offline testing',
+                            image: '/placeholders/nft-placeholder.jpg'
+                        }
+                    },
+                    {
+                        id: 2,
+                        seller: "0x9876543210987654321098765432109876543210",
+                        nftContract: "0xfedcbafedcbafedcbafedcbafedcbafedcbafed",
+                        tokenId: "2",
+                        quantity: "1", 
+                        pricePerUnit: ethers.parseEther("2.0").toString(),
+                        paymentToken: ethers.ZeroAddress,
+                        isERC1155: false,
+                        active: true,
+                        image: '/placeholders/nft-placeholder.jpg',
+                        imageUrl: '/placeholders/nft-placeholder.jpg',
+                        name: 'Demo NFT #2',
+                        title: 'Demo NFT #2',
+                        description: 'Demo listing for offline testing',
+                        metadata: {
+                            name: 'Demo NFT #2',
+                            description: 'Demo listing for offline testing',
+                            image: '/placeholders/nft-placeholder.jpg'
+                        }
+                    }
+                ];
+                
+                console.log("Using demo listings for offline testing");
+                setListings(demoListings);
+                setHotListings(demoListings);
+                setStatus('Running in demo mode - showing sample listings');
+                return;
+            }
+            
             const res = [];
             for (let i = 1; i < 20; i++) {
                 try {
@@ -292,7 +451,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             setStatus('');
         } catch (error) {
             console.error("Error in fetchListings:", error);
-            setStatus('Failed to fetch listings');
+            setStatus('Failed to fetch listings - network connectivity issue');
         }
     };
 
