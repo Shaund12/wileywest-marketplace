@@ -151,8 +151,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // Get the current block number
             const currentBlock = await provider.getBlockNumber();
             
-            // FETCH ALL DATA: Start from block 0 to get complete historical data
-            const fromBlock = 0;
+            // FETCH ALL DATA: Start from block 10,000,000 to get relevant historical data
+            const fromBlock = 10000000;
             
             console.log(`🔍 COMPREHENSIVE BLOCKCHAIN SCAN: Searching for ALL events from block ${fromBlock} to ${currentBlock}`);
             console.log(`📊 This will capture the complete transaction history of the marketplace`);
