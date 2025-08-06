@@ -78,6 +78,25 @@ export function SupabaseProvider({ children }) {
         }
     };
 
+    // Helper function to ensure Supabase is ready before caching
+    const ensureSupabaseReady = () => {
+        return new Promise((resolve) => {
+            if (supabase && isConnected) {
+                resolve(true);
+            } else {
+                // Wait for Supabase to be ready
+                const checkReady = () => {
+                    if (supabase && isConnected) {
+                        resolve(true);
+                    } else {
+                        setTimeout(checkReady, 100);
+                    }
+                };
+                setTimeout(checkReady, 100);
+            }
+        });
+    };
+
     // Cache utility functions
     const getCacheKey = (type, id) => `${type}:${id}`;
     
@@ -167,17 +186,20 @@ export function SupabaseProvider({ children }) {
 
     // Database operations for persistent caching
     const cacheListings = async (listings) => {
-        if (!supabase) {
-            console.log('⚠️ Supabase not available - skipping listings cache');
-            return;
-        }
-        
-        if (!listings || listings.length === 0) {
-            console.log('⚠️ No listings to cache');
-            return;
-        }
-        
         try {
+            // Ensure Supabase is ready before attempting to cache
+            await ensureSupabaseReady();
+            
+            if (!supabase) {
+                console.log('⚠️ Supabase not available - skipping listings cache');
+                return;
+            }
+            
+            if (!listings || listings.length === 0) {
+                console.log('⚠️ No listings to cache');
+                return;
+            }
+        
             console.log(`💾 Caching ${listings.length} listings to Supabase...`);
             console.log('📊 Sample listing data:', listings[0]);
             
@@ -368,17 +390,20 @@ export function SupabaseProvider({ children }) {
     };
 
     const cacheSalesHistory = async (salesHistory) => {
-        if (!supabase) {
-            console.log('⚠️ Supabase not available - skipping sales history cache');
-            return;
-        }
-        
-        if (!salesHistory || salesHistory.length === 0) {
-            console.log('⚠️ No sales history to cache');
-            return;
-        }
-
         try {
+            // Ensure Supabase is ready before attempting to cache
+            await ensureSupabaseReady();
+            
+            if (!supabase) {
+                console.log('⚠️ Supabase not available - skipping sales history cache');
+                return;
+            }
+            
+            if (!salesHistory || salesHistory.length === 0) {
+                console.log('⚠️ No sales history to cache');
+                return;
+            }
+
             console.log(`💾 Caching ${salesHistory.length} sales transactions to Supabase...`);
             console.log('📊 Sample sales data:', salesHistory[0]);
             
@@ -572,7 +597,10 @@ export function SupabaseProvider({ children }) {
         
         // Real-time subscriptions
         subscribeToListings,
-        subscribeToProfiles
+        subscribeToProfiles,
+        
+        // Utility functions
+        ensureSupabaseReady
     };
 
     return (
