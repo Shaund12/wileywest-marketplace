@@ -11,6 +11,14 @@ function MarketplaceStats() {
         totalSales,
         actualSoldVolume,
         currentListingVolume,
+        // Time-based metrics
+        volume24h,
+        volume7d,
+        volume30d,
+        volumeAllTime,
+        sales24h,
+        sales7d,
+        sales30d,
         transactionHistory,
         topTokens,
         mostActiveSellers
@@ -18,6 +26,7 @@ function MarketplaceStats() {
 
     const tabs = [
         { id: 'overview', label: 'Overview' },
+        { id: 'volume', label: 'Volume Analytics' },
         { id: 'transactions', label: 'Transaction History' },
         { id: 'tokens', label: 'Top Tokens' },
         { id: 'sellers', label: 'Active Sellers' }
@@ -65,14 +74,17 @@ function MarketplaceStats() {
             {/* Show data status */}
             {salesHistory.length === 0 && !status.includes('demo mode') && (
                 <div className="data-status-notice">
-                    <p>📊 No transaction data found. If you've made recent purchases, try refreshing to fetch the latest blockchain events.</p>
+                    <p>📊 No transaction data found. Try refreshing to fetch the latest blockchain events from the complete marketplace history.</p>
+                    <button className="refresh-data-button" onClick={handleRefresh} disabled={isRefreshing}>
+                        {isRefreshing ? 'Scanning Blockchain...' : '🔍 Scan All Blockchain History'}
+                    </button>
                 </div>
             )}
             
             {/* Show loading status */}
-            {status && status.includes('Fetching past sales events') && (
+            {status && (status.includes('Fetching') || status.includes('Scanning') || status.includes('Processing')) && (
                 <div className="loading-status-notice">
-                    <p>🔄 Loading transaction history from blockchain...</p>
+                    <p>🔄 {status}</p>
                 </div>
             )}
             
@@ -88,6 +100,9 @@ function MarketplaceStats() {
                         {tab.id === 'transactions' && salesHistory.length > 0 && (
                             <span className="tab-badge">{salesHistory.length}</span>
                         )}
+                        {tab.id === 'volume' && totalSales > 0 && (
+                            <span className="tab-badge">📊</span>
+                        )}
                     </button>
                 ))}
             </div>
@@ -97,27 +112,172 @@ function MarketplaceStats() {
                 {activeTab === 'overview' && (
                     <div className="overview-stats">
                         <div className="stats-grid">
-                            <div className="stat-card">
-                                <h3>Total Sales</h3>
-                                <p className="stat-value">{totalSales}</p>
-                                <span className="stat-label">Completed Transactions</span>
+                            <div className="stat-card highlight">
+                                <h3>🔥 24h Volume</h3>
+                                <p className="stat-value">${formatPrice(volume24h || 0)}</p>
+                                <span className="stat-label">{sales24h || 0} sales in last 24 hours</span>
                             </div>
                             <div className="stat-card">
-                                <h3>Actual Sold Volume</h3>
-                                <p className="stat-value">${formatPrice(actualSoldVolume)}</p>
-                                <span className="stat-label">USDC Value</span>
+                                <h3>📈 Total Volume (All Time)</h3>
+                                <p className="stat-value">${formatPrice(volumeAllTime || actualSoldVolume || 0)}</p>
+                                <span className="stat-label">{totalSales} total transactions</span>
                             </div>
                             <div className="stat-card">
-                                <h3>Current Listing Volume</h3>
+                                <h3>💰 Current Listings</h3>
                                 <p className="stat-value">${formatPrice(currentListingVolume)}</p>
-                                <span className="stat-label">Active Listings (USDC)</span>
+                                <span className="stat-label">Available for purchase</span>
                             </div>
                             <div className="stat-card">
-                                <h3>Average Sale Price</h3>
+                                <h3>📊 Average Sale</h3>
                                 <p className="stat-value">
-                                    ${totalSales > 0 ? formatPrice(actualSoldVolume / totalSales) : '0.00'}
+                                    ${totalSales > 0 ? formatPrice((volumeAllTime || actualSoldVolume) / totalSales) : '0.00'}
                                 </p>
-                                <span className="stat-label">Per Transaction</span>
+                                <span className="stat-label">Per transaction</span>
+                            </div>
+                        </div>
+                        
+                        {/* Quick Volume Summary */}
+                        <div className="volume-summary">
+                            <h3>📅 Volume by Time Period</h3>
+                            <div className="volume-periods">
+                                <div className="period-item">
+                                    <span className="period-label">24 Hours:</span>
+                                    <span className="period-value">${formatPrice(volume24h || 0)} ({sales24h || 0} sales)</span>
+                                </div>
+                                <div className="period-item">
+                                    <span className="period-label">7 Days:</span>
+                                    <span className="period-value">${formatPrice(volume7d || 0)} ({sales7d || 0} sales)</span>
+                                </div>
+                                <div className="period-item">
+                                    <span className="period-label">30 Days:</span>
+                                    <span className="period-value">${formatPrice(volume30d || 0)} ({sales30d || 0} sales)</span>
+                                </div>
+                                <div className="period-item">
+                                    <span className="period-label">All Time:</span>
+                                    <span className="period-value">${formatPrice(volumeAllTime || actualSoldVolume || 0)} ({totalSales} sales)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'volume' && (
+                    <div className="volume-analytics">
+                        <h3>📊 Comprehensive Volume Analytics</h3>
+                        
+                        <div className="volume-metrics-grid">
+                            <div className="volume-metric-card">
+                                <h4>🔥 24 Hour Activity</h4>
+                                <div className="metric-details">
+                                    <div className="metric-row">
+                                        <span>Volume:</span>
+                                        <span className="metric-value">${formatPrice(volume24h || 0)}</span>
+                                    </div>
+                                    <div className="metric-row">
+                                        <span>Sales:</span>
+                                        <span className="metric-value">{sales24h || 0} transactions</span>
+                                    </div>
+                                    <div className="metric-row">
+                                        <span>Avg Sale:</span>
+                                        <span className="metric-value">
+                                            ${(sales24h || 0) > 0 ? formatPrice((volume24h || 0) / (sales24h || 1)) : '0.00'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="volume-metric-card">
+                                <h4>📅 7 Day Activity</h4>
+                                <div className="metric-details">
+                                    <div className="metric-row">
+                                        <span>Volume:</span>
+                                        <span className="metric-value">${formatPrice(volume7d || 0)}</span>
+                                    </div>
+                                    <div className="metric-row">
+                                        <span>Sales:</span>
+                                        <span className="metric-value">{sales7d || 0} transactions</span>
+                                    </div>
+                                    <div className="metric-row">
+                                        <span>Avg Sale:</span>
+                                        <span className="metric-value">
+                                            ${(sales7d || 0) > 0 ? formatPrice((volume7d || 0) / (sales7d || 1)) : '0.00'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="volume-metric-card">
+                                <h4>🗓️ 30 Day Activity</h4>
+                                <div className="metric-details">
+                                    <div className="metric-row">
+                                        <span>Volume:</span>
+                                        <span className="metric-value">${formatPrice(volume30d || 0)}</span>
+                                    </div>
+                                    <div className="metric-row">
+                                        <span>Sales:</span>
+                                        <span className="metric-value">{sales30d || 0} transactions</span>
+                                    </div>
+                                    <div className="metric-row">
+                                        <span>Avg Sale:</span>
+                                        <span className="metric-value">
+                                            ${(sales30d || 0) > 0 ? formatPrice((volume30d || 0) / (sales30d || 1)) : '0.00'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="volume-metric-card highlight">
+                                <h4>🏆 All Time Activity</h4>
+                                <div className="metric-details">
+                                    <div className="metric-row">
+                                        <span>Volume:</span>
+                                        <span className="metric-value">${formatPrice(volumeAllTime || actualSoldVolume || 0)}</span>
+                                    </div>
+                                    <div className="metric-row">
+                                        <span>Sales:</span>
+                                        <span className="metric-value">{totalSales} transactions</span>
+                                    </div>
+                                    <div className="metric-row">
+                                        <span>Avg Sale:</span>
+                                        <span className="metric-value">
+                                            ${totalSales > 0 ? formatPrice((volumeAllTime || actualSoldVolume || 0) / totalSales) : '0.00'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Volume Comparison */}
+                        <div className="volume-comparison">
+                            <h4>📈 Volume Trends</h4>
+                            <div className="comparison-items">
+                                <div className="comparison-item">
+                                    <span className="comparison-label">Market Velocity (24h vs 7d avg):</span>
+                                    <span className="comparison-value">
+                                        {volume7d > 0 ? 
+                                            `${((volume24h || 0) / ((volume7d || 0) / 7) * 100).toFixed(1)}%` : 
+                                            'N/A'
+                                        }
+                                    </span>
+                                </div>
+                                <div className="comparison-item">
+                                    <span className="comparison-label">Monthly Progress:</span>
+                                    <span className="comparison-value">
+                                        {volume30d > 0 ? 
+                                            `${((volume7d || 0) / (volume30d || 0) * 100).toFixed(1)}%` : 
+                                            'N/A'
+                                        }
+                                    </span>
+                                </div>
+                                <div className="comparison-item">
+                                    <span className="comparison-label">Current Listings vs Sold Volume:</span>
+                                    <span className="comparison-value">
+                                        {(volumeAllTime || actualSoldVolume) > 0 ? 
+                                            `${(currentListingVolume / (volumeAllTime || actualSoldVolume || 1) * 100).toFixed(1)}%` : 
+                                            'N/A'
+                                        }
+                                    </span>
+                                </div>
                             </div>
                         </div>
                     </div>

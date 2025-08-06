@@ -21,6 +21,15 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         totalSales: 0,
         actualSoldVolume: 0,
         currentListingVolume: 0,
+        // Time-based volume metrics
+        volume24h: 0,
+        volume7d: 0,
+        volume30d: 0,
+        volumeAllTime: 0,
+        // Sales count metrics
+        sales24h: 0,
+        sales7d: 0,
+        sales30d: 0,
         transactionHistory: [],
         topTokens: [],
         mostActiveSellers: []
@@ -127,8 +136,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         if (!contract || !provider) return;
         
         try {
-            setStatus("Fetching past sales events from blockchain...");
-            console.log("Fetching past sales events from blockchain...");
+            setStatus("Fetching ALL historical sales events from blockchain...");
+            console.log("Fetching ALL historical sales events from blockchain...");
             
             // Test network connectivity first
             try {
@@ -142,35 +151,70 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // Get the current block number
             const currentBlock = await provider.getBlockNumber();
             
-            // Look back up to 10,000 blocks (approximately 1-2 days depending on block time)
-            const fromBlock = Math.max(0, currentBlock - 10000);
+            // FETCH ALL DATA: Start from block 0 to get complete historical data
+            const fromBlock = 0;
             
-            console.log(`Searching for events from block ${fromBlock} to ${currentBlock}`);
-            setStatus(`Searching blockchain events from block ${fromBlock} to ${currentBlock}...`);
+            console.log(`🔍 COMPREHENSIVE BLOCKCHAIN SCAN: Searching for ALL events from block ${fromBlock} to ${currentBlock}`);
+            console.log(`📊 This will capture the complete transaction history of the marketplace`);
+            setStatus(`🔍 Scanning entire blockchain history from block ${fromBlock} to ${currentBlock}... This may take a moment.`);
             
-            // Query past NFTPurchased events
-            const purchasedEvents = await contract.queryFilter(
-                contract.filters.NFTPurchased(),
-                fromBlock,
-                currentBlock
-            );
+            let purchasedEvents = [];
+            let canceledEvents = [];
             
-            console.log(`Found ${purchasedEvents.length} past purchase events`);
+            // For very large block ranges, we might need to chunk the requests
+            const CHUNK_SIZE = 50000; // Scan in chunks to avoid RPC limits
             
-            // Query past ListingCanceled events  
-            const canceledEvents = await contract.queryFilter(
-                contract.filters.ListingCanceled(),
-                fromBlock,
-                currentBlock
-            );
-            
-            console.log(`Found ${canceledEvents.length} past canceled events`);
-            setStatus(`Processing ${purchasedEvents.length} purchase events and ${canceledEvents.length} canceled events...`);
-            
-            // Process purchase events
-            const pastSales = [];
-            for (const event of purchasedEvents) {
+            for (let chunkStart = fromBlock; chunkStart <= currentBlock; chunkStart += CHUNK_SIZE) {
+                const chunkEnd = Math.min(chunkStart + CHUNK_SIZE - 1, currentBlock);
+                
+                console.log(`📋 Scanning chunk: blocks ${chunkStart} to ${chunkEnd}`);
+                setStatus(`📋 Scanning blocks ${chunkStart} to ${chunkEnd}...`);
+                
                 try {
+                    // Query purchase events for this chunk
+                    const chunkPurchased = await contract.queryFilter(
+                        contract.filters.NFTPurchased(),
+                        chunkStart,
+                        chunkEnd
+                    );
+                    
+                    // Query canceled events for this chunk
+                    const chunkCanceled = await contract.queryFilter(
+                        contract.filters.ListingCanceled(),
+                        chunkStart,
+                        chunkEnd
+                    );
+                    
+                    purchasedEvents = [...purchasedEvents, ...chunkPurchased];
+                    canceledEvents = [...canceledEvents, ...chunkCanceled];
+                    
+                    console.log(`📊 Chunk complete: Found ${chunkPurchased.length} purchases, ${chunkCanceled.length} cancellations`);
+                    
+                    // Small delay to prevent overwhelming the RPC
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                } catch (chunkError) {
+                    console.warn(`⚠️ Error scanning chunk ${chunkStart}-${chunkEnd}:`, chunkError);
+                    // Continue with next chunk even if one fails
+                }
+            }
+            
+            console.log(`🎉 COMPREHENSIVE SCAN COMPLETE:`);
+            console.log(`📈 Found ${purchasedEvents.length} total purchase events`);
+            console.log(`❌ Found ${canceledEvents.length} total canceled events`);
+            
+            setStatus(`🎉 Blockchain scan complete! Processing ${purchasedEvents.length} purchase events and ${canceledEvents.length} canceled events...`);
+            
+            
+            // Process purchase events with detailed logging
+            const pastSales = [];
+            console.log(`🔄 Processing ${purchasedEvents.length} purchase events...`);
+            
+            for (let i = 0; i < purchasedEvents.length; i++) {
+                const event = purchasedEvents[i];
+                try {
+                    setStatus(`📋 Processing transaction ${i + 1}/${purchasedEvents.length}...`);
+                    
                     const block = await event.getBlock();
                     const saleData = {
                         listingId: event.args.listingId.toString(),
@@ -183,51 +227,87 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         blockNumber: event.blockNumber,
                         transactionHash: event.transactionHash
                     };
+                    
                     pastSales.push(saleData);
+                    
+                    // Log every 10th transaction for progress tracking
+                    if ((i + 1) % 10 === 0 || i === purchasedEvents.length - 1) {
+                        console.log(`📊 Processed ${i + 1}/${purchasedEvents.length} transactions`);
+                    }
                 } catch (eventError) {
-                    console.warn("Error processing past sale event:", eventError);
+                    console.warn(`⚠️ Error processing purchase event ${i + 1}:`, eventError);
+                    // Add minimal data even if we can't get block info
+                    try {
+                        const saleData = {
+                            listingId: event.args.listingId.toString(),
+                            buyer: event.args.buyer,
+                            quantity: event.args.quantity.toString(),
+                            totalPrice: event.args.totalPrice.toString(),
+                            paymentToken: event.args.paymentToken,
+                            timestamp: Date.now(), // Fallback timestamp
+                            type: 'sale',
+                            blockNumber: event.blockNumber,
+                            transactionHash: event.transactionHash
+                        };
+                        pastSales.push(saleData);
+                    } catch (fallbackError) {
+                        console.error(`❌ Failed to process event ${i + 1} completely:`, fallbackError);
+                    }
                 }
             }
             
             // Process canceled events
+            console.log(`🔄 Processing ${canceledEvents.length} canceled events...`);
             const pastCanceled = new Set();
-            for (const event of canceledEvents) {
+            for (let i = 0; i < canceledEvents.length; i++) {
+                const event = canceledEvents[i];
                 try {
                     pastCanceled.add(event.args.listingId.toString());
                 } catch (eventError) {
-                    console.warn("Error processing past canceled event:", eventError);
+                    console.warn(`⚠️ Error processing canceled event ${i + 1}:`, eventError);
                 }
             }
+            
             
             // Merge with existing data (avoid duplicates)
             setSalesHistory(prev => {
                 const existingHashes = new Set(prev.map(sale => sale.transactionHash));
                 const newSales = pastSales.filter(sale => !existingHashes.has(sale.transactionHash));
                 const merged = [...prev, ...newSales].sort((a, b) => b.timestamp - a.timestamp);
-                console.log(`Merged sales history: ${merged.length} total transactions (${newSales.length} new from blockchain)`);
+                
+                console.log(`📊 FINAL SALES HISTORY SUMMARY:`);
+                console.log(`💾 Previous sales: ${prev.length}`);
+                console.log(`🆕 New sales from blockchain: ${newSales.length}`);
+                console.log(`📈 Total sales history: ${merged.length} transactions`);
+                
                 return merged;
             });
             
             setCanceledListings(prev => {
                 const merged = new Set([...prev, ...pastCanceled]);
-                console.log(`Updated canceled listings: ${merged.size} total`);
+                console.log(`❌ Updated canceled listings: ${merged.size} total`);
                 return merged;
             });
             
-            // Success message
-            const newEventsFound = pastSales.length > 0 || pastCanceled.size > 0;
-            if (newEventsFound) {
-                setStatus(`✅ Found ${pastSales.length} purchase transactions and ${pastCanceled.size} canceled listings from blockchain`);
-                setTimeout(() => setStatus(""), 5000);
+            // Comprehensive success message
+            const totalEventsFound = pastSales.length + pastCanceled.size;
+            if (totalEventsFound > 0) {
+                console.log(`🎉 COMPREHENSIVE BLOCKCHAIN SCAN COMPLETE!`);
+                console.log(`📈 Total transactions found: ${pastSales.length}`);
+                console.log(`❌ Total cancellations found: ${pastCanceled.size}`);
+                
+                setStatus(`✅ Complete blockchain scan finished! Found ${pastSales.length} purchase transactions and ${pastCanceled.size} canceled listings.`);
+                setTimeout(() => setStatus(""), 8000);
             } else {
-                setStatus("✅ Blockchain scan complete - no new transactions found");
-                setTimeout(() => setStatus(""), 3000);
+                console.log(`📋 Blockchain scan complete - no transaction history found in smart contract`);
+                setStatus("✅ Blockchain scan complete - no historical transactions found in smart contract. This could mean the marketplace is new or transactions happened on a different contract.");
+                setTimeout(() => setStatus(""), 8000);
             }
             
         } catch (error) {
-            console.error("Error fetching past sales events:", error);
-            setStatus(`❌ Error fetching blockchain events: ${error.message}`);
-            setTimeout(() => setStatus(""), 5000);
+            console.error("❌ Error fetching past sales events:", error);
+            setStatus(`❌ Error fetching blockchain events: ${error.message}. Check console for details.`);
+            setTimeout(() => setStatus(""), 10000);
         }
     };
 
@@ -358,11 +438,38 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 console.warn("Network issue - calculating stats with fallback values");
                 
                 // Calculate basic stats from available data without USDC conversion
+                const now = Date.now();
+                const day = 24 * 60 * 60 * 1000;
+                const week = 7 * day;
+                const month = 30 * day;
+                
                 let totalNativeVolume = 0;
+                let volume24h = 0;
+                let volume7d = 0;
+                let volume30d = 0;
+                let sales24h = 0;
+                let sales7d = 0;
+                let sales30d = 0;
+                
                 for (const sale of salesHistory) {
                     try {
                         const nativeValue = parseFloat(ethers.formatEther(sale.totalPrice));
                         totalNativeVolume += nativeValue;
+                        
+                        // Time-based calculations
+                        const saleAge = now - sale.timestamp;
+                        if (saleAge <= day) {
+                            volume24h += nativeValue;
+                            sales24h++;
+                        }
+                        if (saleAge <= week) {
+                            volume7d += nativeValue;
+                            sales7d++;
+                        }
+                        if (saleAge <= month) {
+                            volume30d += nativeValue;
+                            sales30d++;
+                        }
                     } catch (error) {
                         console.warn("Error parsing sale price:", error);
                     }
@@ -392,6 +499,14 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     totalSales: salesHistory.length,
                     actualSoldVolume: totalNativeVolume,
                     currentListingVolume: currentListingVolumeNative,
+                    // Time-based metrics
+                    volume24h,
+                    volume7d,
+                    volume30d,
+                    volumeAllTime: totalNativeVolume,
+                    sales24h,
+                    sales7d,
+                    sales30d,
                     transactionHistory,
                     topTokens: [{ token: ethers.ZeroAddress, volume: totalNativeVolume, sales: salesHistory.length }],
                     mostActiveSellers: []
@@ -399,8 +514,20 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 return;
             }
             
-            // Calculate actual sold volume from sales history
+            // Calculate actual sold volume from sales history with USDC conversion
+            const now = Date.now();
+            const day = 24 * 60 * 60 * 1000;
+            const week = 7 * day;
+            const month = 30 * day;
+            
             let actualSoldVolumeUSDC = 0;
+            let volume24hUSDC = 0;
+            let volume7dUSDC = 0;
+            let volume30dUSDC = 0;
+            let sales24h = 0;
+            let sales7d = 0;
+            let sales30d = 0;
+            
             const topTokensMap = {};
             const sellerStatsMap = {};
             
@@ -408,6 +535,21 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 try {
                     const usdcValue = await convertToUSDCValue(sale.totalPrice, sale.paymentToken, provider);
                     actualSoldVolumeUSDC += usdcValue;
+                    
+                    // Time-based volume calculations
+                    const saleAge = now - sale.timestamp;
+                    if (saleAge <= day) {
+                        volume24hUSDC += usdcValue;
+                        sales24h++;
+                    }
+                    if (saleAge <= week) {
+                        volume7dUSDC += usdcValue;
+                        sales7d++;
+                    }
+                    if (saleAge <= month) {
+                        volume30dUSDC += usdcValue;
+                        sales30d++;
+                    }
                     
                     // Track top tokens
                     const tokenKey = sale.paymentToken || 'VTRU';
@@ -463,6 +605,15 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 totalSales: salesHistory.length,
                 actualSoldVolume: actualSoldVolumeUSDC,
                 currentListingVolume: currentListingVolumeUSDC,
+                // Time-based volume metrics
+                volume24h: volume24hUSDC,
+                volume7d: volume7dUSDC,
+                volume30d: volume30dUSDC,
+                volumeAllTime: actualSoldVolumeUSDC,
+                // Sales count metrics
+                sales24h,
+                sales7d,
+                sales30d,
                 transactionHistory,
                 topTokens,
                 mostActiveSellers
