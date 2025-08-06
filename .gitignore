@@ -5,3 +5,14 @@
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Build output
+dist/
+build/
+
+# Dependencies
+node_modules/
+
+# Temporary files
+*.tmp
+*.temp

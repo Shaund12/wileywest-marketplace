@@ -60,6 +60,7 @@ export class NFTScanner {
         this.loadKnownErc20s();
         this.metadataCache = this.loadMetadataCache();
         this.cachedNfts = null;
+        this.scanStartTime = null; // Track scan timing
         
         // Background scanning state
         this.isBackgroundScanning = false;
@@ -216,10 +217,20 @@ export class NFTScanner {
         }
     }
 
-    // Update progress and report
+    // Update progress and report with enhanced feedback
     updateProgress(updates) {
         this.progress = { ...this.progress, ...updates };
-        this.updateStatus(`Scanning: Found ${this.progress.found} NFTs | Scanned ${this.progress.scanned}/${this.progress.total || '?'}`);
+        
+        // Calculate scanning rate for better user feedback
+        const elapsed = Date.now() - (this.scanStartTime || Date.now());
+        const rate = this.progress.scanned > 0 ? (this.progress.scanned / (elapsed / 1000)).toFixed(1) : 0;
+        
+        // Estimate time remaining
+        const remaining = this.progress.total > this.progress.scanned ? 
+            ((this.progress.total - this.progress.scanned) / rate) : 0;
+        const etaText = remaining > 0 && remaining < 3600 ? ` (ETA: ${Math.ceil(remaining)}s)` : '';
+        
+        this.updateStatus(`🔍 Found ${this.progress.found} NFTs | Scanned ${this.progress.scanned}/${this.progress.total || '?'} | ${rate}/s${etaText}`);
     }
 
     // Get all NFTs with caching support
@@ -278,9 +289,12 @@ export class NFTScanner {
         }
     }
 
-    // Comprehensive scan for NFTs across ALL HISTORY
+    // Comprehensive scan for NFTs across ALL HISTORY with enhanced performance
     async scanAllNFTs(isBackground = false) {
         try {
+            // Start timing for performance tracking
+            this.scanStartTime = Date.now();
+            
             // Reset progress
             this.progress = { found: 0, scanned: 0, total: 0 };
             
@@ -288,7 +302,7 @@ export class NFTScanner {
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
             
             // Add contracts from ALL historical transfers
-            this.updateStatus("Finding NFT transfers to your wallet...");
+            this.updateStatus("🔍 Discovering NFT contracts from complete blockchain history...");
             const transferContracts = await this.findContractsByTransfers();
             contractsToScan.push(...transferContracts);
             
@@ -304,7 +318,7 @@ export class NFTScanner {
                 
             // Update total for progress tracking
             this.updateProgress({ total: contractsToScan.length });
-            this.updateStatus(`Found ${contractsToScan.length} potential NFT contracts to scan`);
+            this.updateStatus(`🎯 Found ${contractsToScan.length} potential NFT contracts to scan with enhanced performance`);
             
             // Save contract cache and known ERC20s periodically
             const saveInterval = setInterval(() => {
@@ -312,11 +326,11 @@ export class NFTScanner {
                 this.saveKnownErc20s();
             }, 10000);
             
-            // Gather all NFTs
+            // Gather all NFTs with better performance
             const allNfts = [];
             
-            // Process in batches (smaller batch size for background scan)
-            const batchSize = isBackground ? 1 : 3;
+            // Process in optimized batches (smaller batch size for background scan)
+            const batchSize = isBackground ? 2 : 4; // Increased parallel processing for speed
             
             try {
                 for (let i = 0; i < contractsToScan.length; i += batchSize) {
@@ -325,7 +339,7 @@ export class NFTScanner {
                     // Process contracts in parallel
                     const batchResults = await Promise.all(batch.map(address => 
                         this.scanSingleContract(address).catch(e => {
-                            console.error(`Error in batch scan for ${address}:`, e);
+                            console.error(`Error in enhanced batch scan for ${address}:`, e);
                             return [];
                         })
                     ));
@@ -334,13 +348,13 @@ export class NFTScanner {
                     batchResults.forEach(nfts => allNfts.push(...nfts));
                     
                     // For background scan, yield to main thread periodically
-                    if (isBackground && i % 10 === 0) {
-                        await new Promise(r => setTimeout(r, 100));
+                    if (isBackground && i % 8 === 0) {
+                        await new Promise(r => setTimeout(r, 50));
                     }
                     
-                    // Small delay between batches
+                    // Optimized delay between batches for faster scanning
                     if (i + batchSize < contractsToScan.length) {
-                        await new Promise(r => setTimeout(r, isBackground ? 500 : 300));
+                        await new Promise(r => setTimeout(r, isBackground ? 300 : 200));
                     }
                 }
             } finally {
@@ -349,11 +363,12 @@ export class NFTScanner {
                 this.saveKnownErc20s();
             }
             
-            this.updateStatus(`Complete! Found ${allNfts.length} NFTs`);
+            const scanDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
+            this.updateStatus(`✅ Enhanced scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s from complete blockchain history`);
             return allNfts;
         } catch (error) {
             console.error("Error in comprehensive NFT scan:", error);
-            this.updateStatus(`Error scanning: ${error.message}`);
+            this.updateStatus(`❌ Error scanning: ${error.message}`);
             return this.nfts; // Return whatever we found so far
         }
     }
@@ -501,7 +516,7 @@ export class NFTScanner {
             let chunkSize = 100000; // Start with 100k blocks
             let failedAttempts = 0;
             
-            // Process in chunks from the beginning of chain history
+            // Process in chunks from the beginning of blockchain history for complete NFT discovery
             for (let startBlock = 0; startBlock < currentBlock; startBlock += chunkSize) {
                 const endBlock = Math.min(startBlock + chunkSize - 1, currentBlock);
                 
@@ -825,7 +840,7 @@ export class NFTScanner {
             
             // Try to find all transfers to this user
             try {
-                // Start from the beginning of history but be prepared to chunk if needed
+                // Start from the beginning of blockchain history for complete NFT discovery
                 const allTransfers = [];
                 let startBlock = 0;
                 const currentBlock = await this.provider.getBlockNumber();
@@ -1103,7 +1118,7 @@ export class NFTScanner {
         try {
             const tokenIds = new Set();
             
-            // NO BLOCK LIMIT - scan from the beginning!
+            // Scan from the beginning of blockchain history for complete NFT discovery
             const fromBlock = 0;
             const toBlock = 'latest';
             
@@ -1178,7 +1193,7 @@ export class NFTScanner {
             const currentBlock = await this.provider.getBlockNumber();
             const chunkSize = 100000; // 100k blocks at a time
             
-            // Process in chunks from the beginning of chain history
+            // Process in chunks from the beginning of blockchain history for complete NFT discovery
             for (let startBlock = 0; startBlock < currentBlock; startBlock += chunkSize) {
                 const endBlock = Math.min(startBlock + chunkSize - 1, currentBlock);
                 

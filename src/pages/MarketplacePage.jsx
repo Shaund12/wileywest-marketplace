@@ -2,9 +2,11 @@
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import ListingCard from '../components/ListingCard';
+import MarketplaceStats from '../components/MarketplaceStats';
 import { convertToUSDCValue } from '../utils/tokenUtils';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
+import '../components/MarketplaceStats.css';
 
 // Icons for the marketplace UI
 const SearchIcon = () => (
@@ -41,7 +43,16 @@ const ListIcon = () => (
 );
 
 function MarketplacePage() {
-    const { listings, hotListings, fetchListings, status, setStatus, isInitialized } = useMarketplace();
+    const { 
+        listings, 
+        hotListings, 
+        fetchListings, 
+        status, 
+        setStatus, 
+        isInitialized,
+        marketplaceStats,
+        canceledListings
+    } = useMarketplace();
     const { wallet, connect, provider } = useWallet();
     const [searchTerm, setSearchTerm] = useState('');
     const [filteredListings, setFilteredListings] = useState([]);
@@ -59,6 +70,9 @@ function MarketplacePage() {
         totalListings: 0,
         avgPrice: 0,
         floorPrice: 0,
+        currentListingVolume: 0,
+        actualSoldVolume: 0,
+        hasUSDCRates: true
     });
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage] = useState(12);
@@ -118,19 +132,25 @@ function MarketplacePage() {
         };
     }, [isInitialized, fetchListings]);
 
-    // Process listings and extract metadata with USDC pricing
+    // Process listings and extract metadata with enhanced volume tracking
     useEffect(() => {
-        async function processListingsWithUSDC() {
+        async function processListingsWithEnhancedStats() {
             if (listings.length > 0 && provider) {
                 try {
                     // Extract collections and set up stats
                     const collectionMap = {};
-                    let totalVolumeUSDC = 0;
+                    let currentListingVolumeUSDC = 0;
                     let lowestPriceUSDC = Infinity;
                     const pricePromises = [];
+                    let hasAnyUSDCRates = false;
 
-                    // Process listings and collect price conversion promises
-                    for (const listing of listings) {
+                    // Filter out canceled listings for current volume calculation
+                    const activeListings = listings.filter(listing => 
+                        listing.active && !canceledListings.has(listing.id?.toString())
+                    );
+
+                    // Process active listings and collect price conversion promises
+                    for (const listing of activeListings) {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
                             collectionMap[collectionAddress] = {
@@ -147,10 +167,13 @@ function MarketplacePage() {
                         // Add promise to convert this listing's price to USDC
                         pricePromises.push(
                             convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider)
-                                .then(usdcPrice => ({ listing, usdcPrice }))
+                                .then(usdcPrice => {
+                                    hasAnyUSDCRates = true;
+                                    return { listing, usdcPrice, hasRate: true };
+                                })
                                 .catch(err => {
                                     console.warn(`Failed to convert price for listing ${listing.id}:`, err);
-                                    return { listing, usdcPrice: 0 };
+                                    return { listing, usdcPrice: 0, hasRate: false };
                                 })
                         );
                     }
@@ -159,17 +182,19 @@ function MarketplacePage() {
                     const priceResults = await Promise.all(pricePromises);
 
                     // Update collections and stats with USDC prices
-                    priceResults.forEach(({ listing, usdcPrice }) => {
+                    priceResults.forEach(({ listing, usdcPrice, hasRate }) => {
                         const collectionAddress = listing.nftContract;
                         
-                        collectionMap[collectionAddress].totalVolume += usdcPrice;
-                        
-                        if (usdcPrice < collectionMap[collectionAddress].floorPrice) {
-                            collectionMap[collectionAddress].floorPrice = usdcPrice;
-                        }
+                        if (hasRate) {
+                            collectionMap[collectionAddress].totalVolume += usdcPrice;
+                            
+                            if (usdcPrice < collectionMap[collectionAddress].floorPrice) {
+                                collectionMap[collectionAddress].floorPrice = usdcPrice;
+                            }
 
-                        totalVolumeUSDC += usdcPrice;
-                        if (usdcPrice < lowestPriceUSDC) lowestPriceUSDC = usdcPrice;
+                            currentListingVolumeUSDC += usdcPrice;
+                            if (usdcPrice < lowestPriceUSDC) lowestPriceUSDC = usdcPrice;
+                        }
                     });
 
                     const collectionsList = Object.values(collectionMap).sort(
@@ -178,31 +203,42 @@ function MarketplacePage() {
 
                     setCollections(collectionsList);
 
+                    // Use marketplace stats for actual sold volume, current page stats for listing volume
+                    const actualSoldVolume = marketplaceStats.actualSoldVolume || 0;
+                    const totalSales = marketplaceStats.totalSales || 0;
+
                     setStats({
-                        totalVolume: totalVolumeUSDC.toFixed(2),
-                        totalListings: listings.length,
-                        avgPrice: (totalVolumeUSDC / listings.length).toFixed(2),
-                        floorPrice: lowestPriceUSDC === Infinity ? '0.00' : lowestPriceUSDC.toFixed(2)
+                        currentListingVolume: currentListingVolumeUSDC.toFixed(2),
+                        actualSoldVolume: actualSoldVolume.toFixed(2),
+                        totalListings: activeListings.length,
+                        totalVolume: (currentListingVolumeUSDC + actualSoldVolume).toFixed(2),
+                        avgPrice: activeListings.length > 0 ? (currentListingVolumeUSDC / activeListings.length).toFixed(2) : '0.00',
+                        floorPrice: lowestPriceUSDC === Infinity ? '0.00' : lowestPriceUSDC.toFixed(2),
+                        hasUSDCRates: hasAnyUSDCRates
                     });
 
                     // Set a featured NFT (most expensive or first hot listing)
                     if (hotListings && hotListings.length > 0) {
                         setFeaturedNFT(hotListings[0]);
-                    } else if (listings.length > 0) {
+                    } else if (activeListings.length > 0) {
                         // Find the highest priced NFT based on USDC value
                         const highestPricedResult = priceResults.reduce((max, current) => {
                             return current.usdcPrice > max.usdcPrice ? current : max;
-                        }, { usdcPrice: 0, listing: listings[0] });
+                        }, { usdcPrice: 0, listing: activeListings[0] });
                         setFeaturedNFT(highestPricedResult.listing);
                     }
                 } catch (error) {
-                    console.error('Error processing listings with USDC pricing:', error);
+                    console.error('Error processing listings with enhanced stats:', error);
                     // Fallback to basic processing without USDC conversion
+                    const activeListings = listings.filter(listing => 
+                        listing.active && !canceledListings.has(listing.id?.toString())
+                    );
+                    
                     const collectionMap = {};
                     let totalVolume = 0;
                     let lowestPrice = Infinity;
 
-                    listings.forEach(listing => {
+                    activeListings.forEach(listing => {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
                             collectionMap[collectionAddress] = {
@@ -233,17 +269,31 @@ function MarketplacePage() {
                     setCollections(collectionsList);
 
                     setStats({
-                        totalVolume: `${totalVolume.toFixed(2)} (est.)`,
-                        totalListings: listings.length,
-                        avgPrice: `${(totalVolume / listings.length).toFixed(3)} (est.)`,
-                        floorPrice: lowestPrice === Infinity ? '0.00 (est.)' : `${lowestPrice.toFixed(3)} (est.)`
+                        currentListingVolume: `${totalVolume.toFixed(2)} (no USDC rate available)`,
+                        actualSoldVolume: '0.00 (no USDC rate available)',
+                        totalListings: activeListings.length,
+                        totalVolume: `${totalVolume.toFixed(2)} (no USDC rate available)`,
+                        avgPrice: activeListings.length > 0 ? `${(totalVolume / activeListings.length).toFixed(3)} (est.)` : '0.00',
+                        floorPrice: lowestPrice === Infinity ? '0.00' : `${lowestPrice.toFixed(3)} (est.)`,
+                        hasUSDCRates: false
                     });
                 }
+            } else {
+                // Set default stats when no listings
+                setStats({
+                    currentListingVolume: '0.00',
+                    actualSoldVolume: marketplaceStats.actualSoldVolume?.toFixed(2) || '0.00',
+                    totalListings: 0,
+                    totalVolume: '0.00',
+                    avgPrice: '0.00',
+                    floorPrice: '0.00',
+                    hasUSDCRates: true
+                });
             }
         }
 
-        processListingsWithUSDC();
-    }, [listings, hotListings, provider]);
+        processListingsWithEnhancedStats();
+    }, [listings, hotListings, provider, canceledListings, marketplaceStats]);
 
     // Filter and sort listings
     useEffect(() => {
@@ -393,18 +443,22 @@ function MarketplacePage() {
                 <div className="stat-card">
                     <h3>{stats.totalListings}</h3>
                     <p>Active Listings</p>
+                    <small>(Excluding canceled)</small>
                 </div>
                 <div className="stat-card">
-                    <h3>${stats.totalVolume}</h3>
-                    <p>Trading Volume (USDC)</p>
+                    <h3>{stats.hasUSDCRates ? `$${stats.currentListingVolume}` : stats.currentListingVolume}</h3>
+                    <p>Current Listing Volume</p>
+                    <small>{stats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
                 </div>
                 <div className="stat-card">
-                    <h3>${stats.floorPrice}</h3>
-                    <p>Floor Price (USDC)</p>
+                    <h3>{stats.hasUSDCRates ? `$${stats.actualSoldVolume}` : stats.actualSoldVolume}</h3>
+                    <p>Actual Sold Volume</p>
+                    <small>{stats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
                 </div>
                 <div className="stat-card">
-                    <h3>${stats.avgPrice}</h3>
-                    <p>Average Price (USDC)</p>
+                    <h3>{stats.hasUSDCRates ? `$${stats.floorPrice}` : stats.floorPrice}</h3>
+                    <p>Floor Price</p>
+                    <small>{stats.hasUSDCRates ? 'USDC' : 'Estimated'}</small>
                 </div>
             </div>
 
@@ -445,6 +499,9 @@ function MarketplacePage() {
                     ))}
                 </div>
             </section>
+
+            {/* Detailed Marketplace Statistics */}
+            <MarketplaceStats />
 
             {/* Main Marketplace Section */}
             <div className="main-marketplace">

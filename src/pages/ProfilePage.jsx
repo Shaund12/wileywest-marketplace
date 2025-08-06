@@ -600,10 +600,9 @@ function ProfilePage() {
             const transferSingleFilter = contract.filters.TransferSingle(null, null, wallet);
             const transferBatchFilter = contract.filters.TransferBatch(null, null, wallet);
 
-            // Look back a few thousand blocks
+            // Look back from the beginning to find ALL NFTs (comprehensive scan)
             const currentBlock = await provider.getBlockNumber();
-            const lookbackBlocks = 10000; // Look back ~10k blocks
-            const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
+            const fromBlock = 0; // Start from beginning to find all historical NFTs
 
             // Get transfer events
             const singleEvents = await contract.queryFilter(transferSingleFilter, fromBlock);

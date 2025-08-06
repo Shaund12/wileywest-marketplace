@@ -12,7 +12,8 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
         tokenAmount: '...',
         tokenSymbol: 'TOKEN',
         usdcValue: '0.00',
-        formatted: '...'
+        formatted: '...',
+        hasUSDCRate: true
     });
 
     const handleBuy = async () => {
@@ -90,16 +91,32 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                 </div>
 
                 <div className="listing-price">
-                    <div className="price-amount">
-                        ${priceDisplay.usdcValue}
-                    </div>
-                    <div className="price-currency">
-                        USDC
-                    </div>
-                    {priceDisplay.tokenSymbol !== 'USDC.pol' && (
-                        <div className="price-original">
-                            {priceDisplay.tokenAmount} {priceDisplay.tokenSymbol}
-                        </div>
+                    {priceDisplay.hasUSDCRate ? (
+                        <>
+                            <div className="price-amount">
+                                ${priceDisplay.usdcValue}
+                            </div>
+                            <div className="price-currency">
+                                USDC
+                            </div>
+                            {priceDisplay.tokenSymbol !== 'USDC.pol' && (
+                                <div className="price-original">
+                                    {priceDisplay.tokenAmount} {priceDisplay.tokenSymbol}
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            <div className="price-amount">
+                                {priceDisplay.tokenAmount}
+                            </div>
+                            <div className="price-currency">
+                                {priceDisplay.tokenSymbol}
+                            </div>
+                            <div className="price-note">
+                                No USDC rate available
+                            </div>
+                        </>
                     )}
                 </div>
 
