@@ -12,8 +12,10 @@ function Navigation() {
       <div className="nav-container">
         <div className="nav-logo">
           <Link to="/">
+
             <img src={logo} alt="BlockDust" />
             <span>BlockDust</span>
+
           </Link>
         </div>
         
