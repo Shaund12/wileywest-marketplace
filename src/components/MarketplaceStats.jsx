@@ -85,8 +85,8 @@ function MarketplaceStats() {
     return (
         <div className="marketplace-stats-container">
             <div className="stats-header">
-                <h2>Marketplace Statistics</h2>
-                <button 
+                <h2>BlockDust Marketplace Statistics</h2>
+                <button
                     className={`refresh-button ${isRefreshing ? 'refreshing' : ''}`}
                     onClick={handleRefresh}
                     disabled={isRefreshing}
@@ -94,7 +94,7 @@ function MarketplaceStats() {
                     {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
                 </button>
             </div>
-            
+
             {/* Show data status */}
             {salesHistory.length === 0 && !status.includes('demo mode') && (
                 <div className="data-status-notice">
@@ -104,14 +104,14 @@ function MarketplaceStats() {
                     </button>
                 </div>
             )}
-            
+
             {/* Show loading status */}
             {status && (status.includes('Fetching') || status.includes('Scanning') || status.includes('Processing')) && (
                 <div className="loading-status-notice">
                     <p>🔄 {status}</p>
                 </div>
             )}
-            
+
             {/* Tab Navigation */}
             <div className="stats-tabs">
                 {tabs.map(tab => (
@@ -167,13 +167,13 @@ function MarketplaceStats() {
                                 <h3>🏆 Market Health</h3>
                                 <p className="stat-value">{formatPrice(marketHealthScore || 0)}/100</p>
                                 <span className="stat-label">
-                                    {marketHealthScore >= 75 ? '🟢 Excellent' : 
-                                     marketHealthScore >= 50 ? '🟡 Good' : 
-                                     marketHealthScore >= 25 ? '🟠 Fair' : '🔴 Poor'}
+                                    {marketHealthScore >= 75 ? '🟢 Excellent' :
+                                        marketHealthScore >= 50 ? '🟡 Good' :
+                                            marketHealthScore >= 25 ? '🟠 Fair' : '🔴 Poor'}
                                 </span>
                             </div>
                         </div>
-                        
+
                         {/* Enhanced Volume Summary */}
                         <div className="volume-summary">
                             <h3>📅 Volume by Time Period</h3>
@@ -208,7 +208,7 @@ function MarketplaceStats() {
                                 </div>
                             </div>
                         </div>
-                        
+
                         {/* Quick Analytics Summary */}
                         <div className="quick-analytics">
                             <h3>🚀 Quick Insights</h3>
@@ -237,7 +237,7 @@ function MarketplaceStats() {
                 {activeTab === 'volume' && (
                     <div className="volume-analytics">
                         <h3>📊 Comprehensive Volume Analytics</h3>
-                        
+
                         <div className="volume-metrics-grid">
                             <div className="volume-metric-card">
                                 <h4>⚡ 1 Hour Activity</h4>
@@ -258,7 +258,7 @@ function MarketplaceStats() {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="volume-metric-card">
                                 <h4>🔥 6 Hour Activity</h4>
                                 <div className="metric-details">
@@ -278,7 +278,7 @@ function MarketplaceStats() {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="volume-metric-card">
                                 <h4>🔥 12 Hour Activity</h4>
                                 <div className="metric-details">
@@ -298,7 +298,7 @@ function MarketplaceStats() {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="volume-metric-card highlight">
                                 <h4>🔥 24 Hour Activity</h4>
                                 <div className="metric-details">
@@ -318,7 +318,7 @@ function MarketplaceStats() {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="volume-metric-card">
                                 <h4>📅 7 Day Activity</h4>
                                 <div className="metric-details">
@@ -338,7 +338,7 @@ function MarketplaceStats() {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="volume-metric-card">
                                 <h4>🗓️ 30 Day Activity</h4>
                                 <div className="metric-details">
@@ -359,7 +359,7 @@ function MarketplaceStats() {
                                 </div>
                             </div>
                         </div>
-                        
+
                         {/* Enhanced Volume Comparison */}
                         <div className="volume-comparison">
                             <h4>📈 Volume Trends & Performance</h4>
@@ -367,8 +367,8 @@ function MarketplaceStats() {
                                 <div className="comparison-item">
                                     <span className="comparison-label">Hourly Velocity (1h vs 24h avg):</span>
                                     <span className="comparison-value">
-                                        {volume24h > 0 ? 
-                                            `${((volume1h || 0) / ((volume24h || 0) / 24) * 100).toFixed(1)}%` : 
+                                        {volume24h > 0 ?
+                                            `${((volume1h || 0) / ((volume24h || 0) / 24) * 100).toFixed(1)}%` :
                                             'N/A'
                                         }
                                     </span>
@@ -376,8 +376,8 @@ function MarketplaceStats() {
                                 <div className="comparison-item">
                                     <span className="comparison-label">Daily Velocity (24h vs 7d avg):</span>
                                     <span className="comparison-value">
-                                        {volume7d > 0 ? 
-                                            `${((volume24h || 0) / ((volume7d || 0) / 7) * 100).toFixed(1)}%` : 
+                                        {volume7d > 0 ?
+                                            `${((volume24h || 0) / ((volume7d || 0) / 7) * 100).toFixed(1)}%` :
                                             'N/A'
                                         }
                                     </span>
@@ -385,8 +385,8 @@ function MarketplaceStats() {
                                 <div className="comparison-item">
                                     <span className="comparison-label">Weekly Velocity (7d vs 30d avg):</span>
                                     <span className="comparison-value">
-                                        {volume30d > 0 ? 
-                                            `${((volume7d || 0) / ((volume30d || 0) / 30) * 100).toFixed(1)}%` : 
+                                        {volume30d > 0 ?
+                                            `${((volume7d || 0) / ((volume30d || 0) / 30) * 100).toFixed(1)}%` :
                                             'N/A'
                                         }
                                     </span>
@@ -394,8 +394,8 @@ function MarketplaceStats() {
                                 <div className="comparison-item">
                                     <span className="comparison-label">Market Penetration (listings vs sold):</span>
                                     <span className="comparison-value">
-                                        {(volumeAllTime || actualSoldVolume) > 0 ? 
-                                            `${(currentListingVolume / (volumeAllTime || actualSoldVolume || 1) * 100).toFixed(1)}%` : 
+                                        {(volumeAllTime || actualSoldVolume) > 0 ?
+                                            `${(currentListingVolume / (volumeAllTime || actualSoldVolume || 1) * 100).toFixed(1)}%` :
                                             'N/A'
                                         }
                                     </span>
@@ -408,7 +408,7 @@ function MarketplaceStats() {
                 {activeTab === 'advanced' && (
                     <div className="advanced-analytics">
                         <h3>🎯 Advanced Market Analytics</h3>
-                        
+
                         <div className="advanced-metrics-grid">
                             <div className="advanced-metric-card">
                                 <h4>💎 Price Analytics</h4>
@@ -433,7 +433,7 @@ function MarketplaceStats() {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="advanced-metric-card">
                                 <h4>📊 Market Dynamics</h4>
                                 <div className="metric-details">
@@ -455,7 +455,7 @@ function MarketplaceStats() {
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="advanced-metric-card">
                                 <h4>⚡ Market Velocity</h4>
                                 <div className="metric-details">
@@ -471,13 +471,13 @@ function MarketplaceStats() {
                                         <span>Market Momentum:</span>
                                         <span className="metric-value">
                                             {(marketVelocity24h || 0) > 1 ? '🚀 Accelerating' :
-                                             (marketVelocity24h || 0) > 0.5 ? '📈 Growing' :
-                                             (marketVelocity24h || 0) > 0.1 ? '➡️ Stable' : '📉 Declining'}
+                                                (marketVelocity24h || 0) > 0.5 ? '📈 Growing' :
+                                                    (marketVelocity24h || 0) > 0.1 ? '➡️ Stable' : '📉 Declining'}
                                         </span>
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div className="advanced-metric-card highlight">
                                 <h4>🏆 Market Health Score</h4>
                                 <div className="metric-details">
@@ -488,9 +488,9 @@ function MarketplaceStats() {
                                     <div className="metric-row">
                                         <span>Health Rating:</span>
                                         <span className="metric-value">
-                                            {marketHealthScore >= 75 ? '🟢 Excellent' : 
-                                             marketHealthScore >= 50 ? '🟡 Good' : 
-                                             marketHealthScore >= 25 ? '🟠 Fair' : '🔴 Poor'}
+                                            {marketHealthScore >= 75 ? '🟢 Excellent' :
+                                                marketHealthScore >= 50 ? '🟡 Good' :
+                                                    marketHealthScore >= 25 ? '🟠 Fair' : '🔴 Poor'}
                                         </span>
                                     </div>
                                     <div className="metric-row">
@@ -504,7 +504,7 @@ function MarketplaceStats() {
                                 </div>
                             </div>
                         </div>
-                        
+
                         {/* Market Insights */}
                         <div className="market-insights">
                             <h4>🔍 Market Insights</h4>
@@ -512,7 +512,7 @@ function MarketplaceStats() {
                                 <div className="insight-card">
                                     <h5>📈 Trading Activity</h5>
                                     <p>
-                                        {(sales24h || 0) > (sales7d || 0) / 7 ? 
+                                        {(sales24h || 0) > (sales7d || 0) / 7 ?
                                             `Trading activity is ${((sales24h || 0) / ((sales7d || 0) / 7 || 1) * 100).toFixed(0)}% above average` :
                                             `Trading activity is ${(100 - (sales24h || 0) / ((sales7d || 0) / 7 || 1) * 100).toFixed(0)}% below average`
                                         }
@@ -521,7 +521,7 @@ function MarketplaceStats() {
                                 <div className="insight-card">
                                     <h5>💰 Volume Trend</h5>
                                     <p>
-                                        {(volume24h || 0) > (volume7d || 0) / 7 ? 
+                                        {(volume24h || 0) > (volume7d || 0) / 7 ?
                                             `Volume is trending ${((volume24h || 0) / ((volume7d || 0) / 7 || 1)).toFixed(1)}x above the weekly average` :
                                             `Volume is ${(((volume7d || 0) / 7 || 1) / (volume24h || 1)).toFixed(1)}x below the weekly average`
                                         }
@@ -530,11 +530,11 @@ function MarketplaceStats() {
                                 <div className="insight-card">
                                     <h5>🎯 Market Position</h5>
                                     <p>
-                                        {(liquidityRatio || 0) > 0.5 ? 
+                                        {(liquidityRatio || 0) > 0.5 ?
                                             'High liquidity market with strong available inventory' :
                                             (liquidityRatio || 0) > 0.2 ?
-                                            'Balanced market with moderate liquidity' :
-                                            'High demand market with limited available inventory'
+                                                'Balanced market with moderate liquidity' :
+                                                'High demand market with limited available inventory'
                                         }
                                     </p>
                                 </div>
@@ -546,7 +546,7 @@ function MarketplaceStats() {
                 {activeTab === 'trends' && (
                     <div className="market-trends">
                         <h3>📈 Market Trends & Patterns</h3>
-                        
+
                         {/* Growth Rates */}
                         <div className="trends-section">
                             <h4>🚀 Growth Analysis</h4>
@@ -560,7 +560,7 @@ function MarketplaceStats() {
                                     </div>
                                     <p>Compared to previous 24h period</p>
                                 </div>
-                                
+
                                 <div className="trend-card">
                                     <h5>7d Growth Rate</h5>
                                     <div className="trend-value">
@@ -570,21 +570,21 @@ function MarketplaceStats() {
                                     </div>
                                     <p>Compared to previous 7d period</p>
                                 </div>
-                                
+
                                 <div className="trend-card">
                                     <h5>Market Momentum</h5>
                                     <div className="trend-value">
                                         <span className="momentum-indicator">
                                             {(marketVelocity24h || 0) > 1.5 ? '🚀 High' :
-                                             (marketVelocity24h || 0) > 1 ? '📈 Moderate' :
-                                             (marketVelocity24h || 0) > 0.5 ? '➡️ Stable' : '📉 Low'}
+                                                (marketVelocity24h || 0) > 1 ? '📈 Moderate' :
+                                                    (marketVelocity24h || 0) > 0.5 ? '➡️ Stable' : '📉 Low'}
                                         </span>
                                     </div>
                                     <p>Current trading momentum</p>
                                 </div>
                             </div>
                         </div>
-                        
+
                         {/* Volume Distribution */}
                         {hourlyVolume && hourlyVolume.length > 0 && (
                             <div className="trends-section">
@@ -593,10 +593,10 @@ function MarketplaceStats() {
                                     <div className="volume-bars">
                                         {hourlyVolume.slice(0, 24).map((vol, index) => (
                                             <div key={index} className="volume-bar">
-                                                <div 
-                                                    className="bar-fill" 
-                                                    style={{ 
-                                                        height: `${Math.max((vol / Math.max(...hourlyVolume) * 100), 2)}%` 
+                                                <div
+                                                    className="bar-fill"
+                                                    style={{
+                                                        height: `${Math.max((vol / Math.max(...hourlyVolume) * 100), 2)}%`
                                                     }}
                                                     title={`${index}h ago: $${formatPrice(vol)}`}
                                                 ></div>
@@ -608,7 +608,7 @@ function MarketplaceStats() {
                                 </div>
                             </div>
                         )}
-                        
+
                         {/* Price Trends */}
                         {priceHistory && priceHistory.length > 0 && (
                             <div className="trends-section">
@@ -626,7 +626,7 @@ function MarketplaceStats() {
                                         <div className="price-stat">
                                             <span className="stat-label">Price Volatility:</span>
                                             <span className="stat-value">
-                                                {priceHistory.length > 1 ? 
+                                                {priceHistory.length > 1 ?
                                                     `${((Math.max(...priceHistory.slice(0, 10).map(p => p.price)) / Math.min(...priceHistory.slice(0, 10).map(p => p.price)) - 1) * 100).toFixed(1)}%` :
                                                     'N/A'
                                                 }
@@ -647,6 +647,8 @@ function MarketplaceStats() {
                         )}
                     </div>
                 )}
+
+                {activeTab === 'transactions' && (
                     <div className="transaction-history">
                         <h3>Recent Transactions</h3>
                         {transactionHistory.length > 0 ? (
