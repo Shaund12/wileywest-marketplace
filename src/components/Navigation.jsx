@@ -13,7 +13,7 @@ function Navigation() {
         <div className="nav-logo">
           <Link to="/">
             <img src={logo} alt="WileyW€$T" />
-            <span>WileyW€$T</span>
+            <span>BlockDust NFT MarketPlace</span>
           </Link>
         </div>
         
