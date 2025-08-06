@@ -1,18 +1,26 @@
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
+import { useSupabase } from './SupabaseContext';
 import { convertToUSDCValue } from '../utils/tokenUtils';
 
 const MarketplaceContext = createContext();
 
 export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const { wallet, signer, provider } = useWallet();
+    const { 
+        cacheListings, 
+        getCachedListings, 
+        subscribeToListings,
+        isConnected: supabaseConnected 
+    } = useSupabase();
     const [marketplace, setMarketplace] = useState(null);
     const [listings, setListings] = useState([]);
     const [hotListings, setHotListings] = useState([]);
     const [status, setStatus] = useState('');
     const [isInitialized, setIsInitialized] = useState(false);
     const isConnectedRef = useRef(false);
+    const cacheUpdateInterval = useRef(null);
     
     // New state for tracking sales and statistics
     const [salesHistory, setSalesHistory] = useState([]);
@@ -141,6 +149,41 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
         initializeMarketplace();
     }, [marketplaceAddress, abi, provider]);
+
+    // Set up real-time subscriptions when Supabase is connected
+    useEffect(() => {
+        if (supabaseConnected && subscribeToListings) {
+            console.log("🔄 Setting up real-time subscriptions...");
+            
+            const listingsSubscription = subscribeToListings((payload) => {
+                console.log("📡 Real-time listing update received:", payload);
+                
+                // Refresh listings when changes occur
+                if (marketplace) {
+                    console.log("🔄 Refreshing listings due to real-time update");
+                    fetchListings(true); // Force refresh
+                }
+            });
+
+            // Set up periodic cache updates for blockchain data
+            cacheUpdateInterval.current = setInterval(() => {
+                if (marketplace) {
+                    console.log("⏰ Periodic cache update triggered");
+                    fetchListingsFromBlockchain(true); // Background update
+                }
+            }, 60000); // Update every minute
+
+            return () => {
+                if (listingsSubscription) {
+                    console.log("🔌 Unsubscribing from listings updates");
+                    listingsSubscription.unsubscribe();
+                }
+                if (cacheUpdateInterval.current) {
+                    clearInterval(cacheUpdateInterval.current);
+                }
+            };
+        }
+    }, [supabaseConnected, marketplace, subscribeToListings]);
 
     // Update contract with signer when wallet connects
     useEffect(() => {
@@ -923,22 +966,66 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         calculateMarketplaceStats();
     }, [salesHistory, listings, canceledListings, provider]);
 
-    const fetchListings = async () => {
+    const fetchListings = async (forceRefresh = false) => {
         if (!marketplace) {
             console.warn("Marketplace contract not initialized yet");
             return;
         }
         
-        setStatus('Fetching listings...');
+        setStatus('Loading listings...');
+        
         try {
-            console.log("Fetching marketplace listings...");
+            // Step 1: Try to load from cache first (unless force refresh)
+            if (!forceRefresh && supabaseConnected) {
+                console.log("🔍 Checking cache for listings...");
+                const cachedListings = await getCachedListings();
+                
+                if (cachedListings && cachedListings.length > 0) {
+                    console.log(`📦 Loaded ${cachedListings.length} listings from cache`);
+                    setListings(cachedListings);
+                    setHotListings(cachedListings.slice(0, 5));
+                    setStatus('Loaded from cache - fetching latest updates...');
+                    
+                    // Continue to fetch fresh data in background
+                    setTimeout(() => fetchListingsFromBlockchain(true), 100);
+                    return;
+                }
+            }
+            
+            // Step 2: Fetch from blockchain
+            await fetchListingsFromBlockchain(false);
+            
+        } catch (error) {
+            console.error("Error in fetchListings:", error);
+            setStatus('Failed to fetch listings');
+        }
+    };
+
+    const fetchListingsFromBlockchain = async (isBackgroundUpdate = false) => {
+        if (!isBackgroundUpdate) {
+            setStatus('Fetching latest listings from blockchain...');
+        }
+        
+        try {
+            console.log("Fetching marketplace listings from blockchain...");
             
             // Test network connectivity first
             try {
                 await provider.getNetwork();
             } catch (networkError) {
                 console.warn("Network connectivity issue:", networkError.message);
-                setStatus("Network connectivity issue - unable to fetch current listings");
+                setStatus("Network connectivity issue - using cached data if available");
+                
+                // Try to use cached data as fallback
+                if (supabaseConnected) {
+                    const cachedListings = await getCachedListings();
+                    if (cachedListings && cachedListings.length > 0) {
+                        setListings(cachedListings);
+                        setHotListings(cachedListings.slice(0, 5));
+                        setStatus("Using cached listings - network unavailable");
+                        return;
+                    }
+                }
                 
                 // Provide demo listings for testing
                 const demoListings = [
@@ -1088,13 +1175,31 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 }
             }
 
-            console.log(`Successfully loaded ${res.length} listings`);
+            console.log(`Successfully loaded ${res.length} listings from blockchain`);
             setListings(res);
             setHotListings(res.slice(0, 5));
-            setStatus('');
+            
+            // Cache the fresh data
+            if (supabaseConnected && res.length > 0) {
+                try {
+                    await cacheListings(res);
+                    console.log(`✅ Cached ${res.length} listings to Supabase`);
+                } catch (cacheError) {
+                    console.warn("Failed to cache listings:", cacheError);
+                }
+            }
+            
+            if (isBackgroundUpdate) {
+                setStatus('');
+            } else {
+                setStatus(`Loaded ${res.length} listings`);
+                setTimeout(() => setStatus(''), 3000);
+            }
         } catch (error) {
-            console.error("Error in fetchListings:", error);
-            setStatus('Failed to fetch listings - network connectivity issue');
+            console.error("Error in fetchListingsFromBlockchain:", error);
+            if (!isBackgroundUpdate) {
+                setStatus('Failed to fetch listings - network connectivity issue');
+            }
         }
     };
 
@@ -1188,8 +1293,15 @@ const ERC1155_APPROVAL_ABI = [
             await tx.wait();
             setStatus('Purchase successful! Updating marketplace data...');
             
-            // Refresh listings and fetch any new events
-            fetchListings();
+            // Invalidate cache and refresh listings
+            if (supabaseConnected && cacheListings) {
+                console.log("💾 Invalidating cache due to purchase...");
+                // Force refresh from blockchain to get latest state
+                await fetchListings(true);
+            } else {
+                // Refresh listings normally
+                fetchListings();
+            }
             
             // Wait a moment for events to be mined and then fetch recent events
             setTimeout(async () => {
@@ -1322,8 +1434,15 @@ const ERC1155_APPROVAL_ABI = [
             await tx.wait();
             setStatus("Listing created successfully!");
 
-            // Refresh listings
-            fetchListings();
+            // Invalidate cache and refresh listings
+            if (supabaseConnected && cacheListings) {
+                console.log("💾 Invalidating cache due to new listing...");
+                // Force refresh from blockchain to get latest state
+                await fetchListings(true);
+            } else {
+                // Refresh listings normally
+                fetchListings();
+            }
 
         } catch (error) {
             console.error("Error in createListing:", error);
