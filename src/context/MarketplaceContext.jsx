@@ -127,6 +127,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         if (!contract || !provider) return;
         
         try {
+            setStatus("Fetching past sales events from blockchain...");
             console.log("Fetching past sales events from blockchain...");
             
             // Test network connectivity first
@@ -134,6 +135,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 await provider.getNetwork();
             } catch (networkError) {
                 console.warn("Network connectivity issue - skipping past events fetch");
+                setStatus("");
                 return;
             }
             
@@ -144,6 +146,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             const fromBlock = Math.max(0, currentBlock - 10000);
             
             console.log(`Searching for events from block ${fromBlock} to ${currentBlock}`);
+            setStatus(`Searching blockchain events from block ${fromBlock} to ${currentBlock}...`);
             
             // Query past NFTPurchased events
             const purchasedEvents = await contract.queryFilter(
@@ -162,6 +165,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             );
             
             console.log(`Found ${canceledEvents.length} past canceled events`);
+            setStatus(`Processing ${purchasedEvents.length} purchase events and ${canceledEvents.length} canceled events...`);
             
             // Process purchase events
             const pastSales = [];
@@ -210,8 +214,20 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 return merged;
             });
             
+            // Success message
+            const newEventsFound = pastSales.length > 0 || pastCanceled.size > 0;
+            if (newEventsFound) {
+                setStatus(`✅ Found ${pastSales.length} purchase transactions and ${pastCanceled.size} canceled listings from blockchain`);
+                setTimeout(() => setStatus(""), 5000);
+            } else {
+                setStatus("✅ Blockchain scan complete - no new transactions found");
+                setTimeout(() => setStatus(""), 3000);
+            }
+            
         } catch (error) {
             console.error("Error fetching past sales events:", error);
+            setStatus(`❌ Error fetching blockchain events: ${error.message}`);
+            setTimeout(() => setStatus(""), 5000);
         }
     };
 

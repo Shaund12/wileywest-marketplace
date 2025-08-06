@@ -63,7 +63,18 @@
   text-align: center;
 }
 
-.data-status-notice p {
+.loading-status-notice {
+  background: rgba(0, 255, 136, 0.1);
+  border: 1px solid rgba(0, 255, 136, 0.3);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+  color: var(--accent-color, #00ff88);
+  text-align: center;
+}
+
+.data-status-notice p,
+.loading-status-notice p {
   margin: 0;
   font-size: 0.9rem;
 }

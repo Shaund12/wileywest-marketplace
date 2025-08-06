@@ -3,7 +3,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 
 function MarketplaceStats() {
-    const { marketplaceStats, refreshBlockchainData, salesHistory } = useMarketplace();
+    const { marketplaceStats, refreshBlockchainData, salesHistory, status } = useMarketplace();
     const [activeTab, setActiveTab] = useState('overview');
     const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -63,9 +63,16 @@ function MarketplaceStats() {
             </div>
             
             {/* Show data status */}
-            {salesHistory.length === 0 && (
+            {salesHistory.length === 0 && !status.includes('demo mode') && (
                 <div className="data-status-notice">
                     <p>📊 No transaction data found. If you've made recent purchases, try refreshing to fetch the latest blockchain events.</p>
+                </div>
+            )}
+            
+            {/* Show loading status */}
+            {status && status.includes('Fetching past sales events') && (
+                <div className="loading-status-notice">
+                    <p>🔄 Loading transaction history from blockchain...</p>
                 </div>
             )}
             
