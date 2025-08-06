@@ -119,6 +119,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     }, [supabaseConnected, getCachedSalesHistory]);
 
     // Persist sales history to localStorage and Supabase whenever it changes
+    // Use a ref to track last cached count to prevent unnecessary Supabase calls
+    const lastCachedSalesCount = useRef(0);
     useEffect(() => {
         if (salesHistory.length > 0) {
             try {
@@ -126,9 +128,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
                 console.log("Persisted sales history to localStorage:", salesHistory.length, "transactions");
                 
-                // Also cache to Supabase if connected
-                if (supabaseConnected && cacheSalesHistory) {
+                // Only cache to Supabase if we have new sales data
+                if (supabaseConnected && cacheSalesHistory && salesHistory.length !== lastCachedSalesCount.current) {
                     console.log("💾 Caching sales history to Supabase...");
+                    lastCachedSalesCount.current = salesHistory.length;
                     cacheSalesHistory(salesHistory).catch(error => {
                         console.warn("Failed to cache sales history to Supabase:", error);
                     });
@@ -137,7 +140,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 console.error("Error persisting sales history:", error);
             }
         }
-    }, [salesHistory, supabaseConnected, cacheSalesHistory]);
+    }, [salesHistory, supabaseConnected]); // Removed cacheSalesHistory from dependencies
 
     // Persist canceled listings to localStorage whenever they change
     useEffect(() => {
@@ -187,40 +190,25 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         initializeMarketplace();
     }, [marketplaceAddress, abi, provider]);
 
-    // Set up real-time subscriptions when Supabase is connected
+    // Disabled aggressive real-time subscriptions to prevent infinite refresh loops
+    // TODO: Re-implement with proper throttling if needed
     useEffect(() => {
-        if (supabaseConnected && subscribeToListings) {
-            console.log("🔄 Setting up real-time subscriptions...");
-            
-            const listingsSubscription = subscribeToListings((payload) => {
-                console.log("📡 Real-time listing update received:", payload);
-                
-                // Refresh listings when changes occur
-                if (marketplace) {
-                    console.log("🔄 Refreshing listings due to real-time update");
-                    fetchListings(true); // Force refresh
-                }
-            });
-
-            // Set up periodic cache updates for blockchain data
+        // Only set up a simple periodic refresh, not real-time subscriptions
+        if (marketplace) {
+            // Set up a much less aggressive periodic update - every 5 minutes instead of 1 minute
             cacheUpdateInterval.current = setInterval(() => {
-                if (marketplace) {
-                    console.log("⏰ Periodic cache update triggered");
-                    fetchListingsFromBlockchain(true); // Background update
-                }
-            }, 60000); // Update every minute
+                console.log("⏰ Periodic background update (5min interval)");
+                // Only do background updates, not force refreshes
+                fetchListingsFromBlockchain(true);
+            }, 300000); // Update every 5 minutes instead of 1 minute
 
             return () => {
-                if (listingsSubscription) {
-                    console.log("🔌 Unsubscribing from listings updates");
-                    listingsSubscription.unsubscribe();
-                }
                 if (cacheUpdateInterval.current) {
                     clearInterval(cacheUpdateInterval.current);
                 }
             };
         }
-    }, [supabaseConnected, marketplace, subscribeToListings]);
+    }, [marketplace]); // Removed problematic dependencies
 
     // Update contract with signer when wallet connects
     useEffect(() => {
@@ -1022,10 +1010,11 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     console.log(`📦 Loaded ${cachedListings.length} listings from cache`);
                     setListings(cachedListings);
                     setHotListings(cachedListings.slice(0, 5));
-                    setStatus('Loaded from cache - fetching latest updates...');
+                    setStatus('Loaded from cache');
                     
-                    // Continue to fetch fresh data in background
-                    setTimeout(() => fetchListingsFromBlockchain(true), 100);
+                    // Remove automatic background fetch to prevent refresh loops
+                    // User can manually refresh if needed
+                    setTimeout(() => setStatus(''), 2000);
                     return;
                 } else {
                     console.log("🔍 No cached listings found, fetching from blockchain");
