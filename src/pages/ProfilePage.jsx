@@ -600,9 +600,9 @@ function ProfilePage() {
             const transferSingleFilter = contract.filters.TransferSingle(null, null, wallet);
             const transferBatchFilter = contract.filters.TransferBatch(null, null, wallet);
 
-            // Look back from block 10,000,000 (when marketplace contract was deployed)
+            // Look back from the beginning to find ALL NFTs (comprehensive scan)
             const currentBlock = await provider.getBlockNumber();
-            const fromBlock = 10000000; // Start from block 10,000,000 as contract was deployed after 10 million
+            const fromBlock = 0; // Start from beginning to find all historical NFTs
 
             // Get transfer events
             const singleEvents = await contract.queryFilter(transferSingleFilter, fromBlock);
