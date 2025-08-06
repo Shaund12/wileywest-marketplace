@@ -3,8 +3,9 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 
 function MarketplaceStats() {
-    const { marketplaceStats } = useMarketplace();
+    const { marketplaceStats, refreshBlockchainData, salesHistory } = useMarketplace();
     const [activeTab, setActiveTab] = useState('overview');
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
     const {
         totalSales,
@@ -34,9 +35,39 @@ function MarketplaceStats() {
         return '0.00';
     };
 
+    const handleRefresh = async () => {
+        if (refreshBlockchainData) {
+            setIsRefreshing(true);
+            try {
+                await refreshBlockchainData();
+                console.log("Marketplace stats refreshed from blockchain");
+            } catch (error) {
+                console.error("Error refreshing blockchain data:", error);
+            } finally {
+                setIsRefreshing(false);
+            }
+        }
+    };
+
     return (
         <div className="marketplace-stats-container">
-            <h2>Marketplace Statistics</h2>
+            <div className="stats-header">
+                <h2>Marketplace Statistics</h2>
+                <button 
+                    className={`refresh-button ${isRefreshing ? 'refreshing' : ''}`}
+                    onClick={handleRefresh}
+                    disabled={isRefreshing}
+                >
+                    {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
+                </button>
+            </div>
+            
+            {/* Show data status */}
+            {salesHistory.length === 0 && (
+                <div className="data-status-notice">
+                    <p>📊 No transaction data found. If you've made recent purchases, try refreshing to fetch the latest blockchain events.</p>
+                </div>
+            )}
             
             {/* Tab Navigation */}
             <div className="stats-tabs">
@@ -47,6 +78,9 @@ function MarketplaceStats() {
                         onClick={() => setActiveTab(tab.id)}
                     >
                         {tab.label}
+                        {tab.id === 'transactions' && salesHistory.length > 0 && (
+                            <span className="tab-badge">{salesHistory.length}</span>
+                        )}
                     </button>
                 ))}
             </div>
@@ -108,7 +142,11 @@ function MarketplaceStats() {
                             </div>
                         ) : (
                             <div className="no-data">
-                                <p>No transactions recorded yet</p>
+                                <p>🔍 No transactions found</p>
+                                <p>Recent purchases may take a few minutes to appear. Try refreshing the data.</p>
+                                <button className="refresh-data-button" onClick={handleRefresh} disabled={isRefreshing}>
+                                    {isRefreshing ? 'Refreshing...' : 'Refresh Transaction Data'}
+                                </button>
                             </div>
                         )}
                     </div>

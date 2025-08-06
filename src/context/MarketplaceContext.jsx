@@ -26,6 +26,55 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         mostActiveSellers: []
     });
 
+    // Load sales history from localStorage on initialization
+    useEffect(() => {
+        const loadPersistedData = () => {
+            try {
+                const savedSalesHistory = localStorage.getItem('marketplace_sales_history');
+                const savedCanceledListings = localStorage.getItem('marketplace_canceled_listings');
+                
+                if (savedSalesHistory) {
+                    const parsedHistory = JSON.parse(savedSalesHistory);
+                    console.log("Loaded persisted sales history:", parsedHistory);
+                    setSalesHistory(parsedHistory);
+                }
+                
+                if (savedCanceledListings) {
+                    const parsedCanceled = JSON.parse(savedCanceledListings);
+                    setCanceledListings(new Set(parsedCanceled));
+                }
+            } catch (error) {
+                console.error("Error loading persisted marketplace data:", error);
+            }
+        };
+        
+        loadPersistedData();
+    }, []);
+
+    // Persist sales history to localStorage whenever it changes
+    useEffect(() => {
+        if (salesHistory.length > 0) {
+            try {
+                localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
+                console.log("Persisted sales history to localStorage:", salesHistory.length, "transactions");
+            } catch (error) {
+                console.error("Error persisting sales history:", error);
+            }
+        }
+    }, [salesHistory]);
+
+    // Persist canceled listings to localStorage whenever they change
+    useEffect(() => {
+        if (canceledListings.size > 0) {
+            try {
+                const canceledArray = Array.from(canceledListings);
+                localStorage.setItem('marketplace_canceled_listings', JSON.stringify(canceledArray));
+            } catch (error) {
+                console.error("Error persisting canceled listings:", error);
+            }
+        }
+    }, [canceledListings]);
+
     // Initialize marketplace contract
     useEffect(() => {
         const initializeMarketplace = async () => {
@@ -42,6 +91,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         await provider.getNetwork();
                         // Set up event listeners for sales tracking
                         setupEventListeners(contract);
+                        
+                        // Fetch past sales events from blockchain
+                        await fetchPastSalesEvents(contract);
                     } catch (networkError) {
                         console.warn("Network connectivity issue - event listeners not set up:", networkError.message);
                         setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
@@ -70,42 +122,139 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         }
     }, [signer, marketplace]);
 
+    // Fetch past sales events from blockchain
+    const fetchPastSalesEvents = async (contract) => {
+        if (!contract || !provider) return;
+        
+        try {
+            console.log("Fetching past sales events from blockchain...");
+            
+            // Test network connectivity first
+            try {
+                await provider.getNetwork();
+            } catch (networkError) {
+                console.warn("Network connectivity issue - skipping past events fetch");
+                return;
+            }
+            
+            // Get the current block number
+            const currentBlock = await provider.getBlockNumber();
+            
+            // Look back up to 10,000 blocks (approximately 1-2 days depending on block time)
+            const fromBlock = Math.max(0, currentBlock - 10000);
+            
+            console.log(`Searching for events from block ${fromBlock} to ${currentBlock}`);
+            
+            // Query past NFTPurchased events
+            const purchasedEvents = await contract.queryFilter(
+                contract.filters.NFTPurchased(),
+                fromBlock,
+                currentBlock
+            );
+            
+            console.log(`Found ${purchasedEvents.length} past purchase events`);
+            
+            // Query past ListingCanceled events  
+            const canceledEvents = await contract.queryFilter(
+                contract.filters.ListingCanceled(),
+                fromBlock,
+                currentBlock
+            );
+            
+            console.log(`Found ${canceledEvents.length} past canceled events`);
+            
+            // Process purchase events
+            const pastSales = [];
+            for (const event of purchasedEvents) {
+                try {
+                    const block = await event.getBlock();
+                    const saleData = {
+                        listingId: event.args.listingId.toString(),
+                        buyer: event.args.buyer,
+                        quantity: event.args.quantity.toString(),
+                        totalPrice: event.args.totalPrice.toString(),
+                        paymentToken: event.args.paymentToken,
+                        timestamp: block.timestamp * 1000, // Convert to milliseconds
+                        type: 'sale',
+                        blockNumber: event.blockNumber,
+                        transactionHash: event.transactionHash
+                    };
+                    pastSales.push(saleData);
+                } catch (eventError) {
+                    console.warn("Error processing past sale event:", eventError);
+                }
+            }
+            
+            // Process canceled events
+            const pastCanceled = new Set();
+            for (const event of canceledEvents) {
+                try {
+                    pastCanceled.add(event.args.listingId.toString());
+                } catch (eventError) {
+                    console.warn("Error processing past canceled event:", eventError);
+                }
+            }
+            
+            // Merge with existing data (avoid duplicates)
+            setSalesHistory(prev => {
+                const existingHashes = new Set(prev.map(sale => sale.transactionHash));
+                const newSales = pastSales.filter(sale => !existingHashes.has(sale.transactionHash));
+                const merged = [...prev, ...newSales].sort((a, b) => b.timestamp - a.timestamp);
+                console.log(`Merged sales history: ${merged.length} total transactions (${newSales.length} new from blockchain)`);
+                return merged;
+            });
+            
+            setCanceledListings(prev => {
+                const merged = new Set([...prev, ...pastCanceled]);
+                console.log(`Updated canceled listings: ${merged.size} total`);
+                return merged;
+            });
+            
+        } catch (error) {
+            console.error("Error fetching past sales events:", error);
+        }
+    };
+
     // Set up demo data for testing/offline mode
     const setupDemoData = () => {
         console.log("Setting up demo data for offline testing");
         
-        // Create some demo sales history
-        const demoSales = [
-            {
-                listingId: "1",
-                buyer: "0x1234567890123456789012345678901234567890",
-                quantity: "1",
-                totalPrice: ethers.parseEther("2.5").toString(),
-                paymentToken: ethers.ZeroAddress,
-                timestamp: Date.now() - 3600000, // 1 hour ago
-                type: 'sale'
-            },
-            {
-                listingId: "2", 
-                buyer: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
-                quantity: "1",
-                totalPrice: ethers.parseEther("1.8").toString(),
-                paymentToken: ethers.ZeroAddress,
-                timestamp: Date.now() - 7200000, // 2 hours ago
-                type: 'sale'
-            },
-            {
-                listingId: "3",
-                buyer: "0x9876543210987654321098765432109876543210", 
-                quantity: "1",
-                totalPrice: ethers.parseEther("3.2").toString(),
-                paymentToken: ethers.ZeroAddress,
-                timestamp: Date.now() - 86400000, // 1 day ago
-                type: 'sale'
-            }
-        ];
+        // Only set up demo data if we don't have any existing sales history
+        if (salesHistory.length === 0) {
+            // Create some demo sales history
+            const demoSales = [
+                {
+                    listingId: "1",
+                    buyer: "0x1234567890123456789012345678901234567890",
+                    quantity: "1",
+                    totalPrice: ethers.parseEther("2.5").toString(),
+                    paymentToken: ethers.ZeroAddress,
+                    timestamp: Date.now() - 3600000, // 1 hour ago
+                    type: 'sale'
+                },
+                {
+                    listingId: "2", 
+                    buyer: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+                    quantity: "1",
+                    totalPrice: ethers.parseEther("1.8").toString(),
+                    paymentToken: ethers.ZeroAddress,
+                    timestamp: Date.now() - 7200000, // 2 hours ago
+                    type: 'sale'
+                },
+                {
+                    listingId: "3",
+                    buyer: "0x9876543210987654321098765432109876543210", 
+                    quantity: "1",
+                    totalPrice: ethers.parseEther("3.2").toString(),
+                    paymentToken: ethers.ZeroAddress,
+                    timestamp: Date.now() - 86400000, // 1 day ago
+                    type: 'sale'
+                }
+            ];
+            
+            setSalesHistory(demoSales);
+        }
         
-        setSalesHistory(demoSales);
         setStatus("Running in demo mode - showing sample transaction data");
     };
 
@@ -113,20 +262,53 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const setupEventListeners = (contract) => {
         try {
             // Listen for purchases (sales)
-            contract.on("NFTPurchased", (listingId, buyer, quantity, totalPrice, paymentToken) => {
+            contract.on("NFTPurchased", async (listingId, buyer, quantity, totalPrice, paymentToken, event) => {
                 console.log("NFT Purchased event:", { listingId, buyer, quantity, totalPrice, paymentToken });
                 
-                const saleData = {
-                    listingId: listingId.toString(),
-                    buyer,
-                    quantity: quantity.toString(),
-                    totalPrice: totalPrice.toString(),
-                    paymentToken,
-                    timestamp: Date.now(),
-                    type: 'sale'
-                };
-                
-                setSalesHistory(prev => [...prev, saleData]);
+                try {
+                    // Get block information for timestamp
+                    const block = await event.getBlock();
+                    
+                    const saleData = {
+                        listingId: listingId.toString(),
+                        buyer,
+                        quantity: quantity.toString(),
+                        totalPrice: totalPrice.toString(),
+                        paymentToken,
+                        timestamp: block.timestamp * 1000, // Convert to milliseconds
+                        type: 'sale',
+                        blockNumber: event.blockNumber,
+                        transactionHash: event.transactionHash
+                    };
+                    
+                    setSalesHistory(prev => {
+                        // Check if this transaction already exists
+                        const exists = prev.some(sale => sale.transactionHash === saleData.transactionHash);
+                        if (exists) {
+                            console.log("Sale event already recorded, skipping duplicate");
+                            return prev;
+                        }
+                        
+                        const updated = [saleData, ...prev].sort((a, b) => b.timestamp - a.timestamp);
+                        console.log("Added new sale to history:", saleData);
+                        console.log("Total sales history now:", updated.length, "transactions");
+                        return updated;
+                    });
+                } catch (error) {
+                    console.error("Error processing NFTPurchased event:", error);
+                    // Fallback without block info
+                    const saleData = {
+                        listingId: listingId.toString(),
+                        buyer,
+                        quantity: quantity.toString(),
+                        totalPrice: totalPrice.toString(),
+                        paymentToken,
+                        timestamp: Date.now(),
+                        type: 'sale'
+                    };
+                    
+                    setSalesHistory(prev => [saleData, ...prev]);
+                }
             });
 
             // Listen for canceled listings
@@ -543,8 +725,26 @@ const ERC1155_APPROVAL_ABI = [
             
             setStatus('Transaction submitted. Waiting for confirmation...');
             await tx.wait();
-            setStatus('Purchase successful!');
+            setStatus('Purchase successful! Updating marketplace data...');
+            
+            // Refresh listings and fetch any new events
             fetchListings();
+            
+            // Wait a moment for events to be mined and then fetch recent events
+            setTimeout(async () => {
+                try {
+                    await fetchPastSalesEvents(marketplace);
+                    setStatus('Purchase successful! Marketplace updated.');
+                    
+                    // Clear status after a few seconds
+                    setTimeout(() => setStatus(''), 3000);
+                } catch (eventError) {
+                    console.warn("Error fetching updated events after purchase:", eventError);
+                    setStatus('Purchase successful!');
+                    setTimeout(() => setStatus(''), 3000);
+                }
+            }, 2000);
+            
         } catch (e) {
             console.error('Error in buyListing:', e);
             
@@ -707,7 +907,9 @@ const ERC1155_APPROVAL_ABI = [
             salesHistory,
             canceledListings,
             marketplaceStats,
-            calculateMarketplaceStats
+            calculateMarketplaceStats,
+            // Add function to manually refresh blockchain data
+            refreshBlockchainData: () => marketplace && fetchPastSalesEvents(marketplace)
         }}>
             {children}
         </MarketplaceContext.Provider>
