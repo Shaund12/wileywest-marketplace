@@ -501,8 +501,8 @@ export class NFTScanner {
             let chunkSize = 100000; // Start with 100k blocks
             let failedAttempts = 0;
             
-            // Process in chunks from the beginning of chain history
-            for (let startBlock = 0; startBlock < currentBlock; startBlock += chunkSize) {
+            // Process in chunks from block 10,000,000 (marketplace contract deployment)
+            for (let startBlock = 10000000; startBlock < currentBlock; startBlock += chunkSize) {
                 const endBlock = Math.min(startBlock + chunkSize - 1, currentBlock);
                 
                 try {
@@ -825,9 +825,9 @@ export class NFTScanner {
             
             // Try to find all transfers to this user
             try {
-                // Start from the beginning of history but be prepared to chunk if needed
+                // Start from block 10,000,000 (marketplace contract deployment)
                 const allTransfers = [];
-                let startBlock = 0;
+                let startBlock = 10000000;
                 const currentBlock = await this.provider.getBlockNumber();
                 let chunkSize = 500000; // 500k blocks at a time
                 
@@ -1103,8 +1103,8 @@ export class NFTScanner {
         try {
             const tokenIds = new Set();
             
-            // NO BLOCK LIMIT - scan from the beginning!
-            const fromBlock = 0;
+            // Scan from block 10,000,000 (marketplace contract deployment)
+            const fromBlock = 10000000;
             const toBlock = 'latest';
             
             try {
@@ -1178,8 +1178,8 @@ export class NFTScanner {
             const currentBlock = await this.provider.getBlockNumber();
             const chunkSize = 100000; // 100k blocks at a time
             
-            // Process in chunks from the beginning of chain history
-            for (let startBlock = 0; startBlock < currentBlock; startBlock += chunkSize) {
+            // Process in chunks from block 10,000,000 (marketplace contract deployment)
+            for (let startBlock = 10000000; startBlock < currentBlock; startBlock += chunkSize) {
                 const endBlock = Math.min(startBlock + chunkSize - 1, currentBlock);
                 
                 try {

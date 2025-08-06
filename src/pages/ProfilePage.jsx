@@ -600,10 +600,9 @@ function ProfilePage() {
             const transferSingleFilter = contract.filters.TransferSingle(null, null, wallet);
             const transferBatchFilter = contract.filters.TransferBatch(null, null, wallet);
 
-            // Look back a few thousand blocks
+            // Look back from block 10,000,000 (when marketplace contract was deployed)
             const currentBlock = await provider.getBlockNumber();
-            const lookbackBlocks = 10000; // Look back ~10k blocks
-            const fromBlock = Math.max(0, currentBlock - lookbackBlocks);
+            const fromBlock = 10000000; // Start from block 10,000,000 as contract was deployed after 10 million
 
             // Get transfer events
             const singleEvents = await contract.queryFilter(transferSingleFilter, fromBlock);
