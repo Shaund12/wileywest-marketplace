@@ -435,34 +435,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             console.warn("Error processing partial sales data:", error);
         }
     };
-            
-            setCanceledListings(prev => {
-                const merged = new Set([...prev, ...pastCanceled]);
-                console.log(`❌ Updated canceled listings: ${merged.size} total`);
-                return merged;
-            });
-            
-            // Comprehensive success message
-            const totalEventsFound = pastSales.length + pastCanceled.size;
-            if (totalEventsFound > 0) {
-                console.log(`🎉 COMPREHENSIVE BLOCKCHAIN SCAN COMPLETE!`);
-                console.log(`📈 Total transactions found: ${pastSales.length}`);
-                console.log(`❌ Total cancellations found: ${pastCanceled.size}`);
-                
-                setStatus(`✅ Complete blockchain scan finished! Found ${pastSales.length} purchase transactions and ${pastCanceled.size} canceled listings.`);
-                setTimeout(() => setStatus(""), 8000);
-            } else {
-                console.log(`📋 Blockchain scan complete - no transaction history found in smart contract`);
-                setStatus("✅ Blockchain scan complete - no historical transactions found in smart contract. This could mean the marketplace is new or transactions happened on a different contract.");
-                setTimeout(() => setStatus(""), 8000);
-            }
-            
-        } catch (error) {
-            console.error("❌ Error fetching past sales events:", error);
-            setStatus(`❌ Error fetching blockchain events: ${error.message}. Check console for details.`);
-            setTimeout(() => setStatus(""), 10000);
-        }
-    };
 
     // Set up demo data for testing/offline mode
     const setupDemoData = () => {
