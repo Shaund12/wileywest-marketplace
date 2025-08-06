@@ -1,5 +1,5 @@
 {
-  "name": "wileywest-marketplace",
+  "name": "blockdust-marketplace",
   "version": "0.1.0",
   "private": true,
   "dependencies": {
@@ -19,5 +19,5 @@
     "build": "vite build",
     "preview": "vite preview"
   },
-  "description": "WileyW€$T: Cyberpunk NFT marketplace on Vitruveo"
+  "description": "BlockDust: Cyberpunk NFT marketplace on Vitruveo"
 }

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
-import logo from '../assets/logo.svg';
+import logo from '../assets/blockdust-logo.png';
 
 function Navigation() {
   const { wallet, connect, disconnect } = useWallet();
@@ -12,8 +12,8 @@ function Navigation() {
       <div className="nav-container">
         <div className="nav-logo">
           <Link to="/">
-            <img src={logo} alt="WileyW€$T" />
-            <span>WileyW€$T</span>
+            <img src={logo} alt="BlockDust" />
+            <span>BlockDust</span>
           </Link>
         </div>
         
