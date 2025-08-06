@@ -1010,10 +1010,11 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         }
         
         setStatus('Loading listings...');
+        console.log(`🔄 fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
         try {
             // Step 1: Try to load from cache first (unless force refresh)
-            if (!forceRefresh && supabaseConnected) {
+            if (!forceRefresh && supabaseConnected && getCachedListings) {
                 console.log("🔍 Checking cache for listings...");
                 const cachedListings = await getCachedListings();
                 
@@ -1026,7 +1027,15 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     // Continue to fetch fresh data in background
                     setTimeout(() => fetchListingsFromBlockchain(true), 100);
                     return;
+                } else {
+                    console.log("🔍 No cached listings found, fetching from blockchain");
                 }
+            } else {
+                console.log("🔍 Skipping cache check:", {
+                    forceRefresh,
+                    supabaseConnected,
+                    hasCachedListingsFunc: !!getCachedListings
+                });
             }
             
             // Step 2: Fetch from blockchain
@@ -1217,13 +1226,22 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             setHotListings(res.slice(0, 5));
             
             // Cache the fresh data
-            if (supabaseConnected && res.length > 0) {
+            console.log(`🔧 Caching check: supabaseConnected=${supabaseConnected}, resLength=${res.length}, hasCacheListingsFunc=${!!cacheListings}`);
+            
+            if (supabaseConnected && res.length > 0 && cacheListings) {
                 try {
+                    console.log(`💾 Attempting to cache ${res.length} listings to Supabase...`);
                     await cacheListings(res);
-                    console.log(`✅ Cached ${res.length} listings to Supabase`);
+                    console.log(`✅ Successfully cached ${res.length} listings to Supabase`);
                 } catch (cacheError) {
-                    console.warn("Failed to cache listings:", cacheError);
+                    console.warn("❌ Failed to cache listings:", cacheError);
                 }
+            } else {
+                console.log("⚠️ Skipping listings cache due to:", {
+                    supabaseConnected,
+                    listingsCount: res.length,
+                    hasCacheListingsFunc: !!cacheListings
+                });
             }
             
             if (isBackgroundUpdate) {
