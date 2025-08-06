@@ -11,6 +11,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const { 
         cacheListings, 
         getCachedListings, 
+        cacheSalesHistory,
+        getCachedSalesHistory,
         subscribeToListings,
         isConnected: supabaseConnected 
     } = useSupabase();
@@ -65,42 +67,77 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         mostActiveSellers: []
     });
 
-    // Load sales history from localStorage on initialization
+    // Load sales history from Supabase cache first, fallback to localStorage
     useEffect(() => {
-        const loadPersistedData = () => {
+        const loadPersistedData = async () => {
             try {
-                const savedSalesHistory = localStorage.getItem('marketplace_sales_history');
-                const savedCanceledListings = localStorage.getItem('marketplace_canceled_listings');
-                
-                if (savedSalesHistory) {
-                    const parsedHistory = JSON.parse(savedSalesHistory);
-                    console.log("Loaded persisted sales history:", parsedHistory);
-                    setSalesHistory(parsedHistory);
+                // Try to load from Supabase cache first
+                if (supabaseConnected && getCachedSalesHistory) {
+                    console.log("🔍 Loading sales history from Supabase cache...");
+                    const cachedSales = await getCachedSalesHistory();
+                    
+                    if (cachedSales && cachedSales.length > 0) {
+                        console.log(`📦 Loaded ${cachedSales.length} sales from Supabase cache`);
+                        setSalesHistory(cachedSales);
+                    } else {
+                        // Fallback to localStorage if no Supabase cache
+                        console.log("No Supabase cache found, falling back to localStorage");
+                        loadFromLocalStorage();
+                    }
+                } else {
+                    // Load from localStorage if Supabase not connected
+                    loadFromLocalStorage();
                 }
                 
+                // Always load canceled listings from localStorage (smaller data set)
+                const savedCanceledListings = localStorage.getItem('marketplace_canceled_listings');
                 if (savedCanceledListings) {
                     const parsedCanceled = JSON.parse(savedCanceledListings);
                     setCanceledListings(new Set(parsedCanceled));
                 }
             } catch (error) {
                 console.error("Error loading persisted marketplace data:", error);
+                // Fallback to localStorage on any error
+                loadFromLocalStorage();
+            }
+        };
+        
+        const loadFromLocalStorage = () => {
+            try {
+                const savedSalesHistory = localStorage.getItem('marketplace_sales_history');
+                if (savedSalesHistory) {
+                    const parsedHistory = JSON.parse(savedSalesHistory);
+                    console.log("Loaded persisted sales history from localStorage:", parsedHistory);
+                    setSalesHistory(parsedHistory);
+                }
+            } catch (error) {
+                console.error("Error loading from localStorage:", error);
             }
         };
         
         loadPersistedData();
-    }, []);
+    }, [supabaseConnected, getCachedSalesHistory]);
 
-    // Persist sales history to localStorage whenever it changes
+    // Persist sales history to localStorage and Supabase whenever it changes
     useEffect(() => {
         if (salesHistory.length > 0) {
             try {
+                // Always persist to localStorage for immediate access
                 localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
                 console.log("Persisted sales history to localStorage:", salesHistory.length, "transactions");
+                
+                // Also cache to Supabase if connected
+                if (supabaseConnected && cacheSalesHistory) {
+                    console.log("💾 Caching sales history to Supabase...");
+                    cacheSalesHistory(salesHistory).catch(error => {
+                        console.warn("Failed to cache sales history to Supabase:", error);
+                    });
+                }
             } catch (error) {
                 console.error("Error persisting sales history:", error);
             }
         }
-    }, [salesHistory]);
+    }, [salesHistory, supabaseConnected, cacheSalesHistory]);
 
     // Persist canceled listings to localStorage whenever they change
     useEffect(() => {

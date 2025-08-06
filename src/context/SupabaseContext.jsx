@@ -31,11 +31,21 @@ export function SupabaseProvider({ children }) {
             const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
             const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
             
+            console.log('🔧 Supabase Config Check:', {
+                hasUrl: !!supabaseUrl,
+                hasKey: !!supabaseKey,
+                url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'not set',
+                isDummy: supabaseUrl === 'https://dummy.supabase.co'
+            });
+            
             if (supabaseUrl && supabaseKey && supabaseUrl !== 'https://dummy.supabase.co') {
                 const client = createClient(supabaseUrl, supabaseKey);
                 setSupabase(client);
                 setIsConnected(true);
                 console.log('✅ Supabase client initialized for caching');
+                
+                // Test the connection
+                testSupabaseConnection(client);
             } else {
                 console.log('⚠️ Supabase not configured - running without cache');
                 setIsConnected(false);
@@ -45,6 +55,28 @@ export function SupabaseProvider({ children }) {
             setIsConnected(false);
         }
     }, []);
+
+    // Test Supabase connection
+    const testSupabaseConnection = async (client) => {
+        try {
+            console.log('🧪 Testing Supabase connection...');
+            
+            // Try a simple query to test connectivity
+            const { data, error } = await client
+                .from('marketplace_listings')
+                .select('count')
+                .limit(1);
+                
+            if (error) {
+                console.warn('⚠️ Supabase connection test failed:', error.message);
+                console.log('📝 Make sure your Supabase tables are created and RLS policies are set correctly');
+            } else {
+                console.log('✅ Supabase connection test successful');
+            }
+        } catch (error) {
+            console.warn('⚠️ Supabase connection test error:', error.message);
+        }
+    };
 
     // Cache utility functions
     const getCacheKey = (type, id) => `${type}:${id}`;
@@ -135,10 +167,19 @@ export function SupabaseProvider({ children }) {
 
     // Database operations for persistent caching
     const cacheListings = async (listings) => {
-        if (!supabase || !listings.length) return;
+        if (!supabase) {
+            console.log('⚠️ Supabase not available - skipping listings cache');
+            return;
+        }
+        
+        if (!listings || listings.length === 0) {
+            console.log('⚠️ No listings to cache');
+            return;
+        }
         
         try {
             console.log(`💾 Caching ${listings.length} listings to Supabase...`);
+            console.log('📊 Sample listing data:', listings[0]);
             
             // Prepare data for database
             const dbListings = listings.map(listing => ({
@@ -158,8 +199,10 @@ export function SupabaseProvider({ children }) {
                 updated_at: new Date().toISOString()
             }));
 
+            console.log('📊 Sample DB listing data:', dbListings[0]);
+
             // Upsert listings (insert or update if exists)
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('marketplace_listings')
                 .upsert(dbListings, { 
                     onConflict: 'listing_id',
@@ -167,10 +210,17 @@ export function SupabaseProvider({ children }) {
                 });
 
             if (error) {
-                console.warn('Database cache error:', error);
+                console.warn('❌ Database cache error:', error);
+                console.warn('🔍 Error details:', {
+                    message: error.message,
+                    details: error.details,
+                    hint: error.hint,
+                    code: error.code
+                });
                 updateCacheStats('errors');
             } else {
                 console.log(`✅ Successfully cached ${listings.length} listings to database`);
+                console.log('📊 Cache result:', data);
                 
                 // Also cache in memory for immediate access
                 listings.forEach(listing => {
@@ -179,7 +229,7 @@ export function SupabaseProvider({ children }) {
                 });
             }
         } catch (error) {
-            console.warn('Error caching listings:', error);
+            console.warn('❌ Error caching listings:', error);
             updateCacheStats('errors');
         }
     };
@@ -317,6 +367,116 @@ export function SupabaseProvider({ children }) {
         }
     };
 
+    const cacheSalesHistory = async (salesHistory) => {
+        if (!supabase) {
+            console.log('⚠️ Supabase not available - skipping sales history cache');
+            return;
+        }
+        
+        if (!salesHistory || salesHistory.length === 0) {
+            console.log('⚠️ No sales history to cache');
+            return;
+        }
+
+        try {
+            console.log(`💾 Caching ${salesHistory.length} sales transactions to Supabase...`);
+            console.log('📊 Sample sales data:', salesHistory[0]);
+            
+            // Prepare data for database
+            const dbSales = salesHistory.map(sale => ({
+                listing_id: sale.listingId,
+                buyer: sale.buyer,
+                seller: sale.seller || null,
+                quantity: sale.quantity,
+                total_price: sale.totalPrice,
+                payment_token: sale.paymentToken,
+                transaction_hash: sale.transactionHash,
+                block_number: sale.blockNumber || null,
+                timestamp: sale.timestamp,
+                sale_type: sale.type || 'sale'
+            }));
+
+            console.log('📊 Sample DB sales data:', dbSales[0]);
+
+            // Upsert sales (insert or update if exists, avoid duplicates by transaction_hash)
+            const { data, error } = await supabase
+                .from('sales_history')
+                .upsert(dbSales, { 
+                    onConflict: 'transaction_hash',
+                    ignoreDuplicates: true 
+                });
+
+            if (error) {
+                console.warn('❌ Database sales cache error:', error);
+                console.warn('🔍 Error details:', {
+                    message: error.message,
+                    details: error.details,
+                    hint: error.hint,
+                    code: error.code
+                });
+                updateCacheStats('errors');
+            } else {
+                console.log(`✅ Successfully cached ${salesHistory.length} sales to database`);
+                console.log('📊 Cache result:', data);
+                
+                // Also cache in memory for immediate access
+                setCache('sales_history', salesHistory, 'sales');
+            }
+        } catch (error) {
+            console.warn('❌ Error caching sales history:', error);
+            updateCacheStats('errors');
+        }
+    };
+
+    const getCachedSalesHistory = async () => {
+        // Check memory cache first
+        const memoryData = getCache('sales_history');
+        if (memoryData) return memoryData;
+
+        if (!supabase) return [];
+
+        try {
+            console.log('🔍 Fetching cached sales history from Supabase...');
+            
+            const { data, error } = await supabase
+                .from('sales_history')
+                .select('*')
+                .order('timestamp', { ascending: false })
+                .limit(1000); // Limit to last 1000 sales
+
+            if (error) {
+                console.warn('Error fetching cached sales history:', error);
+                updateCacheStats('errors');
+                return [];
+            }
+
+            console.log(`📦 Retrieved ${data.length} cached sales from database`);
+            
+            // Convert back to frontend format
+            const salesHistory = data.map(item => ({
+                listingId: item.listing_id,
+                buyer: item.buyer,
+                seller: item.seller,
+                quantity: item.quantity,
+                totalPrice: item.total_price,
+                paymentToken: item.payment_token,
+                transactionHash: item.transaction_hash,
+                blockNumber: item.block_number,
+                timestamp: item.timestamp,
+                type: item.sale_type
+            }));
+
+            // Cache in memory for faster subsequent access
+            setCache('sales_history', salesHistory, 'sales');
+            
+            return salesHistory;
+        } catch (error) {
+            console.warn('Error retrieving cached sales history:', error);
+            updateCacheStats('errors');
+            return [];
+        }
+    };
+
     // Real-time subscriptions
     const subscribeToListings = (callback) => {
         if (!supabase) return null;
@@ -407,6 +567,8 @@ export function SupabaseProvider({ children }) {
         getCachedListings,
         cacheProfileData,
         getCachedProfile,
+        cacheSalesHistory,
+        getCachedSalesHistory,
         
         // Real-time subscriptions
         subscribeToListings,
