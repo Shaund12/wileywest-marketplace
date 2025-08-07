@@ -290,10 +290,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const totalBatches = Math.ceil(chunks.length / MAX_CONCURRENT_CHUNKS);
                 
                 setStatus(`⚡ Processing chunk ${batchNumber}/${totalBatches} (conservative mode)...`);
-                console.log(`⚡ Processing chunk ${batchNumber}/${totalBatches}: ${chunk.start}-${chunk.end}`);
                 
                 // Process one chunk at a time to reduce load
                 const chunk = batch[0]; // Only process first chunk since MAX_CONCURRENT_CHUNKS = 1
+                console.log(`⚡ Processing chunk ${batchNumber}/${totalBatches}: ${chunk.start}-${chunk.end}`);
                 const chunkPromise = async () => {
                     const { start, end } = chunk;
                     
