@@ -36,7 +36,7 @@ const KNOWN_NFT_CONTRACTS = [
 
 // Multiple IPFS gateways to try for better reliability
 const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/',
+
     'https://ipfs.io/ipfs/',
     'https://gateway.pinata.cloud/ipfs/',
     'https://ipfs.fleek.co/ipfs/',
