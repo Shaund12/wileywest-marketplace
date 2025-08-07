@@ -744,6 +744,7 @@ function ProfilePage() {
 
     // Find ALL NFTs owned by the user with cache-first approach and throttling
     const scanningInProgress = useRef(false);
+    // Find ALL NFTs owned by the user with cache-first approach and throttling
     const findAllUserNfts = async (forceRefresh = false) => {
         if (!wallet || !provider) return;
 
@@ -755,20 +756,24 @@ function ProfilePage() {
 
         setIsLoading(true);
         scanningInProgress.current = true;
-        
+
         try {
             // Step 1: Try to load from cache first (unless force refresh)
             if (!forceRefresh && supabaseConnected && getCachedProfile) {
                 console.log("🔍 Checking cache for profile data...");
                 setStatus("Loading profile from cache...");
-                
+
                 const cachedProfile = await getCachedProfile(wallet);
-                
+
                 if (cachedProfile && cachedProfile.nfts && cachedProfile.nfts.length > 0) {
                     console.log(`📦 Loaded ${cachedProfile.nfts.length} NFTs from cache`);
                     setUserNfts(cachedProfile.nfts);
                     setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache`);
-                    
+
+                    // Add this line to fetch metadata for cached NFTs immediately
+                    console.log("🔄 Fetching metadata for cached NFTs...");
+                    batchFetchMetadata(cachedProfile.nfts);
+
                     // Only schedule background update if no scan happened recently
                     const now = Date.now();
                     if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
@@ -782,10 +787,10 @@ function ProfilePage() {
                     return;
                 }
             }
-            
+
             // Step 2: Scan from blockchain
             await scanUserNftsFromBlockchain(false);
-            
+
         } catch (error) {
             console.error("Error loading user NFTs:", error);
             setStatus(`Error loading NFTs: ${error.message}`);
