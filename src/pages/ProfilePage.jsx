@@ -417,40 +417,64 @@ function ProfilePage() {
         }
     };
 
-    // Add this new batch fetching function
-    const batchFetchMetadata = async (nfts, batchSize = 10) => {
+    // Optimized batch fetching function with maximum parallelism
+    const batchFetchMetadata = async (nfts) => {
         // Group NFTs by those that need metadata fetching
         const nftsToFetch = nfts.filter(nft => {
             const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
             return !nftMetadata[key]?.loaded && nft.tokenURI;
         });
 
-        console.log(`Batch fetching metadata for ${nftsToFetch.length} NFTs`);
+        if (nftsToFetch.length === 0) return;
 
-        // Process in batches to avoid overwhelming the network
-        for (let i = 0; i < nftsToFetch.length; i += batchSize) {
-            const batch = nftsToFetch.slice(i, i + batchSize);
-            
-            setStatus(`Fetching metadata ${i + 1}-${Math.min(i + batchSize, nftsToFetch.length)} of ${nftsToFetch.length}...`);
-            
-            // Process batch in parallel using Promise.all
+        console.log(`Batch fetching metadata for ${nftsToFetch.length} NFTs`);
+        setStatus(`Fetching metadata for ${nftsToFetch.length} NFTs...`);
+
+        // Split NFTs into visible (first 20) and background groups
+        const visibleNfts = nftsToFetch.slice(0, 20);
+        const backgroundNfts = nftsToFetch.slice(20);
+
+        // Process visible NFTs with high priority
+        if (visibleNfts.length > 0) {
+            console.log(`Fetching metadata for ${visibleNfts.length} visible NFTs with high priority`);
+
+            // Fetch all visible NFT metadata in parallel
             await Promise.all(
-                batch.map(nft => 
+                visibleNfts.map(nft =>
                     fetchNftMetadata(nft.contractAddress, nft.tokenId, nft.tokenURI)
-                        .catch(err => console.error(`Error fetching metadata for token ${nft.tokenId}:`, err))
+                        .catch(err => console.error(`Error fetching visible metadata for ${nft.tokenId}:`, err))
                 )
             );
-            
-            // Small delay between batches to be nice to IPFS gateways
-            if (i + batchSize < nftsToFetch.length) {
-                await new Promise(resolve => setTimeout(resolve, 300));
+        }
+
+        // Process background NFTs with controlled concurrency (15 at a time)
+        if (backgroundNfts.length > 0) {
+            const concurrencyLimit = 15;  // Process 15 requests at once
+            const chunks = [];
+
+            // Create chunks of NFTs for concurrent processing
+            for (let i = 0; i < backgroundNfts.length; i += concurrencyLimit) {
+                chunks.push(backgroundNfts.slice(i, i + concurrencyLimit));
+            }
+
+            // Process each chunk with Promise.all
+            for (let i = 0; i < chunks.length; i++) {
+                const chunk = chunks[i];
+                setStatus(`Fetching metadata chunk ${i + 1}/${chunks.length} (${chunk.length} NFTs)...`);
+
+                await Promise.all(
+                    chunk.map(nft =>
+                        fetchNftMetadata(nft.contractAddress, nft.tokenId, nft.tokenURI)
+                            .catch(err => console.error(`Error fetching background metadata for ${nft.tokenId}:`, err))
+                    )
+                );
+
+                // No delay between chunks - maximum speed
             }
         }
-        
-        if (nftsToFetch.length > 0) {
-            setStatus(`Finished loading metadata for ${nftsToFetch.length} NFTs`);
-        }
-    };
+
+        setStatus(`Finished loading metadata for ${nftsToFetch.length} NFTs`);
+    }
 
     // Try to detect if contract is ERC721 or ERC1155
     const detectNftStandard = async (contractAddress) => {
