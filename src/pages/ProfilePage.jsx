@@ -176,54 +176,54 @@ function ProfilePage() {
     };
 
     // Generate a deterministic fallback image using contract and token ID
+    // Generate a custom BlockDust themed placeholder SVG
     const generateFallbackImage = (contractAddress, tokenId) => {
-        // Hash the contract address and token ID to get a consistent color
+        // Create a deterministic color based on contract and token ID
         const hash = contractAddress.toLowerCase() + tokenId.toString();
         let hashNum = 0;
         for (let i = 0; i < hash.length; i++) {
             hashNum = ((hashNum << 5) - hashNum) + hash.charCodeAt(i);
-            hashNum = hashNum & hashNum; // Convert to 32bit integer
+            hashNum = hashNum & hashNum;
         }
 
         // Generate colors based on the hash
         const h = Math.abs(hashNum) % 360;
-        const s = 70 + (Math.abs(hashNum >> 8) % 30); // 70-100%
-        const l = 40 + (Math.abs(hashNum >> 16) % 20); // 40-60%
+        const s = 70 + (Math.abs(hashNum >> 8) % 30);
+        const l = 40 + (Math.abs(hashNum >> 16) % 20);
 
-        // Use a placeholder with the generated color as background
-        return `https://via.placeholder.com/300/${hslToHex(h, s, l)}/FFFFFF?text=${tokenId}`;
-    };
+        // Get hex colors for customizing the SVG
+        const accentColor = hslToHex(h, s, l);
 
-    // Helper to convert HSL to Hex
-    const hslToHex = (h, s, l) => {
-        s /= 100;
-        l /= 100;
+        // Create BlockDust themed SVG with the token ID and custom colors
+        const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+            <rect width="300" height="300" fill="#0f0f0f"/>
+            <path d="M0,60 L300,60 M0,120 L300,120 M0,180 L300,180 M0,240 L300,240" stroke="#25f4ee" stroke-width="0.5" opacity="0.2"/>
+            <path d="M60,0 L60,300 M120,0 L120,300 M180,0 L180,300 M240,0 L240,300" stroke="#25f4ee" stroke-width="0.5" opacity="0.2"/>
+            <rect x="10" y="10" width="280" height="280" rx="5" fill="none" stroke="#${accentColor}" stroke-width="2" opacity="0.7"/>
+            <circle cx="50" cy="60" r="2" fill="#25f4ee" opacity="0.7"/>
+            <circle cx="220" cy="70" r="2" fill="#25f4ee" opacity="0.7"/>
+            <circle cx="40" cy="200" r="2" fill="#25f4ee" opacity="0.7"/>
+            <circle cx="230" cy="220" r="2" fill="#25f4ee" opacity="0.7"/>
+            <g transform="translate(100, 100) scale(0.55)">
+                <path d="M20,20 L70,20 C90,20 100,30 100,50 C100,70 90,80 70,80 L40,80 L40,100 C40,120 50,130 70,130 L100,130" stroke="#ff5ec1" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M120,20 L120,130" stroke="#ff5ec1" stroke-width="12" fill="none" stroke-linecap="round"/>
+                <path d="M120,20 Q150,20 150,50 L150,100 Q150,130 120,130" stroke="#ff5ec1" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </g>
+            <text x="150" y="190" font-family="monospace" font-size="18" fill="#ffffff" text-anchor="middle" font-weight="bold">Token #${tokenId}</text>
+            <text x="150" y="220" font-family="monospace" font-size="14" fill="#939393" text-anchor="middle" font-weight="bold">NO IMAGE AVAILABLE</text>
+            <text x="150" y="245" font-family="monospace" font-size="16" text-anchor="middle" fill="#25f4ee" font-weight="bold">BLOCKDUST NFT</text>
+            <rect x="30" y="205" width="240" height="1" fill="#25f4ee" opacity="0.5"/>
+            <rect x="30" y="260" width="240" height="1" fill="#25f4ee" opacity="0.5"/>
+            <rect width="300" height="300" fill="url(#scanlines)" opacity="0.05"/>
+            <defs>
+                <pattern id="scanlines" patternUnits="userSpaceOnUse" width="3" height="3">
+                    <rect x="0" y="0" width="3" height="1" fill="#ffffff"/>
+                </pattern>
+            </defs>
+        </svg>`;
 
-        const c = (1 - Math.abs(2 * l - 1)) * s;
-        const x = c * (1 - Math.abs((h / 60) % 2 - 1));
-        const m = l - c / 2;
-
-        let r, g, b;
-        if (h >= 0 && h < 60) {
-            [r, g, b] = [c, x, 0];
-        } else if (h >= 60 && h < 120) {
-            [r, g, b] = [x, c, 0];
-        } else if (h >= 120 && h < 180) {
-            [r, g, b] = [0, c, x];
-        } else if (h >= 180 && h < 240) {
-            [r, g, b] = [0, x, c];
-        } else if (h >= 240 && h < 300) {
-            [r, g, b] = [x, 0, c];
-        } else {
-            [r, g, b] = [c, 0, x];
-        }
-
-        const toHex = (c) => {
-            const hex = Math.round((c + m) * 255).toString(16);
-            return hex.length === 1 ? '0' + hex : hex;
-        };
-
-        return `${toHex(r)}${toHex(g)}${toHex(b)}`;
+        // Convert SVG to a data URL
+        return `data:image/svg+xml;base64,${btoa(svgContent)}`;
     };
 
     // Fetch NFT metadata with improved error handling and multiple retry attempts
