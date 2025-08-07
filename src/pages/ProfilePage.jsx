@@ -190,82 +190,33 @@ function ProfilePage() {
         const s = 70 + (Math.abs(hashNum >> 8) % 30);
         const l = 40 + (Math.abs(hashNum >> 16) % 20);
 
-        // Get hex colors for SVG
-        const accentColor = hslToHex(h, s, l);
-        const secondaryColor = hslToHex((h + 180) % 360, s, l);
-
-        // Get collection info (this will be displayed in the SVG)
+        // Get collection info
         const collectionInfo = contractInfo[contractAddress] || {};
-        const collectionName = collectionInfo.name || `Collection ${contractAddress.slice(0, 6)}...`;
-        const collectionSymbol = collectionInfo.symbol || '';
-        const displayName = collectionSymbol || collectionName;
+        const displayName = collectionInfo.symbol || collectionInfo.name || `${contractAddress.slice(0, 6)}...`;
+
+        // Get hex colors
+        const color = hslToHex(h, s, l);
+        const bgColor = "0f0f0f";
 
         try {
-            // Create a cyberpunk western-themed SVG
-            const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
-            <!-- Background with grid -->
-            <rect width="300" height="300" fill="#0f0f0f"/>
-            <path d="M0,60 L300,60 M0,120 L300,120 M0,180 L300,180 M0,240 L300,240" stroke="#25f4ee" stroke-width="0.5" opacity="0.2"/>
-            <path d="M60,0 L60,300 M120,0 L120,300 M180,0 L180,300 M240,0 L240,300" stroke="#25f4ee" stroke-width="0.5" opacity="0.2"/>
-            
-            <!-- Border and accent elements -->
-            <rect x="10" y="10" width="280" height="280" rx="5" fill="none" stroke="#${accentColor}" stroke-width="2"/>
-            <line x1="10" y1="60" x2="290" y2="60" stroke="#${secondaryColor}" stroke-width="1" stroke-dasharray="2,2"/>
-            
-            <!-- Dust particles with dynamic positions based on token ID -->
-            <circle cx="${30 + (hashNum % 50)}" cy="${40 + (hashNum % 30)}" r="1.5" fill="#25f4ee" opacity="0.8"/>
-            <circle cx="${220 + (hashNum % 40)}" cy="${70 + (hashNum % 20)}" r="1.5" fill="#25f4ee" opacity="0.7"/>
-            <circle cx="${50 + (hashNum % 60)}" cy="${200 + (hashNum % 40)}" r="1.5" fill="#25f4ee" opacity="0.6"/>
-            <circle cx="${230 + (hashNum % 30)}" cy="${220 + (hashNum % 30)}" r="1.5" fill="#25f4ee" opacity="0.7"/>
-            <circle cx="${150 + (hashNum % 70)}" cy="${120 + (hashNum % 50)}" r="2" fill="#ff5ec1" opacity="0.8"/>
-            
-            <!-- Stylized "BD" logo -->
-            <g transform="translate(140, 110) scale(0.4)">
-                <path d="M-50,0 L0,0 C15,0 25,10 25,25 C25,40 15,50 0,50 L-25,50 L-25,75 C-25,90 -15,100 0,100 L25,100" stroke="#${accentColor}" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M50,0 L50,100" stroke="#ff5ec1" stroke-width="12" fill="none" stroke-linecap="round"/>
-                <path d="M50,0 Q80,0 80,30 L80,70 Q80,100 50,100" stroke="#ff5ec1" stroke-width="12" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-            </g>
-            
-            <!-- Token ID display -->
-            <rect x="30" y="175" width="240" height="40" rx="4" fill="#111" stroke="#${accentColor}" stroke-width="1" opacity="0.7"/>
-            <text x="150" y="200" font-family="monospace" font-size="16" fill="#ffffff" text-anchor="middle" font-weight="bold">Token #${tokenId}</text>
-            
-            <!-- Collection name display -->
-            <rect x="30" y="225" width="240" height="40" rx="4" fill="#111" stroke="#${secondaryColor}" stroke-width="1" opacity="0.6"/>
-            <text x="150" y="250" font-family="monospace" font-size="14" fill="#25f4ee" text-anchor="middle">${displayName}</text>
-            
-            <!-- Decorative elements -->
-            <rect x="15" y="15" width="10" height="10" fill="#${accentColor}" opacity="0.8"/>
-            <rect x="275" y="15" width="10" height="10" fill="#${accentColor}" opacity="0.8"/>
-            <rect x="15" y="275" width="10" height="10" fill="#${accentColor}" opacity="0.8"/>
-            <rect x="275" y="275" width="10" height="10" fill="#${accentColor}" opacity="0.8"/>
-            
-            <!-- Scanline effect -->
-            <rect width="300" height="300" fill="url(#scanlines)" opacity="0.03"/>
-            <defs>
-                <pattern id="scanlines" patternUnits="userSpaceOnUse" width="4" height="4">
-                    <rect x="0" y="0" width="4" height="1" fill="#ffffff"/>
-                </pattern>
-            </defs>
-        </svg>`;
+            // Create a very simple SVG that's browser-safe
+            const svgString = `
+            <svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+                <rect width="300" height="300" fill="#${bgColor}"/>
+                <rect x="15" y="15" width="270" height="270" rx="5" fill="none" stroke="#${color}" stroke-width="2"/>
+                <circle cx="150" cy="110" r="40" fill="none" stroke="#${color}" stroke-width="3"/>
+                <text x="150" y="180" font-family="monospace" font-size="24" fill="#ffffff" text-anchor="middle">#${tokenId}</text>
+                <text x="150" y="220" font-family="monospace" font-size="16" fill="#${color}" text-anchor="middle">${displayName}</text>
+            </svg>
+        `;
 
-            // Use a safer encoding approach
-            const encodedSvg = encodeURIComponent(svgContent)
-                .replace(/%20/g, ' ')
-                .replace(/%3D/g, '=')
-                .replace(/%3A/g, ':')
-                .replace(/%2F/g, '/')
-                .replace(/%22/g, "'")
-                .replace(/%23/g, '#')
-                .replace(/%3C/g, '<')
-                .replace(/%3E/g, '>')
-                .replace(/%2C/g, ',');
-
-            return `data:image/svg+xml,${encodedSvg}`;
+            // Create data URL without complex encoding
+            const base64SVG = btoa(svgString.trim());
+            return `data:image/svg+xml;base64,${base64SVG}`;
         } catch (err) {
             console.error("Error generating SVG:", err);
-            // Simple fallback if even the SVG fails
-            return `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="300" height="300" fill="#0f0f0f"/><text x="150" y="150" font-family="monospace" font-size="18" fill="#ffffff" text-anchor="middle">Token #${tokenId}</text></svg>`;
+            // Ultimate fallback - just a colored rectangle with text
+            return `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><rect width="300" height="300" fill="#' + bgColor + '"/><text x="150" y="150" fill="#ffffff" text-anchor="middle" font-family="monospace" font-size="20">Token #' + tokenId + '</text></svg>')}`;
         }
     };
 
