@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const SupabaseContext = createContext();
@@ -184,8 +184,7 @@ export function SupabaseProvider({ children }) {
         }
     };
 
-    // Database operations for persistent caching
-    const cacheListings = async (listings) => {
+    const cacheListings = useCallback(async (listings) => {
         try {
             // Ensure Supabase is ready before attempting to cache
             await ensureSupabaseReady();
@@ -254,9 +253,9 @@ export function SupabaseProvider({ children }) {
             console.warn('❌ Error caching listings:', error);
             updateCacheStats('errors');
         }
-    };
+    }, [supabase]);
 
-    const getCachedListings = async () => {
+    const getCachedListings = useCallback(async () => {
         if (!supabase) {
             // Return in-memory cache if Supabase unavailable
             const cachedData = getCache('all_listings');
@@ -308,7 +307,7 @@ export function SupabaseProvider({ children }) {
             updateCacheStats('errors');
             return [];
         }
-    };
+    }, [supabase]);
 
     const cacheProfileData = async (address, profileData) => {
         if (!supabase || !address) return;
@@ -389,7 +388,7 @@ export function SupabaseProvider({ children }) {
         }
     };
 
-    const cacheSalesHistory = async (salesHistory) => {
+    const cacheSalesHistory = useCallback(async (salesHistory) => {
         try {
             // Ensure Supabase is ready before attempting to cache
             await ensureSupabaseReady();
@@ -451,9 +450,9 @@ export function SupabaseProvider({ children }) {
             console.warn('❌ Error caching sales history:', error);
             updateCacheStats('errors');
         }
-    };
+    }, [supabase]);
 
-    const getCachedSalesHistory = async () => {
+    const getCachedSalesHistory = useCallback(async () => {
         // Check memory cache first
         const memoryData = getCache('sales_history');
         if (memoryData) return memoryData;
@@ -461,7 +460,7 @@ export function SupabaseProvider({ children }) {
         if (!supabase) return [];
 
         try {
-            console.log('🔍 Fetching cached sales history from Supabase...');
+            console.log('🔍 Loading sales history from Supabase cache...');
             
             const { data, error } = await supabase
                 .from('sales_history')
@@ -475,7 +474,7 @@ export function SupabaseProvider({ children }) {
                 return [];
             }
 
-            console.log(`📦 Retrieved ${data.length} cached sales from database`);
+            console.log(`📦 Loaded ${data.length} sales from Supabase cache`);
             
             // Convert back to frontend format
             const salesHistory = data.map(item => ({
@@ -500,7 +499,7 @@ export function SupabaseProvider({ children }) {
             updateCacheStats('errors');
             return [];
         }
-    };
+    }, [supabase]); // Only depend on supabase, not on other functions
 
     // Real-time subscriptions
     const subscribeToListings = (callback) => {

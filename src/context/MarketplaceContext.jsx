@@ -68,7 +68,15 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     });
 
     // Load sales history from Supabase cache first, fallback to localStorage
+    // Use a ref to prevent infinite loops from function reference changes
+    const hasLoadedInitialData = useRef(false);
+    
     useEffect(() => {
+        // Only load once when the component mounts or when Supabase connection status changes
+        if (hasLoadedInitialData.current && supabaseConnected === hasLoadedInitialData.supabaseState) {
+            return; // Prevent re-loading if already loaded and connection state hasn't changed
+        }
+        
         const loadPersistedData = async () => {
             try {
                 // Try to load from Supabase cache first
@@ -95,10 +103,16 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     const parsedCanceled = JSON.parse(savedCanceledListings);
                     setCanceledListings(new Set(parsedCanceled));
                 }
+                
+                // Mark as loaded and store connection state
+                hasLoadedInitialData.current = true;
+                hasLoadedInitialData.supabaseState = supabaseConnected;
             } catch (error) {
                 console.error("Error loading persisted marketplace data:", error);
                 // Fallback to localStorage on any error
                 loadFromLocalStorage();
+                hasLoadedInitialData.current = true;
+                hasLoadedInitialData.supabaseState = supabaseConnected;
             }
         };
         
@@ -116,7 +130,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         };
         
         loadPersistedData();
-    }, [supabaseConnected, getCachedSalesHistory]);
+    }, [supabaseConnected]); // Removed getCachedSalesHistory from dependencies to prevent infinite loops
 
     // Persist sales history to localStorage and Supabase whenever it changes
     // Use a ref to track last cached count to prevent unnecessary Supabase calls
