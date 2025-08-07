@@ -132,7 +132,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         loadPersistedData();
     }, [supabaseConnected]); // Removed getCachedSalesHistory from dependencies to prevent infinite loops
 
-    // Persist sales history to localStorage and Supabase whenever it changes
+    // DISABLED: Persist sales history to Supabase to prevent mass data collection
     // Use a ref to track last cached count to prevent unnecessary Supabase calls
     const lastCachedSalesCount = useRef(0);
     useEffect(() => {
@@ -142,13 +142,19 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
                 console.log("Persisted sales history to localStorage:", salesHistory.length, "transactions");
                 
-                // Only cache to Supabase if we have new sales data
-                if (supabaseConnected && cacheSalesHistory && salesHistory.length !== lastCachedSalesCount.current) {
-                    console.log("💾 Caching sales history to Supabase...");
-                    lastCachedSalesCount.current = salesHistory.length;
-                    cacheSalesHistory(salesHistory).catch(error => {
-                        console.warn("Failed to cache sales history to Supabase:", error);
-                    });
+                // DISABLED: Auto-caching to Supabase to prevent mass data collection
+                console.log("💾 Auto-caching to Supabase DISABLED to prevent mass data collection");
+                console.log(`💡 ${salesHistory.length} sales in memory - Supabase auto-cache disabled`);
+                
+                if (false) { // Explicitly disabled - change to true only if user wants auto-caching
+                    // Only cache to Supabase if we have new sales data
+                    if (supabaseConnected && cacheSalesHistory && salesHistory.length !== lastCachedSalesCount.current) {
+                        console.log("💾 Caching sales history to Supabase...");
+                        lastCachedSalesCount.current = salesHistory.length;
+                        cacheSalesHistory(salesHistory).catch(error => {
+                            console.warn("Failed to cache sales history to Supabase:", error);
+                        });
+                    }
                 }
             } catch (error) {
                 console.error("Error persisting sales history:", error);
@@ -182,11 +188,14 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     // Test network connectivity before setting up events
                     try {
                         await provider.getNetwork();
-                        // Set up event listeners for sales tracking
-                        setupEventListeners(contract);
+                        // DISABLED: Automatic past events fetch to prevent mass data collection
+                        console.log("⚠️ Automatic blockchain scanning DISABLED to prevent mass data collection");
+                        console.log("💡 Users can manually refresh blockchain data if needed");
                         
-                        // Fetch past sales events from blockchain
-                        await fetchPastSalesEvents(contract);
+                        // Don't automatically fetch past sales events - only set up event listeners
+                        // setupEventListeners(contract); - Also disabled to prevent any automatic data collection
+                        
+                        console.log("💡 Event listeners and blockchain scanning DISABLED - manual refresh only");
                     } catch (networkError) {
                         console.warn("Network connectivity issue - event listeners not set up:", networkError.message);
                         setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
@@ -201,25 +210,20 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         initializeMarketplace();
     }, [marketplaceAddress, abi, provider]);
 
-    // Disabled aggressive real-time subscriptions to prevent infinite refresh loops
-    // TODO: Re-implement with proper throttling if needed
+    // Disabled aggressive real-time subscriptions and background scanning to prevent mass data collection
+    // TODO: Re-implement with user-controlled refresh if needed
     useEffect(() => {
-        // Only set up a simple periodic refresh, not real-time subscriptions
-        if (marketplace) {
-            // Set up a much less aggressive periodic update - every 5 minutes instead of 1 minute
-            cacheUpdateInterval.current = setInterval(() => {
-                console.log("⏰ Periodic background update (5min interval)");
-                // Only do background updates, not force refreshes
-                fetchListingsFromBlockchain(true);
-            }, 300000); // Update every 5 minutes instead of 1 minute
-
-            return () => {
-                if (cacheUpdateInterval.current) {
-                    clearInterval(cacheUpdateInterval.current);
-                }
-            };
-        }
-    }, [marketplace]); // Removed problematic dependencies
+        // Completely disable automatic periodic updates to prevent mass data collection
+        console.log("⚠️ Automatic background scanning DISABLED to prevent mass data collection");
+        console.log("💡 Users can manually refresh if needed");
+        
+        // No periodic updates - user must manually refresh
+        return () => {
+            if (cacheUpdateInterval.current) {
+                clearInterval(cacheUpdateInterval.current);
+            }
+        };
+    }, [marketplace]);
 
     // Update contract with signer when wallet connects
     useEffect(() => {
@@ -234,7 +238,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
     // Enhanced cache for processed blocks to avoid re-scanning
     const [processedBlocksCache, setProcessedBlocksCache] = useState(new Set());
-    const [lastScannedBlock, setLastScannedBlock] = useState(10000000);
+    const [lastScannedBlock, setLastScannedBlock] = useState(0);
 
     // Optimized parallel blockchain scanning with smart caching
     const fetchPastSalesEvents = async (contract) => {
@@ -256,19 +260,19 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // Get the current block number
             const currentBlock = await provider.getBlockNumber();
             
-            // OPTIMIZED SCAN: Start from block 10,000,000 but check cache
-            const fromBlock = Math.max(10000000, lastScannedBlock);
+            // CONSERVATIVE SCAN: Only scan recent blocks to avoid massive data collection
+            const fromBlock = Math.max(currentBlock - 50000, lastScannedBlock); // Only last 50k blocks
             
-            console.log(`🔍 OPTIMIZED BLOCKCHAIN SCAN: Parallel processing from block ${fromBlock} to ${currentBlock}`);
-            console.log(`⚡ Using smart caching and concurrent chunk processing for maximum efficiency`);
-            setStatus(`⚡ Optimized scan: blocks ${fromBlock} to ${currentBlock} with parallel processing...`);
+            console.log(`🔍 CONSERVATIVE BLOCKCHAIN SCAN: Recent blocks only from ${fromBlock} to ${currentBlock}`);
+            console.log(`⚡ Limiting scan to recent 50k blocks to prevent mass data collection`);
+            setStatus(`⚡ Conservative scan: recent blocks ${fromBlock} to ${currentBlock} only...`);
             
             let purchasedEvents = [];
             let canceledEvents = [];
             
-            // Optimized chunk size for parallel processing
-            const CHUNK_SIZE = 25000; // Smaller chunks for better parallelization
-            const MAX_CONCURRENT_CHUNKS = 4; // Process multiple chunks simultaneously
+            // Conservative chunk size to reduce load
+            const CHUNK_SIZE = 5000; // Much smaller chunks
+            const MAX_CONCURRENT_CHUNKS = 1; // Sequential processing to reduce load
             
             // Create chunk ranges
             const chunks = [];
@@ -285,11 +289,12 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const batchNumber = Math.floor(i / MAX_CONCURRENT_CHUNKS) + 1;
                 const totalBatches = Math.ceil(chunks.length / MAX_CONCURRENT_CHUNKS);
                 
-                setStatus(`⚡ Processing batch ${batchNumber}/${totalBatches} (${batch.length} chunks in parallel)...`);
-                console.log(`⚡ Processing batch ${batchNumber}/${totalBatches}: chunks ${batch.map(c => `${c.start}-${c.end}`).join(', ')}`);
+                setStatus(`⚡ Processing chunk ${batchNumber}/${totalBatches} (conservative mode)...`);
                 
-                // Process all chunks in this batch concurrently
-                const batchPromises = batch.map(async (chunk) => {
+                // Process one chunk at a time to reduce load
+                const chunk = batch[0]; // Only process first chunk since MAX_CONCURRENT_CHUNKS = 1
+                console.log(`⚡ Processing chunk ${batchNumber}/${totalBatches}: ${chunk.start}-${chunk.end}`);
+                const chunkPromise = async () => {
                     const { start, end } = chunk;
                     
                     // Skip if we've already processed this chunk
@@ -300,19 +305,18 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     }
                     
                     try {
-                        // Parallel event queries for this chunk
-                        const [chunkPurchased, chunkCanceled] = await Promise.all([
-                            contract.queryFilter(
-                                contract.filters.NFTPurchased(),
-                                start,
-                                end
-                            ),
-                            contract.queryFilter(
-                                contract.filters.ListingCanceled(),
-                                start,
-                                end
-                            )
-                        ]);
+                        // Sequential event queries for this chunk (no parallel processing)
+                        const chunkPurchased = await contract.queryFilter(
+                            contract.filters.NFTPurchased(),
+                            start,
+                            end
+                        );
+                        
+                        const chunkCanceled = await contract.queryFilter(
+                            contract.filters.ListingCanceled(),
+                            start,
+                            end
+                        );
                         
                         // Cache this chunk as processed
                         setProcessedBlocksCache(prev => new Set([...prev, chunkKey]));
@@ -324,40 +328,38 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         console.warn(`⚠️ Error in chunk ${chunkKey}:`, chunkError);
                         return { purchased: [], canceled: [] };
                     }
-                });
+                };
                 
-                // Wait for all chunks in this batch to complete
-                const batchResults = await Promise.all(batchPromises);
+                // Process single chunk
+                const chunkResult = await chunkPromise();
                 
-                // Accumulate results
-                batchResults.forEach(result => {
-                    purchasedEvents = [...purchasedEvents, ...result.purchased];
-                    canceledEvents = [...canceledEvents, ...result.canceled];
-                });
+                // Accumulate results from single chunk
+                purchasedEvents = [...purchasedEvents, ...chunkResult.purchased];
+                canceledEvents = [...canceledEvents, ...chunkResult.canceled];
                 
                 // Progressive update: show data as it's being fetched
                 if (purchasedEvents.length > 0) {
                     setStatus(`📈 Found ${purchasedEvents.length} transactions so far... (batch ${batchNumber}/${totalBatches} complete)`);
                     
                     // Process and display partial results immediately
-                    await processPartialSalesData(purchasedEvents.slice(-batchResults.reduce((sum, r) => sum + r.purchased.length, 0)));
+                    await processPartialSalesData(chunkResult.purchased);
                 }
                 
-                // Small delay between batches to prevent overwhelming the RPC
+                // Conservative delay between chunks to reduce load
                 if (i + MAX_CONCURRENT_CHUNKS < chunks.length) {
-                    await new Promise(resolve => setTimeout(resolve, 50));
+                    await new Promise(resolve => setTimeout(resolve, 500)); // Longer delay
                 }
             }
             
             // Update last scanned block
             setLastScannedBlock(currentBlock);
             
-            console.log(`🎉 OPTIMIZED SCAN COMPLETE:`);
-            console.log(`⚡ Found ${purchasedEvents.length} total purchase events using parallel processing`);
+            console.log(`🎉 CONSERVATIVE SCAN COMPLETE:`);
+            console.log(`⚡ Found ${purchasedEvents.length} total purchase events using conservative scanning`);
             console.log(`❌ Found ${canceledEvents.length} total canceled events`);
-            console.log(`🚀 Performance: Processed ${chunks.length} chunks with ${MAX_CONCURRENT_CHUNKS}x parallelization`);
+            console.log(`🚀 Performance: Processed ${chunks.length} chunks conservatively to prevent data overload`);
             
-            setStatus(`🎉 Optimized scan complete! Processing ${purchasedEvents.length} purchase events and ${canceledEvents.length} canceled events...`);
+            setStatus(`🎉 Conservative scan complete! Processing ${purchasedEvents.length} purchase events and ${canceledEvents.length} canceled events...`);
             
             // Process all events with enhanced performance
             const pastSales = [];
@@ -1137,23 +1139,27 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             setListings(res);
             setHotListings(res.slice(0, 5));
             
-            // Cache the fresh data
-            console.log(`🔧 Caching check: supabaseConnected=${supabaseConnected}, resLength=${res.length}, hasCacheListingsFunc=${!!cacheListings}`);
+            // DISABLED: Automatic caching to prevent mass data collection to Supabase
+            // Cache the fresh data only if user explicitly enables it
+            console.log(`🔧 Auto-caching DISABLED to prevent mass data collection to Supabase`);
+            console.log(`💡 Found ${res.length} listings - caching disabled to prevent database overload`);
             
-            if (supabaseConnected && res.length > 0 && cacheListings) {
-                try {
-                    console.log(`💾 Attempting to cache ${res.length} listings to Supabase...`);
-                    await cacheListings(res);
-                    console.log(`✅ Successfully cached ${res.length} listings to Supabase`);
-                } catch (cacheError) {
-                    console.warn("❌ Failed to cache listings:", cacheError);
+            if (false) { // Explicitly disabled - change to true only if user wants auto-caching
+                if (supabaseConnected && res.length > 0 && cacheListings) {
+                    try {
+                        console.log(`💾 Attempting to cache ${res.length} listings to Supabase...`);
+                        await cacheListings(res);
+                        console.log(`✅ Successfully cached ${res.length} listings to Supabase`);
+                    } catch (cacheError) {
+                        console.warn("❌ Failed to cache listings:", cacheError);
+                    }
+                } else {
+                    console.log("⚠️ Skipping listings cache due to:", {
+                        supabaseConnected,
+                        listingsCount: res.length,
+                        hasCacheListingsFunc: !!cacheListings
+                    });
                 }
-            } else {
-                console.log("⚠️ Skipping listings cache due to:", {
-                    supabaseConnected,
-                    listingsCount: res.length,
-                    hasCacheListingsFunc: !!cacheListings
-                });
             }
             
             if (isBackgroundUpdate) {
@@ -1428,13 +1434,21 @@ const ERC1155_APPROVAL_ABI = [
         }
     };
 
-    // Load listings on initial load
+    // DISABLED: Load listings on initial load only - no automatic refresh to prevent mass data
     useEffect(() => {
         if (marketplace) {
+            // Only load once on initial mount - no automatic refresh intervals
+            console.log("📋 Loading listings once on initialization - auto-refresh DISABLED");
             fetchListings();
-            // Use a ref to keep track of the interval
-            const intervalId = setInterval(fetchListings, 30000);
-            return () => clearInterval(intervalId);
+            
+            // DISABLED: Automatic refresh interval to prevent mass data collection
+            console.log("⚠️ Automatic listing refresh DISABLED to prevent mass data collection");
+            console.log("💡 Users can manually refresh listings if needed");
+            
+            // No automatic refresh interval
+            return () => {
+                // No interval to cleanup
+            };
         }
     }, [marketplace]);
 
