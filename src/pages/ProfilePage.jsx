@@ -199,55 +199,34 @@ function ProfilePage() {
         return uri;
     };
 
-    // Generate a deterministic fallback image using contract and token ID
+    // Generate a custom LP-style placeholder SVG for NFTs
     const generateFallbackImage = (contractAddress, tokenId) => {
-        // Hash the contract address and token ID to get a consistent color
-        const hash = contractAddress.toLowerCase() + tokenId.toString();
-        let hashNum = 0;
-        for (let i = 0; i < hash.length; i++) {
-            hashNum = ((hashNum << 5) - hashNum) + hash.charCodeAt(i);
-            hashNum = hashNum & hashNum; // Convert to 32bit integer
+        try {
+            // Create deterministic values from contract+tokenId
+            const hash = contractAddress.toLowerCase() + tokenId.toString();
+            let hashNum = 0;
+            for (let i = 0; i < hash.length; i++) {
+                hashNum = ((hashNum << 5) - hashNum) + hash.charCodeAt(i);
+                hashNum = hashNum & hashNum;
+            }
+
+            // Generate dynamic angles and colors
+            const angle = Math.abs(hashNum % 360);
+            const hue1 = Math.abs(hashNum % 360);
+            const hue2 = (hue1 + 180) % 360;
+
+            // Get collection info
+            const collectionInfo = contractInfo[contractAddress] || {};
+            const symbol = collectionInfo.symbol || '';
+            const shortName = (symbol || collectionInfo.name || '').substring(0, 8);
+
+            // Create an SVG that looks like an LP token with cyberpunk style
+            return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Crect width='300' height='300' fill='%230f0f0f'/%3E%3Ccircle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/%3E%3Ccircle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/%3E%3Cpath d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/%3E%3Cpath d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/%3E%3Ccircle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/%3E%3Ctext x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'%3E%23${tokenId}%3C/text%3E%3Ctext x='150' y='170' font-family='monospace' font-size='18' fill='hsl(${hue1},80%,60%)' text-anchor='middle'%3E${shortName}%3C/text%3E%3Ctext x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'%3EWNFT%3C/text%3E%3C/svg%3E`;
+        } catch (err) {
+            console.error("Error generating SVG:", err);
+            // Ultra simple fallback that will definitely work
+            return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
         }
-
-        // Generate colors based on the hash
-        const h = Math.abs(hashNum) % 360;
-        const s = 70 + (Math.abs(hashNum >> 8) % 30); // 70-100%
-        const l = 40 + (Math.abs(hashNum >> 16) % 20); // 40-60%
-
-        // Use a placeholder with the generated color as background
-        return `https://via.placeholder.com/300/${hslToHex(h, s, l)}/FFFFFF?text=${tokenId}`;
-    };
-
-    // Helper to convert HSL to Hex
-    const hslToHex = (h, s, l) => {
-        s /= 100;
-        l /= 100;
-
-        const c = (1 - Math.abs(2 * l - 1)) * s;
-        const x = c * (1 - Math.abs((h / 60) % 2 - 1));
-        const m = l - c / 2;
-
-        let r, g, b;
-        if (h >= 0 && h < 60) {
-            [r, g, b] = [c, x, 0];
-        } else if (h >= 60 && h < 120) {
-            [r, g, b] = [x, c, 0];
-        } else if (h >= 120 && h < 180) {
-            [r, g, b] = [0, c, x];
-        } else if (h >= 180 && h < 240) {
-            [r, g, b] = [0, x, c];
-        } else if (h >= 240 && h < 300) {
-            [r, g, b] = [x, 0, c];
-        } else {
-            [r, g, b] = [c, 0, x];
-        }
-
-        const toHex = (c) => {
-            const hex = Math.round((c + m) * 255).toString(16);
-            return hex.length === 1 ? '0' + hex : hex;
-        };
-
-        return `${toHex(r)}${toHex(g)}${toHex(b)}`;
     };
 
     // Fetch NFT metadata with improved error handling and multiple retry attempts
@@ -1778,36 +1757,6 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
         const s = 70 + (Math.abs(hashNum >> 8) % 30);
         const l = 40 + (Math.abs(hashNum >> 16) % 20);
 
-        function hslToHex(h, s, l) {
-            s /= 100;
-            l /= 100;
-            const c = (1 - Math.abs(2 * l - 1)) * s;
-            const x = c * (1 - Math.abs((h / 60) % 2 - 1));
-            const m = l - c / 2;
-
-            let r, g, b;
-            if (h >= 0 && h < 60) {
-                [r, g, b] = [c, x, 0];
-            } else if (h >= 60 && h < 120) {
-                [r, g, b] = [x, c, 0];
-            } else if (h >= 120 && h < 180) {
-                [r, g, b] = [0, c, x];
-            } else if (h >= 180 && h < 240) {
-                [r, g, b] = [0, x, c];
-            } else if (h >= 240 && h < 300) {
-                [r, g, b] = [x, 0, c];
-            } else {
-                [r, g, b] = [c, 0, x];
-            }
-
-            const toHex = (c) => {
-                const hex = Math.round((c + m) * 255).toString(16);
-                return hex.length === 1 ? '0' + hex : hex;
-            };
-
-            return `${toHex(r)}${toHex(g)}${toHex(b)}`;
-        }
-
         return `https://via.placeholder.com/500/${hslToHex(h, s, l)}/FFFFFF?text=${tokenId}`;
     }
 
@@ -1951,3 +1900,34 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
 }
 
 export default ProfilePage;
+
+// Add this function outside of the components at the top of the file, after imports
+function hslToHex(h, s, l) {
+    s /= 100;
+    l /= 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+
+    let r, g, b;
+    if (h >= 0 && h < 60) {
+        [r, g, b] = [c, x, 0];
+    } else if (h >= 60 && h < 120) {
+        [r, g, b] = [x, c, 0];
+    } else if (h >= 120 && h < 180) {
+        [r, g, b] = [0, c, x];
+    } else if (h >= 180 && h < 240) {
+        [r, g, b] = [0, x, c];
+    } else if (h >= 240 && h < 300) {
+        [r, g, b] = [x, 0, c];
+    } else {
+        [r, g, b] = [c, 0, x];
+    }
+
+    const toHex = (c) => {
+        const hex = Math.round((c + m) * 255).toString(16);
+        return hex.length === 1 ? '0' + hex : hex;
+    };
+
+    return `${toHex(r)}${toHex(g)}${toHex(b)}`;
+}

@@ -9,7 +9,7 @@ function HomePage() {
     return (
         <div className="home-container">
             <div className="hero-section">
-                <h1>WileyW€$T NFT Marketplace</h1>
+                <h1>BlockDust NFT Marketplace</h1>
                 <p className="subtitle">Trade in the neon shadows. Own the future.</p>
                 <div className="hero-buttons">
                     <Link to="/marketplace" className="primary-button">Explore NFTs</Link>

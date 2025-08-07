@@ -1,7 +1,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import logo from '../assets/logo.svg';
-import CacheStats from './CacheStats';
+
+
+import logo from '../assets/blockdust-logo.png';
 
 function Footer() {
   return (
@@ -9,8 +10,11 @@ function Footer() {
       <div className="footer-container">
         <div className="footer-top">
           <div className="footer-logo">
-            <img src={logo} alt="WileyW€$T" />
-            <h3>WileyW€$T NFT Marketplace</h3>
+
+
+            <img src={logo} alt="BlockDust" />
+            <h3>BlockDust NFT Marketplace</h3>
+
             <p>Trade in the neon shadows. Own the future.</p>
             <CacheStats />
           </div>
@@ -39,7 +43,10 @@ function Footer() {
         </div>
         
         <div className="footer-bottom">
-          <p>&copy; {new Date().getFullYear()} WileyW�$T NFT Marketplace. All rights reserved.</p>
+
+
+          <p>&copy; {new Date().getFullYear()} BlockDust NFT Marketplace. All rights reserved.</p>
+
         </div>
       </div>
     </footer>
