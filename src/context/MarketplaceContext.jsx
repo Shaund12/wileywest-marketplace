@@ -190,9 +190,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     } catch (networkError) {
                         console.warn("Network connectivity issue - event listeners not set up:", networkError.message);
                         setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
-                        
-                        // Set up demo data for testing when network is unavailable
-                        setupDemoData();
                     }
                 } catch (error) {
                     console.error("Error initializing marketplace contract:", error);
@@ -516,49 +513,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         } catch (error) {
             console.warn("Error processing partial sales data:", error);
         }
-    };
-
-    // Set up demo data for testing/offline mode
-    const setupDemoData = () => {
-        console.log("Setting up demo data for offline testing");
-        
-        // Only set up demo data if we don't have any existing sales history
-        if (salesHistory.length === 0) {
-            // Create some demo sales history
-            const demoSales = [
-                {
-                    listingId: "1",
-                    buyer: "0x1234567890123456789012345678901234567890",
-                    quantity: "1",
-                    totalPrice: ethers.parseEther("2.5").toString(),
-                    paymentToken: ethers.ZeroAddress,
-                    timestamp: Date.now() - 3600000, // 1 hour ago
-                    type: 'sale'
-                },
-                {
-                    listingId: "2", 
-                    buyer: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
-                    quantity: "1",
-                    totalPrice: ethers.parseEther("1.8").toString(),
-                    paymentToken: ethers.ZeroAddress,
-                    timestamp: Date.now() - 7200000, // 2 hours ago
-                    type: 'sale'
-                },
-                {
-                    listingId: "3",
-                    buyer: "0x9876543210987654321098765432109876543210", 
-                    quantity: "1",
-                    totalPrice: ethers.parseEther("3.2").toString(),
-                    paymentToken: ethers.ZeroAddress,
-                    timestamp: Date.now() - 86400000, // 1 day ago
-                    type: 'sale'
-                }
-            ];
-            
-            setSalesHistory(demoSales);
-        }
-        
-        setStatus("Running in demo mode - showing sample transaction data");
     };
 
     // Set up event listeners for marketplace events
@@ -1076,56 +1030,11 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     }
                 }
                 
-                // Provide demo listings for testing
-                const demoListings = [
-                    {
-                        id: 1,
-                        seller: "0x1234567890123456789012345678901234567890",
-                        nftContract: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
-                        tokenId: "1",
-                        quantity: "1",
-                        pricePerUnit: ethers.parseEther("1.5").toString(),
-                        paymentToken: ethers.ZeroAddress,
-                        isERC1155: false,
-                        active: true,
-                        image: '/placeholders/nft-placeholder.jpg',
-                        imageUrl: '/placeholders/nft-placeholder.jpg',
-                        name: 'Demo NFT #1',
-                        title: 'Demo NFT #1',
-                        description: 'Demo listing for offline testing',
-                        metadata: {
-                            name: 'Demo NFT #1',
-                            description: 'Demo listing for offline testing',
-                            image: '/placeholders/nft-placeholder.jpg'
-                        }
-                    },
-                    {
-                        id: 2,
-                        seller: "0x9876543210987654321098765432109876543210",
-                        nftContract: "0xfedcbafedcbafedcbafedcbafedcbafedcbafed",
-                        tokenId: "2",
-                        quantity: "1", 
-                        pricePerUnit: ethers.parseEther("2.0").toString(),
-                        paymentToken: ethers.ZeroAddress,
-                        isERC1155: false,
-                        active: true,
-                        image: '/placeholders/nft-placeholder.jpg',
-                        imageUrl: '/placeholders/nft-placeholder.jpg',
-                        name: 'Demo NFT #2',
-                        title: 'Demo NFT #2',
-                        description: 'Demo listing for offline testing',
-                        metadata: {
-                            name: 'Demo NFT #2',
-                            description: 'Demo listing for offline testing',
-                            image: '/placeholders/nft-placeholder.jpg'
-                        }
-                    }
-                ];
-                
-                console.log("Using demo listings for offline testing");
-                setListings(demoListings);
-                setHotListings(demoListings);
-                setStatus('Running in demo mode - showing sample listings');
+                // When network is unavailable and no cached data, show empty state
+                console.log("Network unavailable and no cached data - showing empty state");
+                setListings([]);
+                setHotListings([]);
+                setStatus('Network unavailable - no listings to display');
                 return;
             }
             
