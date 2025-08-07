@@ -6,6 +6,7 @@ import { ethers } from 'ethers';
 import ListingCard from '../components/ListingCard';
 import { NFTScanner } from '../utils/nftScanner';
 import '../profile-page.css';
+import CacheStats from '../components/CacheStats';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -1183,7 +1184,7 @@ function ProfilePage() {
                                 <div className="search-container">
                                     <input
                                         type="text"
-                                        placeholder="Search NFTs..."
+                                        placeholder="Search NFTs...";
                                         value={nftFilter}
                                         onChange={(e) => setNftFilter(e.target.value)}
                                         className="input search-input"
@@ -1317,7 +1318,7 @@ function ProfilePage() {
                                         const collectionEndIdx = collectionStartIdx + itemsPerPage;
                                         const paginatedCollectionItems = isCollapsed
                                             ? []
-                                            : collection.items.slice(collectionStartIdx, collectionEndIdx);
+                                            : collection.items.slice(collectionStartIdx, collectionEndIdx );
 
                                         const totalCollectionPages = Math.ceil(collection.items.length / itemsPerPage);
 
