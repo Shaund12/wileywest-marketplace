@@ -364,9 +364,16 @@ export function SupabaseProvider({ children }) {
                 .from('user_profiles')
                 .select('*')
                 .eq('wallet_address', address.toLowerCase())
-                .single();
+                .maybeSingle();
 
-            if (error || !data) {
+            if (error) {
+                console.warn('Error fetching cached profile:', error);
+                updateCacheStats('misses');
+                return null;
+            }
+
+            if (!data) {
+                console.log(`📭 No cached profile found for ${address}`);
                 updateCacheStats('misses');
                 return null;
             }
