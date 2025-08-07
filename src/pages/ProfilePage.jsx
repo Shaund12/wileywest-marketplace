@@ -1619,36 +1619,6 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
         const s = 70 + (Math.abs(hashNum >> 8) % 30);
         const l = 40 + (Math.abs(hashNum >> 16) % 20);
 
-        function hslToHex(h, s, l) {
-            s /= 100;
-            l /= 100;
-            const c = (1 - Math.abs(2 * l - 1)) * s;
-            const x = c * (1 - Math.abs((h / 60) % 2 - 1));
-            const m = l - c / 2;
-
-            let r, g, b;
-            if (h >= 0 && h < 60) {
-                [r, g, b] = [c, x, 0];
-            } else if (h >= 60 && h < 120) {
-                [r, g, b] = [x, c, 0];
-            } else if (h >= 120 && h < 180) {
-                [r, g, b] = [0, c, x];
-            } else if (h >= 180 && h < 240) {
-                [r, g, b] = [0, x, c];
-            } else if (h >= 240 && h < 300) {
-                [r, g, b] = [x, 0, c];
-            } else {
-                [r, g, b] = [c, 0, x];
-            }
-
-            const toHex = (c) => {
-                const hex = Math.round((c + m) * 255).toString(16);
-                return hex.length === 1 ? '0' + hex : hex;
-            };
-
-            return `${toHex(r)}${toHex(g)}${toHex(b)}`;
-        }
-
         return `https://via.placeholder.com/500/${hslToHex(h, s, l)}/FFFFFF?text=${tokenId}`;
     }
 
@@ -1792,3 +1762,34 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
 }
 
 export default ProfilePage;
+
+// Add this function outside of the components at the top of the file, after imports
+function hslToHex(h, s, l) {
+    s /= 100;
+    l /= 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+
+    let r, g, b;
+    if (h >= 0 && h < 60) {
+        [r, g, b] = [c, x, 0];
+    } else if (h >= 60 && h < 120) {
+        [r, g, b] = [x, c, 0];
+    } else if (h >= 120 && h < 180) {
+        [r, g, b] = [0, c, x];
+    } else if (h >= 180 && h < 240) {
+        [r, g, b] = [0, x, c];
+    } else if (h >= 240 && h < 300) {
+        [r, g, b] = [x, 0, c];
+    } else {
+        [r, g, b] = [c, 0, x];
+    }
+
+    const toHex = (c) => {
+        const hex = Math.round((c + m) * 255).toString(16);
+        return hex.length === 1 ? '0' + hex : hex;
+    };
+
+    return `${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
