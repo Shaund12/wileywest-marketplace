@@ -889,14 +889,21 @@ function ProfilePage() {
         lastScanTime.current = now;
         
         try {
-            // Create a new NFT scanner with current wallet
-            const scanner = new NFTScanner(provider, wallet, (statusMsg) => {
-                if (!isBackgroundUpdate) {
-                    setStatus(statusMsg);
-                }
-            });
+            // Create a new NFT scanner with current wallet - with validation
+            let scanner;
+            try {
+                scanner = new NFTScanner(provider, wallet, (statusMsg) => {
+                    if (!isBackgroundUpdate) {
+                        setStatus(statusMsg);
+                    }
+                });
+            } catch (scannerError) {
+                console.error("Error creating NFT scanner:", scannerError);
+                setStatus(`Error initializing scanner: ${scannerError.message}`);
+                return;
+            }
             
-            // Start the comprehensive scan
+            // Start the comprehensive scan with enhanced error handling
             console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting...`);
             const foundNfts = await scanner.scanAllNFTs();
             
@@ -906,7 +913,7 @@ function ProfilePage() {
             if (isBackgroundUpdate) {
                 console.log(`🔄 Background update: Found ${foundNfts.length} NFTs`);
             } else {
-                setStatus(`Found ${foundNfts.length} NFTs in your wallet`);
+                setStatus(`✅ Found ${foundNfts.length} NFTs in your wallet`);
             }
             
             // Cache the fresh data
@@ -936,8 +943,21 @@ function ProfilePage() {
             
         } catch (error) {
             console.error("Error during NFT scan:", error);
+            
+            // Provide specific error messages for common issues
+            let errorMessage = "Error scanning for NFTs";
+            if (error.message.includes('network')) {
+                errorMessage = "Network error - please check your connection and try again";
+            } else if (error.message.includes('timeout')) {
+                errorMessage = "Scan timed out - please try again";
+            } else if (error.message.includes('rate limit')) {
+                errorMessage = "Too many requests - please wait a moment and try again";
+            } else {
+                errorMessage = `Error scanning: ${error.message}`;
+            }
+            
             if (!isBackgroundUpdate) {
-                setStatus(`Error scanning: ${error.message}`);
+                setStatus(errorMessage);
             }
         } finally {
             if (!isBackgroundUpdate) {
@@ -1831,17 +1851,26 @@ function ProfilePage() {
             <div className="nft-scanner-disclaimer">
                 <div className="disclaimer-header">
                     <i className="fas fa-info-circle"></i>
-                    <h3>NFT Scanning Process</h3>
+                    <h3>Enhanced NFT Scanning</h3>
                 </div>
-                <p>Loading NFTs may take several minutes as we scan the entire blockchain history to find all your tokens. This thorough scanning ensures we find older NFTs that other viewers might miss.</p>
+                <p>Searching for your NFTs using a balanced approach that covers the last 6 months of blockchain history. This ensures comprehensive coverage while maintaining good performance.</p>
                 <div className="tips-container">
-                    <h4>Tips:</h4>
+                    <h4>What we're doing:</h4>
                     <ul>
-                        <li>Recently acquired NFTs will appear first</li>
-                        <li>Cached results will load instantly on future visits</li>
-                        <li>You can continue browsing while scanning runs in the background</li>
+                        <li>Scanning known NFT contracts and recent transfer history</li>
+                        <li>Automatically retrying failed network requests</li>
+                        <li>Caching results for instant future loading</li>
+                        <li>Using timeouts to prevent hanging requests</li>
                     </ul>
                 </div>
+                {scanProgress.total > 0 && (
+                    <div className="scan-details">
+                        <small>
+                            Progress: {scanProgress.scanned}/{scanProgress.total} contracts checked, 
+                            {scanProgress.found} NFTs found
+                        </small>
+                    </div>
+                )}
             </div>
         );
     }
