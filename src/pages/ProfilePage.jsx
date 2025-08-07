@@ -845,6 +845,8 @@ function ProfilePage() {
             }
 
             // Step 2: Scan from blockchain
+            // Reset scanning state before blockchain scan to avoid conflicts
+            resetScanningState();
             await scanUserNftsFromBlockchain(false);
 
         } catch (error) {
