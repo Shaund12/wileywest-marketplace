@@ -175,48 +175,33 @@ function ProfilePage() {
         return uri;
     };
 
-    // Generate a custom BlockDust themed placeholder SVG
+    // Generate a custom LP-style placeholder SVG for NFTs
     const generateFallbackImage = (contractAddress, tokenId) => {
-        // Create a deterministic color based on contract and token ID
-        const hash = contractAddress.toLowerCase() + tokenId.toString();
-        let hashNum = 0;
-        for (let i = 0; i < hash.length; i++) {
-            hashNum = ((hashNum << 5) - hashNum) + hash.charCodeAt(i);
-            hashNum = hashNum & hashNum;
-        }
-
-        // Generate colors based on the hash
-        const h = Math.abs(hashNum) % 360;
-        const s = 70 + (Math.abs(hashNum >> 8) % 30);
-        const l = 40 + (Math.abs(hashNum >> 16) % 20);
-
-        // Get collection info
-        const collectionInfo = contractInfo[contractAddress] || {};
-        const displayName = collectionInfo.symbol || collectionInfo.name || `${contractAddress.slice(0, 6)}...`;
-
-        // Get hex colors
-        const color = hslToHex(h, s, l);
-        const bgColor = "0f0f0f";
-
         try {
-            // Create a very simple SVG that's browser-safe
-            const svgString = `
-            <svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
-                <rect width="300" height="300" fill="#${bgColor}"/>
-                <rect x="15" y="15" width="270" height="270" rx="5" fill="none" stroke="#${color}" stroke-width="2"/>
-                <circle cx="150" cy="110" r="40" fill="none" stroke="#${color}" stroke-width="3"/>
-                <text x="150" y="180" font-family="monospace" font-size="24" fill="#ffffff" text-anchor="middle">#${tokenId}</text>
-                <text x="150" y="220" font-family="monospace" font-size="16" fill="#${color}" text-anchor="middle">${displayName}</text>
-            </svg>
-        `;
+            // Create deterministic values from contract+tokenId
+            const hash = contractAddress.toLowerCase() + tokenId.toString();
+            let hashNum = 0;
+            for (let i = 0; i < hash.length; i++) {
+                hashNum = ((hashNum << 5) - hashNum) + hash.charCodeAt(i);
+                hashNum = hashNum & hashNum;
+            }
 
-            // Create data URL without complex encoding
-            const base64SVG = btoa(svgString.trim());
-            return `data:image/svg+xml;base64,${base64SVG}`;
+            // Generate dynamic angles and colors
+            const angle = Math.abs(hashNum % 360);
+            const hue1 = Math.abs(hashNum % 360);
+            const hue2 = (hue1 + 180) % 360;
+
+            // Get collection info
+            const collectionInfo = contractInfo[contractAddress] || {};
+            const symbol = collectionInfo.symbol || '';
+            const shortName = (symbol || collectionInfo.name || '').substring(0, 8);
+
+            // Create an SVG that looks like an LP token with cyberpunk style
+            return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Crect width='300' height='300' fill='%230f0f0f'/%3E%3Ccircle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/%3E%3Ccircle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/%3E%3Cpath d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/%3E%3Cpath d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/%3E%3Ccircle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/%3E%3Ctext x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'%3E%23${tokenId}%3C/text%3E%3Ctext x='150' y='170' font-family='monospace' font-size='18' fill='hsl(${hue1},80%,60%)' text-anchor='middle'%3E${shortName}%3C/text%3E%3Ctext x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'%3EWNFT%3C/text%3E%3C/svg%3E`;
         } catch (err) {
             console.error("Error generating SVG:", err);
-            // Ultimate fallback - just a colored rectangle with text
-            return `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><rect width="300" height="300" fill="#' + bgColor + '"/><text x="150" y="150" fill="#ffffff" text-anchor="middle" font-family="monospace" font-size="20">Token #' + tokenId + '</text></svg>')}`;
+            // Ultra simple fallback that will definitely work
+            return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
         }
     };
 
