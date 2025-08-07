@@ -159,11 +159,27 @@ function ProfilePage() {
     };
 
     // Refresh listings manually
+    // Refresh listings manually
     const refreshListings = async () => {
         setIsListingsLoading(true);
         try {
             await fetchListings();
-            
+
+            // Fetch metadata for all listings immediately after they're loaded
+            if (listings && listings.length > 0) {
+                // Create NFT objects from listings to pass to batch fetch
+                const listingNfts = listings.map(listing => ({
+                    contractAddress: listing.nftContract,
+                    tokenId: listing.tokenId,
+                    tokenURI: listing.metadata?.tokenURI || null,
+                    type: listing.isERC1155 ? 'ERC1155' : 'ERC721'
+                }));
+
+                // Fetch metadata for all listings
+                console.log(`Fetching metadata for ${listingNfts.length} listings...`);
+                setTimeout(() => batchFetchMetadata(listingNfts), 100);
+            }
+
             // Cache updated listings for the user
             if (supabaseConnected && cacheProfileData) {
                 try {
@@ -172,14 +188,14 @@ function ProfilePage() {
                         listings: userListings,
                         balance: await provider.getBalance(wallet).then(b => b.toString())
                     };
-                    
+
                     await cacheProfileData(wallet, profileData);
                     console.log(`✅ Cached updated profile data for ${wallet}`);
                 } catch (cacheError) {
                     console.warn("Failed to cache updated profile data:", cacheError);
                 }
             }
-            
+
             setStatus("Listings refreshed successfully");
         } catch (error) {
             setStatus("Failed to refresh listings");
