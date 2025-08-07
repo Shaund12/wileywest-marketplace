@@ -2,6 +2,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import ListingCard from '../components/ListingCard';
+import CacheStats from '../components/CacheStats';
 
 function HomePage() {
     const { hotListings } = useMarketplace();
