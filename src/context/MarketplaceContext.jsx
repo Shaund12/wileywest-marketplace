@@ -1,18 +1,28 @@
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
+import { useSupabase } from './SupabaseContext';
 import { convertToUSDCValue } from '../utils/tokenUtils';
 
 const MarketplaceContext = createContext();
 
 export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const { wallet, signer, provider } = useWallet();
+    const { 
+        cacheListings, 
+        getCachedListings, 
+        cacheSalesHistory,
+        getCachedSalesHistory,
+        subscribeToListings,
+        isConnected: supabaseConnected 
+    } = useSupabase();
     const [marketplace, setMarketplace] = useState(null);
     const [listings, setListings] = useState([]);
     const [hotListings, setHotListings] = useState([]);
     const [status, setStatus] = useState('');
     const [isInitialized, setIsInitialized] = useState(false);
     const isConnectedRef = useRef(false);
+    const cacheUpdateInterval = useRef(null);
     
     // New state for tracking sales and statistics
     const [salesHistory, setSalesHistory] = useState([]);
@@ -57,42 +67,94 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         mostActiveSellers: []
     });
 
-    // Load sales history from localStorage on initialization
+    // Load sales history from Supabase cache first, fallback to localStorage
+    // Use a ref to prevent infinite loops from function reference changes
+    const hasLoadedInitialData = useRef(false);
+    
     useEffect(() => {
-        const loadPersistedData = () => {
+        // Only load once when the component mounts or when Supabase connection status changes
+        if (hasLoadedInitialData.current && supabaseConnected === hasLoadedInitialData.supabaseState) {
+            return; // Prevent re-loading if already loaded and connection state hasn't changed
+        }
+        
+        const loadPersistedData = async () => {
             try {
-                const savedSalesHistory = localStorage.getItem('marketplace_sales_history');
-                const savedCanceledListings = localStorage.getItem('marketplace_canceled_listings');
-                
-                if (savedSalesHistory) {
-                    const parsedHistory = JSON.parse(savedSalesHistory);
-                    console.log("Loaded persisted sales history:", parsedHistory);
-                    setSalesHistory(parsedHistory);
+                // Try to load from Supabase cache first
+                if (supabaseConnected && getCachedSalesHistory) {
+                    console.log("🔍 Loading sales history from Supabase cache...");
+                    const cachedSales = await getCachedSalesHistory();
+                    
+                    if (cachedSales && cachedSales.length > 0) {
+                        console.log(`📦 Loaded ${cachedSales.length} sales from Supabase cache`);
+                        setSalesHistory(cachedSales);
+                    } else {
+                        // Fallback to localStorage if no Supabase cache
+                        console.log("No Supabase cache found, falling back to localStorage");
+                        loadFromLocalStorage();
+                    }
+                } else {
+                    // Load from localStorage if Supabase not connected
+                    loadFromLocalStorage();
                 }
                 
+                // Always load canceled listings from localStorage (smaller data set)
+                const savedCanceledListings = localStorage.getItem('marketplace_canceled_listings');
                 if (savedCanceledListings) {
                     const parsedCanceled = JSON.parse(savedCanceledListings);
                     setCanceledListings(new Set(parsedCanceled));
                 }
+                
+                // Mark as loaded and store connection state
+                hasLoadedInitialData.current = true;
+                hasLoadedInitialData.supabaseState = supabaseConnected;
             } catch (error) {
                 console.error("Error loading persisted marketplace data:", error);
+                // Fallback to localStorage on any error
+                loadFromLocalStorage();
+                hasLoadedInitialData.current = true;
+                hasLoadedInitialData.supabaseState = supabaseConnected;
+            }
+        };
+        
+        const loadFromLocalStorage = () => {
+            try {
+                const savedSalesHistory = localStorage.getItem('marketplace_sales_history');
+                if (savedSalesHistory) {
+                    const parsedHistory = JSON.parse(savedSalesHistory);
+                    console.log("Loaded persisted sales history from localStorage:", parsedHistory);
+                    setSalesHistory(parsedHistory);
+                }
+            } catch (error) {
+                console.error("Error loading from localStorage:", error);
             }
         };
         
         loadPersistedData();
-    }, []);
+    }, [supabaseConnected]); // Removed getCachedSalesHistory from dependencies to prevent infinite loops
 
-    // Persist sales history to localStorage whenever it changes
+    // Persist sales history to localStorage and Supabase whenever it changes
+    // Use a ref to track last cached count to prevent unnecessary Supabase calls
+    const lastCachedSalesCount = useRef(0);
     useEffect(() => {
         if (salesHistory.length > 0) {
             try {
+                // Always persist to localStorage for immediate access
                 localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
                 console.log("Persisted sales history to localStorage:", salesHistory.length, "transactions");
+                
+                // Only cache to Supabase if we have new sales data
+                if (supabaseConnected && cacheSalesHistory && salesHistory.length !== lastCachedSalesCount.current) {
+                    console.log("💾 Caching sales history to Supabase...");
+                    lastCachedSalesCount.current = salesHistory.length;
+                    cacheSalesHistory(salesHistory).catch(error => {
+                        console.warn("Failed to cache sales history to Supabase:", error);
+                    });
+                }
             } catch (error) {
                 console.error("Error persisting sales history:", error);
             }
         }
-    }, [salesHistory]);
+    }, [salesHistory, supabaseConnected]); // Removed cacheSalesHistory from dependencies
 
     // Persist canceled listings to localStorage whenever they change
     useEffect(() => {
@@ -141,6 +203,26 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
         initializeMarketplace();
     }, [marketplaceAddress, abi, provider]);
+
+    // Disabled aggressive real-time subscriptions to prevent infinite refresh loops
+    // TODO: Re-implement with proper throttling if needed
+    useEffect(() => {
+        // Only set up a simple periodic refresh, not real-time subscriptions
+        if (marketplace) {
+            // Set up a much less aggressive periodic update - every 5 minutes instead of 1 minute
+            cacheUpdateInterval.current = setInterval(() => {
+                console.log("⏰ Periodic background update (5min interval)");
+                // Only do background updates, not force refreshes
+                fetchListingsFromBlockchain(true);
+            }, 300000); // Update every 5 minutes instead of 1 minute
+
+            return () => {
+                if (cacheUpdateInterval.current) {
+                    clearInterval(cacheUpdateInterval.current);
+                }
+            };
+        }
+    }, [marketplace]); // Removed problematic dependencies
 
     // Update contract with signer when wallet connects
     useEffect(() => {
@@ -923,22 +1005,76 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         calculateMarketplaceStats();
     }, [salesHistory, listings, canceledListings, provider]);
 
-    const fetchListings = async () => {
+    const fetchListings = async (forceRefresh = false) => {
         if (!marketplace) {
             console.warn("Marketplace contract not initialized yet");
             return;
         }
         
-        setStatus('Fetching listings...');
+        setStatus('Loading listings...');
+        console.log(`🔄 fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
+        
         try {
-            console.log("Fetching marketplace listings...");
+            // Step 1: Try to load from cache first (unless force refresh)
+            if (!forceRefresh && supabaseConnected && getCachedListings) {
+                console.log("🔍 Checking cache for listings...");
+                const cachedListings = await getCachedListings();
+                
+                if (cachedListings && cachedListings.length > 0) {
+                    console.log(`📦 Loaded ${cachedListings.length} listings from cache`);
+                    setListings(cachedListings);
+                    setHotListings(cachedListings.slice(0, 5));
+                    setStatus('Loaded from cache');
+                    
+                    // Remove automatic background fetch to prevent refresh loops
+                    // User can manually refresh if needed
+                    setTimeout(() => setStatus(''), 2000);
+                    return;
+                } else {
+                    console.log("🔍 No cached listings found, fetching from blockchain");
+                }
+            } else {
+                console.log("🔍 Skipping cache check:", {
+                    forceRefresh,
+                    supabaseConnected,
+                    hasCachedListingsFunc: !!getCachedListings
+                });
+            }
+            
+            // Step 2: Fetch from blockchain
+            await fetchListingsFromBlockchain(false);
+            
+        } catch (error) {
+            console.error("Error in fetchListings:", error);
+            setStatus('Failed to fetch listings');
+        }
+    };
+
+    const fetchListingsFromBlockchain = async (isBackgroundUpdate = false) => {
+        if (!isBackgroundUpdate) {
+            setStatus('Fetching latest listings from blockchain...');
+        }
+        
+        try {
+            console.log("Fetching marketplace listings from blockchain...");
             
             // Test network connectivity first
             try {
                 await provider.getNetwork();
             } catch (networkError) {
                 console.warn("Network connectivity issue:", networkError.message);
-                setStatus("Network connectivity issue - unable to fetch current listings");
+                setStatus("Network connectivity issue - using cached data if available");
+                
+                // Try to use cached data as fallback
+                if (supabaseConnected) {
+                    const cachedListings = await getCachedListings();
+                    if (cachedListings && cachedListings.length > 0) {
+                        setListings(cachedListings);
+                        setHotListings(cachedListings.slice(0, 5));
+                        setStatus("Using cached listings - network unavailable");
+                        return;
+                    }
+                }
                 
                 // Provide demo listings for testing
                 const demoListings = [
@@ -1088,13 +1224,40 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 }
             }
 
-            console.log(`Successfully loaded ${res.length} listings`);
+            console.log(`Successfully loaded ${res.length} listings from blockchain`);
             setListings(res);
             setHotListings(res.slice(0, 5));
-            setStatus('');
+            
+            // Cache the fresh data
+            console.log(`🔧 Caching check: supabaseConnected=${supabaseConnected}, resLength=${res.length}, hasCacheListingsFunc=${!!cacheListings}`);
+            
+            if (supabaseConnected && res.length > 0 && cacheListings) {
+                try {
+                    console.log(`💾 Attempting to cache ${res.length} listings to Supabase...`);
+                    await cacheListings(res);
+                    console.log(`✅ Successfully cached ${res.length} listings to Supabase`);
+                } catch (cacheError) {
+                    console.warn("❌ Failed to cache listings:", cacheError);
+                }
+            } else {
+                console.log("⚠️ Skipping listings cache due to:", {
+                    supabaseConnected,
+                    listingsCount: res.length,
+                    hasCacheListingsFunc: !!cacheListings
+                });
+            }
+            
+            if (isBackgroundUpdate) {
+                setStatus('');
+            } else {
+                setStatus(`Loaded ${res.length} listings`);
+                setTimeout(() => setStatus(''), 3000);
+            }
         } catch (error) {
-            console.error("Error in fetchListings:", error);
-            setStatus('Failed to fetch listings - network connectivity issue');
+            console.error("Error in fetchListingsFromBlockchain:", error);
+            if (!isBackgroundUpdate) {
+                setStatus('Failed to fetch listings - network connectivity issue');
+            }
         }
     };
 
@@ -1188,8 +1351,15 @@ const ERC1155_APPROVAL_ABI = [
             await tx.wait();
             setStatus('Purchase successful! Updating marketplace data...');
             
-            // Refresh listings and fetch any new events
-            fetchListings();
+            // Invalidate cache and refresh listings
+            if (supabaseConnected && cacheListings) {
+                console.log("💾 Invalidating cache due to purchase...");
+                // Force refresh from blockchain to get latest state
+                await fetchListings(true);
+            } else {
+                // Refresh listings normally
+                fetchListings();
+            }
             
             // Wait a moment for events to be mined and then fetch recent events
             setTimeout(async () => {
@@ -1322,8 +1492,15 @@ const ERC1155_APPROVAL_ABI = [
             await tx.wait();
             setStatus("Listing created successfully!");
 
-            // Refresh listings
-            fetchListings();
+            // Invalidate cache and refresh listings
+            if (supabaseConnected && cacheListings) {
+                console.log("💾 Invalidating cache due to new listing...");
+                // Force refresh from blockchain to get latest state
+                await fetchListings(true);
+            } else {
+                // Refresh listings normally
+                fetchListings();
+            }
 
         } catch (error) {
             console.error("Error in createListing:", error);
