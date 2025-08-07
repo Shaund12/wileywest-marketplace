@@ -746,11 +746,19 @@ function ProfilePage() {
         }
     };
 
-    // Find ALL NFTs owned by the user with cache-first approach
+    // Find ALL NFTs owned by the user with cache-first approach and throttling
+    const scanningInProgress = useRef(false);
     const findAllUserNfts = async (forceRefresh = false) => {
         if (!wallet || !provider) return;
 
+        // Prevent multiple simultaneous scans
+        if (scanningInProgress.current) {
+            console.log("⏳ NFT scan already in progress, skipping...");
+            return;
+        }
+
         setIsLoading(true);
+        scanningInProgress.current = true;
         
         try {
             // Step 1: Try to load from cache first (unless force refresh)
@@ -763,10 +771,18 @@ function ProfilePage() {
                 if (cachedProfile && cachedProfile.nfts && cachedProfile.nfts.length > 0) {
                     console.log(`📦 Loaded ${cachedProfile.nfts.length} NFTs from cache`);
                     setUserNfts(cachedProfile.nfts);
-                    setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache - updating in background...`);
+                    setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache`);
                     
-                    // Continue to scan fresh data in background
-                    setTimeout(() => scanUserNftsFromBlockchain(true), 100);
+                    // Only schedule background update if no scan happened recently
+                    const now = Date.now();
+                    if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
+                        console.log("📅 Scheduling background blockchain scan...");
+                        setTimeout(() => {
+                            if (!scanningInProgress.current) {
+                                scanUserNftsFromBlockchain(true);
+                            }
+                        }, 5000); // Delay background scan by 5 seconds
+                    }
                     return;
                 }
             }
@@ -779,15 +795,31 @@ function ProfilePage() {
             setStatus(`Error loading NFTs: ${error.message}`);
         } finally {
             setIsLoading(false);
+            scanningInProgress.current = false;
         }
     };
 
     const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false) => {
+        // Prevent scanning if already in progress or too recent
+        if (scanningInProgress.current && !isBackgroundUpdate) {
+            console.log("⏳ Blockchain scan already in progress, skipping...");
+            return;
+        }
+
+        const now = Date.now();
+        if (isBackgroundUpdate && now - lastScanTime.current < SCAN_THROTTLE_MS) {
+            console.log("⏳ Background scan throttled - too recent");
+            return;
+        }
+
         if (!isBackgroundUpdate) {
             setIsScanning(true);
             setScanProgress({ found: 0, scanned: 0, total: 0 });
             setStatus("Scanning blockchain for your NFTs...");
+            scanningInProgress.current = true;
         }
+        
+        lastScanTime.current = now;
         
         try {
             // Create a new NFT scanner with current wallet
@@ -798,7 +830,7 @@ function ProfilePage() {
             });
             
             // Start the comprehensive scan
-            console.log("Starting blockchain NFT scan...");
+            console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting...`);
             const foundNfts = await scanner.scanAllNFTs();
             
             // Update UI with found NFTs
@@ -843,6 +875,7 @@ function ProfilePage() {
         } finally {
             if (!isBackgroundUpdate) {
                 setIsScanning(false);
+                scanningInProgress.current = false;
             }
         }
     };
@@ -993,7 +1026,10 @@ function ProfilePage() {
         }
     }, [activeTab, wallet]);
 
-    // Set up real-time subscriptions for profile updates
+    // Set up real-time subscriptions for profile updates with throttling
+    const lastScanTime = useRef(0);
+    const SCAN_THROTTLE_MS = 30000; // Limit scans to once every 30 seconds
+    
     useEffect(() => {
         if (supabaseConnected && subscribeToProfiles && wallet) {
             console.log("🔄 Setting up profile real-time subscriptions...");
@@ -1003,8 +1039,16 @@ function ProfilePage() {
                 
                 // Check if the update is for the current user
                 if (payload.new?.wallet_address === wallet.toLowerCase()) {
-                    console.log("🔄 Refreshing profile due to real-time update");
-                    findAllUserNfts(true); // Force refresh
+                    const now = Date.now();
+                    
+                    // Throttle blockchain scanning to prevent excessive calls
+                    if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
+                        console.log("🔄 Refreshing profile due to real-time update (throttled)");
+                        lastScanTime.current = now;
+                        findAllUserNfts(true); // Force refresh
+                    } else {
+                        console.log("⏳ Profile update throttled - skipping scan (too recent)");
+                    }
                 }
             });
 
@@ -1015,7 +1059,7 @@ function ProfilePage() {
                 }
             };
         }
-    }, [supabaseConnected, wallet, subscribeToProfiles]);
+    }, [supabaseConnected, wallet]); // Removed subscribeToProfiles from dependencies
 
     // If wallet not connected, show connection prompt
     if (!wallet) {

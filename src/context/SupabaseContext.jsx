@@ -309,7 +309,7 @@ export function SupabaseProvider({ children }) {
         }
     }, [supabase]);
 
-    const cacheProfileData = async (address, profileData) => {
+    const cacheProfileData = useCallback(async (address, profileData) => {
         if (!supabase || !address) return;
 
         try {
@@ -344,9 +344,9 @@ export function SupabaseProvider({ children }) {
             console.warn('Error caching profile:', error);
             updateCacheStats('errors');
         }
-    };
+    }, [supabase]);
 
-    const getCachedProfile = async (address) => {
+    const getCachedProfile = useCallback(async (address) => {
         if (!address) return null;
 
         // Check memory cache first
@@ -386,7 +386,7 @@ export function SupabaseProvider({ children }) {
             updateCacheStats('errors');
             return null;
         }
-    };
+    }, [supabase]);
 
     const cacheSalesHistory = useCallback(async (salesHistory) => {
         try {
@@ -534,7 +534,7 @@ export function SupabaseProvider({ children }) {
         }
     };
 
-    const subscribeToProfiles = (callback) => {
+    const subscribeToProfiles = useCallback((callback) => {
         if (!supabase) return null;
 
         try {
@@ -552,8 +552,11 @@ export function SupabaseProvider({ children }) {
                     // Clear relevant cache entries
                     clearCache('profile');
                     
-                    // Notify callback
-                    if (callback) callback(payload);
+                    // Notify callback with throttling to prevent excessive calls
+                    if (callback) {
+                        // Add throttling to prevent spam
+                        setTimeout(() => callback(payload), 1000);
+                    }
                 })
                 .subscribe();
 
@@ -563,7 +566,7 @@ export function SupabaseProvider({ children }) {
             console.warn('Error setting up profiles subscription:', error);
             return null;
         }
-    };
+    }, [supabase]);
 
     // Cleanup subscriptions on unmount
     useEffect(() => {
