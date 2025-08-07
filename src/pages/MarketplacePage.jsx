@@ -3,7 +3,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import ListingCard from '../components/ListingCard';
 import MarketplaceStats from '../components/MarketplaceStats';
-import { convertToUSDCValue } from '../utils/tokenUtils';
+import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
@@ -64,6 +64,13 @@ function MarketplacePage() {
     const [selectedCollections, setSelectedCollections] = useState([]);
     const [priceRange, setPriceRange] = useState({ min: '', max: '' });
     const [featuredNFT, setFeaturedNFT] = useState(null);
+    const [featuredNFTPriceDisplay, setFeaturedNFTPriceDisplay] = useState({
+        tokenAmount: '...',
+        tokenSymbol: 'TOKEN',
+        usdcValue: '0.00',
+        formatted: '...',
+        hasUSDCRate: true
+    });
     const [collections, setCollections] = useState([]);
     const [stats, setStats] = useState({
         totalVolume: 0,
@@ -295,6 +302,51 @@ function MarketplacePage() {
         processListingsWithEnhancedStats();
     }, [listings, hotListings, provider, canceledListings, marketplaceStats]);
 
+    // Update featured NFT price display
+    useEffect(() => {
+        async function updateFeaturedNFTPriceDisplay() {
+            if (!featuredNFT || !featuredNFT.pricePerUnit || !provider) {
+                setFeaturedNFTPriceDisplay({
+                    tokenAmount: '...',
+                    tokenSymbol: 'TOKEN',
+                    usdcValue: '0.00',
+                    formatted: '...',
+                    hasUSDCRate: true
+                });
+                return;
+            }
+
+            try {
+                // Use the same price formatting logic as ListingCard
+                const priceInfo = await formatPriceWithUSDC(
+                    featuredNFT.pricePerUnit, 
+                    featuredNFT.paymentToken, 
+                    provider,
+                    true // Show both token amount and USDC value for featured display
+                );
+                
+                setFeaturedNFTPriceDisplay(priceInfo);
+            } catch (error) {
+                console.error('Error formatting featured NFT price with USDC:', error);
+                // Fallback to basic formatting
+                const tokenSymbol = featuredNFT.paymentToken ? 
+                    (featuredNFT.paymentToken === ethers.ZeroAddress ? 'VTRU' : 'TOKEN') : 
+                    'VTRU';
+                const tokenAmount = formatPrice(featuredNFT.pricePerUnit);
+                
+                setFeaturedNFTPriceDisplay({
+                    tokenAmount,
+                    tokenSymbol,
+                    usdcValue: '0.00',
+                    formatted: `${tokenAmount} ${tokenSymbol}`,
+                    hasUSDCRate: false
+                });
+            }
+        }
+
+        updateFeaturedNFTPriceDisplay();
+    }, [featuredNFT, provider]);
+
     // Filter and sort listings
     useEffect(() => {
         let result = [...listings];
@@ -430,7 +482,13 @@ function MarketplacePage() {
                                 </p>
                                 <div className="featured-price">
                                     <span className="price-label">Price:</span>
-                                    <span className="price-value">{formatPrice(featuredNFT.pricePerUnit)} VTRU</span>
+                                    <span className="price-value">
+                                        {featuredNFTPriceDisplay.hasUSDCRate ? (
+                                            featuredNFTPriceDisplay.formatted
+                                        ) : (
+                                            `${featuredNFTPriceDisplay.tokenAmount} ${featuredNFTPriceDisplay.tokenSymbol}`
+                                        )}
+                                    </span>
                                 </div>
                             </div>
                         </div>
