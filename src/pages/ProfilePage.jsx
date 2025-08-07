@@ -768,18 +768,50 @@ function ProfilePage() {
 
     // Find ALL NFTs owned by the user with cache-first approach and throttling
     const scanningInProgress = useRef(false);
+    const scanningTimeout = useRef(null);
+    
+    // Reset scanning state with timeout protection
+    const resetScanningState = () => {
+        scanningInProgress.current = false;
+        if (scanningTimeout.current) {
+            clearTimeout(scanningTimeout.current);
+            scanningTimeout.current = null;
+        }
+    };
+    
+    // Force reset scanning state (for stuck situations)
+    const forceResetScanningState = () => {
+        console.log("🔄 Force resetting scanning state...");
+        resetScanningState();
+        setIsLoading(false);
+        setIsScanning(false);
+    };
+    
     // Find ALL NFTs owned by the user with cache-first approach and throttling
     const findAllUserNfts = async (forceRefresh = false) => {
         if (!wallet || !provider) return;
 
-        // Prevent multiple simultaneous scans
-        if (scanningInProgress.current) {
+        // Prevent multiple simultaneous scans (with force override option)
+        if (scanningInProgress.current && !forceRefresh) {
             console.log("⏳ NFT scan already in progress, skipping...");
+            console.log("💡 Tip: Use 'Force Refresh' if scanning appears stuck");
             return;
+        }
+
+        // Force reset if this is a force refresh
+        if (forceRefresh) {
+            resetScanningState();
         }
 
         setIsLoading(true);
         scanningInProgress.current = true;
+        
+        // Set a timeout to auto-reset if scanning gets stuck (5 minutes)
+        scanningTimeout.current = setTimeout(() => {
+            console.warn("⚠️ Scanning timeout reached - auto-resetting state");
+            forceResetScanningState();
+            setStatus("Scanning timed out - please try again");
+        }, 5 * 60 * 1000);
 
         try {
             // Step 1: Try to load from cache first (unless force refresh)
@@ -820,7 +852,7 @@ function ProfilePage() {
             setStatus(`Error loading NFTs: ${error.message}`);
         } finally {
             setIsLoading(false);
-            scanningInProgress.current = false;
+            resetScanningState();
         }
     };
 
@@ -828,6 +860,7 @@ function ProfilePage() {
         // Prevent scanning if already in progress or too recent
         if (scanningInProgress.current && !isBackgroundUpdate) {
             console.log("⏳ Blockchain scan already in progress, skipping...");
+            console.log("💡 Tip: Use 'Force Refresh' if scanning appears stuck");
             return;
         }
 
@@ -842,6 +875,13 @@ function ProfilePage() {
             setScanProgress({ found: 0, scanned: 0, total: 0 });
             setStatus("Scanning blockchain for your NFTs...");
             scanningInProgress.current = true;
+            
+            // Set timeout for foreground scanning too
+            scanningTimeout.current = setTimeout(() => {
+                console.warn("⚠️ Foreground scanning timeout reached - auto-resetting state");
+                forceResetScanningState();
+                setStatus("Scanning timed out - please try again");
+            }, 5 * 60 * 1000);
         }
         
         lastScanTime.current = now;
@@ -900,7 +940,7 @@ function ProfilePage() {
         } finally {
             if (!isBackgroundUpdate) {
                 setIsScanning(false);
-                scanningInProgress.current = false;
+                resetScanningState();
             }
         }
     };
@@ -1086,6 +1126,21 @@ function ProfilePage() {
         }
     }, [supabaseConnected, wallet]); // Removed subscribeToProfiles from dependencies
 
+    // Cleanup scanning state when wallet changes or component unmounts
+    useEffect(() => {
+        return () => {
+            // Reset scanning state on wallet change or unmount
+            resetScanningState();
+        };
+    }, [wallet]);
+
+    // Also cleanup on component unmount
+    useEffect(() => {
+        return () => {
+            resetScanningState();
+        };
+    }, []);
+
     // If wallet not connected, show connection prompt
     if (!wallet) {
         return (
@@ -1264,25 +1319,38 @@ function ProfilePage() {
                                         </button>
                                     </div>
                                 </div>
-                                <button
-                                    className="primary-button action-button"
-                                    onClick={findAllUserNfts}
-                                    disabled={isLoading || isScanning}
-                                >
-                                    {isScanning ? (
-                                        <>
-                                            <span className="spinner"></span>
-                                            Scanning...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
-                                                <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
-                                            </svg>
-                                            Find All NFTs
-                                        </>
-                                    )}
-                                </button>
+                                <div className="action-buttons">
+                                    <button
+                                        className="primary-button action-button"
+                                        onClick={() => findAllUserNfts(false)}
+                                        disabled={isLoading || isScanning}
+                                    >
+                                        {isScanning ? (
+                                            <>
+                                                <span className="spinner"></span>
+                                                Scanning...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                                    <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
+                                                </svg>
+                                                Find All NFTs
+                                            </>
+                                        )}
+                                    </button>
+                                    <button
+                                        className="secondary-button action-button force-refresh-button"
+                                        onClick={() => findAllUserNfts(true)}
+                                        disabled={false}
+                                        title="Force refresh - bypasses stuck scanning state and cache"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                            <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                                        </svg>
+                                        Force Refresh
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -1445,10 +1513,10 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={findAllUserNfts}
+                                            onClick={() => findAllUserNfts(true)}
                                             disabled={isScanning}
                                         >
-                                            {isScanning ? 'Scanning...' : 'Find All NFTs'}
+                                            {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
                                         </button>
                                     </div>
                                 )}
@@ -1523,10 +1591,10 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={findAllUserNfts}
+                                            onClick={() => findAllUserNfts(true)}
                                             disabled={isScanning}
                                         >
-                                            {isScanning ? 'Scanning...' : 'Find All NFTs'}
+                                            {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
                                         </button>
                                     </div>
                                 )}

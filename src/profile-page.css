@@ -1256,3 +1256,37 @@
     margin-bottom: 5px;
     color: #555;
 }
+
+/* Action Buttons */
+.action-buttons {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.force-refresh-button {
+    background: linear-gradient(to right, #ff6b35, #ff8f65) !important;
+    border: 1px solid #ff6b35 !important;
+    color: white !important;
+    font-size: 0.85rem;
+    padding: 8px 12px;
+    min-width: auto;
+}
+
+.force-refresh-button:hover {
+    background: linear-gradient(to right, #e55a2e, #ff7b55) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(255, 107, 53, 0.3);
+}
+
+.force-refresh-button:disabled {
+    background: #444 !important;
+    border-color: #444 !important;
+    color: #666 !important;
+    transform: none;
+    box-shadow: none;
+}
+
+.action-button {
+    white-space: nowrap;
+}
