@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import CacheStats from '../components/CacheStats';
 
 
 import logo from '../assets/blockdust-logo.png';
