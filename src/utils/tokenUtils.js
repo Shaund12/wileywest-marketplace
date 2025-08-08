@@ -347,8 +347,10 @@
                 price = rawPrice;
             }
 
-            // Apply decimal adjustment (CRITICAL for correct price)
-            const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
+            // Apply decimal adjustment - CORRECTED FORMULA
+            // The price ratio from Uniswap gives us token1/token0 ratio
+            // We need to adjust for decimal differences between the tokens
+            const decimalAdjustment = Math.pow(10, tokenDecimals - usdcDecimals);
             price = price * decimalAdjustment;
 
             // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
