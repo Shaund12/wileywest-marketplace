@@ -1081,16 +1081,25 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     let image = '/placeholders/nft-placeholder.jpg';
                     let name = `NFT #${listing.tokenId?.toString() || '0'}`;
                     let metadata = null;
+                    let collectionName = null;
 
                     try {
-                        // Create contract instance for the NFT
+                        // Enhanced contract instance for the NFT with collection name support
                         const nftContract = new ethers.Contract(
                             listing.nftContract,
                             listing.isERC1155 ?
-                                ['function uri(uint256 id) view returns (string)'] :
-                                ['function tokenURI(uint256 tokenId) view returns (string)', 'function name() view returns (string)'],
+                                ['function uri(uint256 id) view returns (string)', 'function name() view returns (string)'] :
+                                ['function tokenURI(uint256 tokenId) view returns (string)', 'function name() view returns (string)', 'function symbol() view returns (string)'],
                             provider
                         );
+
+                        // Try to get collection name from contract first
+                        try {
+                            collectionName = await nftContract.name();
+                            console.log(`Collection name from contract for ${listing.nftContract}: ${collectionName}`);
+                        } catch (nameError) {
+                            console.warn(`Failed to get contract name for ${listing.nftContract}:`, nameError.message);
+                        }
 
                         // Get token URI
                         let tokenURI;
@@ -1153,8 +1162,17 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         // ListingCard is likely expecting this structure
                         metadata: {
                             ...metadata,
-                            image: image // Ensure the IPFS URL is resolved in the metadata object too
-                        }
+                            image: image, // Ensure the IPFS URL is resolved in the metadata object too
+                            collection: {
+                                name: collectionName || metadata?.collection?.name || metadata?.name || `Collection ${listing.nftContract.slice(0, 6)}...`,
+                                description: metadata?.collection?.description || '',
+                                external_link: metadata?.collection?.external_link || metadata?.external_url || '',
+                                image: metadata?.collection?.image || image
+                            }
+                        },
+
+                        // Add direct collection name property for easy access
+                        collectionName: collectionName || metadata?.collection?.name || metadata?.name || `Collection ${listing.nftContract.slice(0, 6)}...`
                     };
 
                     console.log("Sanitized listing with image:", sanitizedListing);
