@@ -312,7 +312,7 @@ export class NFTScanner {
         */
     }
 
-    // Comprehensive scan for NFTs with COMPLETE blockchain coverage (from beginning)
+    // Conservative scan for NFTs with limited blockchain coverage
     async scanAllNFTs(isBackground = false) {
         try {
             // Start timing for performance tracking
@@ -321,17 +321,17 @@ export class NFTScanner {
             // Reset progress
             this.progress = { found: 0, scanned: 0, total: 0 };
             
-            // Start with known contracts + comprehensive contract discovery
+            // Start with known contracts + conservative contract discovery
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
             
-            this.updateStatus("🔍 COMPREHENSIVE blockchain scanning for complete NFT discovery from blockchain start");
-            console.log("🌐 COMPREHENSIVE blockchain discovery for complete NFT coverage");
-            console.log("💡 Scanning known contracts + entire blockchain history for maximum coverage");
+            this.updateStatus("🔍 Conservative NFT scanning with limited blockchain coverage");
+            debugLog("🌐 Conservative NFT discovery approach to prevent mass data collection");
+            debugLog("💡 Scanning known contracts + recent blockchain history only");
             
-            // Add contracts from comprehensive transfer discovery (scan from beginning)
-            this.updateStatus("🔍 Discovering NFT contracts from comprehensive blockchain history...");
-            const comprehensiveContracts = await this.findContractsByRecentTransfers();
-            contractsToScan.push(...comprehensiveContracts);
+            // Add contracts from conservative transfer discovery (recent blocks only)
+            this.updateStatus("🔍 Discovering NFT contracts from recent blockchain activity...");
+            const recentContracts = await this.findContractsByRecentTransfers();
+            contractsToScan.push(...recentContracts);
             
             // Remove duplicates and invalid addresses
             contractsToScan = [...new Set(contractsToScan)]
@@ -345,25 +345,25 @@ export class NFTScanner {
                 
             // Update total for progress tracking
             this.updateProgress({ total: contractsToScan.length });
-            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan (comprehensive blockchain coverage)`);
+            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan (conservative approach)`);
             
             // Save contract cache and known ERC20s periodically
             const saveInterval = setInterval(() => {
                 this.saveContractCache();
                 this.saveKnownErc20s();
-            }, 15000); // Less frequent saves
+            }, 15000);
             
-            // Gather all NFTs with comprehensive approach
+            // Gather all NFTs with conservative approach
             const allNfts = [];
             
-            // Process in balanced sequential batches
-            const batchSize = isBackground ? 2 : 3; // Slightly larger batches
+            // Process in small sequential batches to reduce load
+            const batchSize = isBackground ? 1 : 2;
             
             try {
                 for (let i = 0; i < contractsToScan.length; i += batchSize) {
                     const batch = contractsToScan.slice(i, i + batchSize);
                     
-                    // Process contracts sequentially with comprehensive error handling
+                    // Process contracts sequentially with conservative error handling
                     for (const address of batch) {
                         try {
                             const nfts = await this.scanSingleContract(address);
@@ -375,31 +375,31 @@ export class NFTScanner {
                                 scanned: this.progress.scanned + 1 
                             });
                         } catch (e) {
-                            // Comprehensive error handling - don't let individual contract errors stop the scan
+                            // Conservative error handling - don't let individual contract errors stop the scan
                             if (e.message.includes('execution reverted') || 
                                 e.message.includes('call revert exception') ||
                                 e.message.includes('Internal JSON-RPC error') ||
                                 e.code === -32603 || e.code === -32000) {
                                 // Expected RPC errors - don't log
                             } else {
-                                console.warn(`Error in comprehensive scan for ${address}:`, e.message);
+                                debugWarn(`Error in conservative scan for ${address}:`, e.message);
                             }
                             // Update scanned count even on error
                             this.updateProgress({ scanned: this.progress.scanned + 1 });
                         }
                         
-                        // Balanced delay between contracts (not too slow, not too fast)
-                        await new Promise(r => setTimeout(r, 300));
+                        // Conservative delay between contracts
+                        await new Promise(r => setTimeout(r, 500));
                     }
                     
                     // For background scan, yield to main thread more frequently
-                    if (isBackground && i % 3 === 0) {
-                        await new Promise(r => setTimeout(r, 100));
+                    if (isBackground && i % 2 === 0) {
+                        await new Promise(r => setTimeout(r, 200));
                     }
                     
-                    // Balanced delay between batches
+                    // Conservative delay between batches
                     if (i + batchSize < contractsToScan.length) {
-                        await new Promise(r => setTimeout(r, isBackground ? 800 : 400));
+                        await new Promise(r => setTimeout(r, isBackground ? 1000 : 600));
                     }
                 }
             } finally {
@@ -409,10 +409,10 @@ export class NFTScanner {
             }
             
             const scanDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
-            this.updateStatus(`✅ Comprehensive scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s (complete coverage)`);
+            this.updateStatus(`✅ Conservative scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s`);
             return allNfts;
         } catch (error) {
-            console.error("Error in comprehensive NFT scan:", error);
+            criticalError("Error in conservative NFT scan:", error);
             this.updateStatus(`❌ Error scanning: ${error.message}`);
             return this.nfts; // Return whatever we found so far
         }
@@ -611,40 +611,38 @@ export class NFTScanner {
         }
     }
 
-    // Find contracts from COMPREHENSIVE Transfer events (scan from beginning for complete coverage)
+    // Find contracts from recent Transfer events (conservative approach)
     async findContractsByRecentTransfers() {
         try {
             const contracts = new Set();
             
-            // COMPREHENSIVE APPROACH: Scan from beginning for complete NFT discovery
+            // Conservative approach: Scan only recent blocks to avoid mass data collection
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = 0; // Start from the very beginning of the blockchain
+            const fromBlock = Math.max(0, currentBlock - 100000); // Only last 100k blocks
             
-            this.updateStatus(`🔍 Comprehensive blockchain scan (${fromBlock} to ${currentBlock}) for complete NFT discovery...`);
-            console.log(`🌐 COMPREHENSIVE blockchain scan: blocks ${fromBlock} to ${currentBlock} for maximum NFT coverage`);
+            this.updateStatus(`🔍 Conservative blockchain scan (${fromBlock} to ${currentBlock}) - recent activity only...`);
+            debugLog(`🌐 Conservative blockchain scan: blocks ${fromBlock} to ${currentBlock} for limited coverage`);
             
-            // Use chunked approach to scan the entire blockchain history
+            // Use chunked approach to scan recent blockchain history only
             await this.findTransfersByChunks(ethers.id("Transfer(address,address,uint256)"), 
                 ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32), 
-                contracts);
+                contracts, fromBlock, currentBlock);
             
-            // Try ERC1155 TransferSingle events across entire history
+            // Try ERC1155 TransferSingle events in recent blocks only
             await this.findTransfersByChunks(ethers.id("TransferSingle(address,address,address,uint256,uint256)"),
                 ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32),
-                contracts, true);
+                contracts, fromBlock, currentBlock, true);
             
             // Filter out known ERC20s
             const filteredContracts = [...contracts].filter(addr => 
                 !this.knownErc20s.has(addr.toLowerCase())
             );
                 
-            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from comprehensive blockchain scan`);
+            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from conservative scan`);
             return filteredContracts;
         } catch (error) {
-            console.error("Error finding contracts by comprehensive transfers:", error);
-            // If comprehensive scan fails, fallback to recent blocks
-            console.log("Falling back to recent block scanning...");
-            return await this.findContractsByRecentTransfersFallback();
+            criticalError("Error finding contracts by recent transfers:", error);
+            return [];
         }
     }
 
@@ -725,28 +723,29 @@ export class NFTScanner {
         }
     }
     
-    // Find transfers by breaking into smaller chunks
-    async findTransfersByChunks(eventTopic, walletTopic, contracts, isErc1155 = false) {
+    // Find transfers by breaking into smaller chunks (conservative approach)
+    async findTransfersByChunks(eventTopic, walletTopic, contracts, fromBlock, toBlock, isErc1155 = false) {
         try {
-            const currentBlock = await this.provider.getBlockNumber();
-            let chunkSize = 100000; // Start with 100k blocks
+            const currentBlock = toBlock || await this.provider.getBlockNumber();
+            const startBlock = fromBlock || Math.max(0, currentBlock - 100000); // Default to recent 100k blocks
+            let chunkSize = 25000; // Smaller chunks for conservative approach
             let failedAttempts = 0;
             
-            // Process in chunks from the beginning of blockchain history for complete NFT discovery
-            for (let startBlock = 0; startBlock < currentBlock; startBlock += chunkSize) {
-                const endBlock = Math.min(startBlock + chunkSize - 1, currentBlock);
+            // Conservative processing: smaller chunks, less aggressive scanning
+            for (let chunkStart = startBlock; chunkStart < currentBlock; chunkStart += chunkSize) {
+                const chunkEnd = Math.min(chunkStart + chunkSize - 1, currentBlock);
                 
                 try {
-                    this.updateStatus(`Scanning blocks ${startBlock}-${endBlock} for transfers...`);
+                    this.updateStatus(`Scanning blocks ${chunkStart}-${chunkEnd} for transfers (conservative)...`);
                     
                     const filter = isErc1155 ? {
                         topics: [eventTopic, null, null, walletTopic],
-                        fromBlock: startBlock,
-                        toBlock: endBlock
+                        fromBlock: chunkStart,
+                        toBlock: chunkEnd
                     } : {
                         topics: [eventTopic, null, walletTopic],
-                        fromBlock: startBlock,
-                        toBlock: endBlock
+                        fromBlock: chunkStart,
+                        toBlock: chunkEnd
                     };
                     
                     const logs = await this.provider.getLogs(filter);
@@ -769,90 +768,48 @@ export class NFTScanner {
                         contracts.add(contractAddr);
                     }
                     
-                    this.updateStatus(`Found ${contracts.size} potential NFT contracts in blocks ${startBlock}-${endBlock}`);
+                    this.updateStatus(`Found ${contracts.size} potential NFT contracts in blocks ${chunkStart}-${chunkEnd}`);
                     
                     // If we succeeded, reset failure counter
                     failedAttempts = 0;
                 } catch (error) {
                     failedAttempts++;
                     
-                    // Comprehensive error handling for getLogs calls
+                    // Conservative error handling for getLogs calls
                     if (error.message.includes('execution reverted') || 
                         error.message.includes('call revert exception') ||
                         error.message.includes('Internal JSON-RPC error') ||
                         error.code === -32603 || error.code === -32000) {
                         // Expected RPC errors - don't log as warnings, just debug info
-                        console.log(`RPC error scanning blocks ${startBlock}-${endBlock}, continuing...`);
+                        debugLog(`RPC error scanning blocks ${chunkStart}-${chunkEnd}, continuing...`);
                     } else {
                         // Log unexpected errors
-                        console.warn(`Unexpected error scanning blocks ${startBlock}-${endBlock}:`, error.message);
+                        debugWarn(`Unexpected error scanning blocks ${chunkStart}-${chunkEnd}:`, error.message);
                     }
                     
-                    // If multiple consecutive failures, adjust strategy
-                    if (failedAttempts >= 3) {
-                        console.log(`Multiple RPC failures, skipping ahead to recent blocks`);
-                        // Skip ahead to more recent blocks
-                        const recentStartBlock = Math.max(currentBlock - 1000000, startBlock + chunkSize);
-                        if (recentStartBlock > startBlock) {
-                            startBlock = recentStartBlock - chunkSize; // Will be incremented in next loop
-                            failedAttempts = 0;
-                            chunkSize = 50000; // Smaller chunk size for recent blocks
-                            continue;
+                    // If multiple consecutive failures, reduce chunk size or skip ahead
+                    if (failedAttempts >= 2) {
+                        debugLog(`Multiple RPC failures, reducing scan scope`);
+                        // Reduce chunk size significantly
+                        if (chunkSize > 5000) {
+                            const newChunkSize = Math.floor(chunkSize / 3);
+                            debugLog(`Reducing chunk size to ${newChunkSize} blocks due to RPC issues`);
+                            chunkSize = newChunkSize;
+                            chunkStart -= chunkSize; // Try this range again with smaller size
+                        } else {
+                            // Skip ahead if chunks are already small
+                            debugLog(`Skipping problematic block range ${chunkStart}-${chunkEnd}`);
                         }
-                    }
-                    
-                    // Reduce chunk size on error
-                    if (chunkSize > 10000) {
-                        const newChunkSize = Math.floor(chunkSize / 2);
-                        console.log(`Reducing chunk size to ${newChunkSize} blocks due to RPC issues`);
-                        chunkSize = newChunkSize;
-                        startBlock -= chunkSize; // Try this range again with smaller size
+                        failedAttempts = 0;
                     }
                 }
-            }
-            
-            // As a final fallback, check recent blocks specifically
-            try {
-                const recentStartBlock = Math.max(0, currentBlock - 100000);
-                this.updateStatus(`Scanning recent blocks ${recentStartBlock}-${currentBlock} for transfers...`);
                 
-                const filter = isErc1155 ? {
-                    topics: [eventTopic, null, null, walletTopic],
-                    fromBlock: recentStartBlock,
-                    toBlock: 'latest'
-                } : {
-                    topics: [eventTopic, null, walletTopic],
-                    fromBlock: recentStartBlock,
-                    toBlock: 'latest'
-                };
-                
-                const logs = await this.provider.getLogs(filter);
-                
-                // Process logs with ERC20 filtering
-                for (const log of logs) {
-                    const contractAddr = log.address.toLowerCase();
-                    
-                    // Skip known ERC20s
-                    if (this.knownErc20s.has(contractAddr)) continue;
-                    
-                    // For regular Transfer events, check if it has the tokenId topic
-                    if (!isErc1155 && log.topics.length === 3) {
-                        // This is likely an ERC20 (no indexed tokenId)
-                        this.knownErc20s.add(contractAddr);
-                        continue;
-                    }
-                    
-                    // Otherwise add to contracts
-                    contracts.add(contractAddr);
-                }
-                
-                this.updateStatus(`Found ${contracts.size} potential NFT contracts in recent blocks`);
-            } catch (e) {
-                console.warn("Error scanning recent blocks:", e);
+                // Conservative delay between chunks to reduce load
+                await new Promise(resolve => setTimeout(resolve, 300));
             }
             
         } catch (error) {
-            console.error("Error in chunked transfer search:", error);
+            criticalError("Error in conservative chunked transfer search:", error);
         }
     }
 
