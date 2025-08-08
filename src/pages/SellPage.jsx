@@ -39,6 +39,13 @@ const ERC20_ABI = [
 const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
 const USDC_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
 
+// New ERC20 token addresses
+const VUSD_ADDRESS = '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA';
+const SEVO_ADDRESS = '0x2A34059DF3D60B1864f10F10492746bd26d3D24a';
+const WSEVO_ADDRESS = '0x43a36604B6Ad9A4cf8EF600241E90b3DD97E145d';
+const VITEX_ADDRESS = '0x4Ed92A1d95d2092973007197794542A5D51FF5a6';
+const VTRO_ADDRESS = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
+
 // Uniswap V3 contract addresses
 const UNISWAP_V3_FACTORY_ADDRESS = '0x6196a7a6108B15a2cc24DdaB41C8CC3098C06351';
 
@@ -786,6 +793,49 @@ function SellPage() {
 
                 setLivePrice(prev => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
                 setPriceSources(prev => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
+            }
+
+            // Add new ERC20 tokens
+            const newTokens = [
+                { address: VUSD_ADDRESS, symbol: 'VUSD', name: 'VUSD Token', decimals: 6 },
+                { address: SEVO_ADDRESS, symbol: 'SEVO', name: 'SEVO Token', decimals: 18 },
+                { address: WSEVO_ADDRESS, symbol: 'WSEVO', name: 'Wrapped SEVO', decimals: 18 },
+                { address: VITEX_ADDRESS, symbol: 'VITEX', name: 'VITEX Token', decimals: 18 },
+                { address: VTRO_ADDRESS, symbol: 'VTRO', name: 'VTRO Token', decimals: 18 }
+            ];
+
+            for (const tokenConfig of newTokens) {
+                try {
+                    const tokenContract = new ethers.Contract(tokenConfig.address, ERC20_ABI, provider);
+                    let tokenSymbol, tokenName, tokenDecimals;
+
+                    try {
+                        tokenSymbol = await tokenContract.symbol();
+                        tokenName = await tokenContract.name();
+                        tokenDecimals = await tokenContract.decimals();
+                        console.log(`[DEBUG] ${tokenConfig.symbol} token details: ${tokenName} (${tokenSymbol}) - ${tokenDecimals} decimals`);
+                    } catch (e) {
+                        console.warn(`Could not fetch ${tokenConfig.symbol} details, using defaults`, e);
+                        tokenSymbol = tokenConfig.symbol;
+                        tokenName = tokenConfig.name;
+                        tokenDecimals = tokenConfig.decimals;
+                    }
+
+                    initialTokens[tokenConfig.address] = {
+                        address: tokenConfig.address,
+                        symbol: tokenSymbol,
+                        name: tokenName,
+                        decimals: tokenDecimals
+                    };
+                } catch (error) {
+                    console.warn(`Could not load ${tokenConfig.symbol} token, using defaults`, error);
+                    initialTokens[tokenConfig.address] = {
+                        address: tokenConfig.address,
+                        symbol: tokenConfig.symbol,
+                        name: tokenConfig.name,
+                        decimals: tokenConfig.decimals
+                    };
+                }
             }
 
             // Set token list with initial data - CRITICAL: Do this before any price fetching
