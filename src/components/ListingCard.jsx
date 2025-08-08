@@ -97,6 +97,7 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                 />
             </div>
 
+
             <div className={scopedClass('listing-details', 'ListingCard')}>
                 <div className={scopedClass('listing-info', 'ListingCard')}>
                     <h3 className={scopedClass('listing-title', 'ListingCard')}>{nftName}</h3>

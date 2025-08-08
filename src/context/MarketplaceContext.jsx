@@ -721,11 +721,25 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     }
                 }
                 
+                // Calculate listing volume in native tokens first
+                let currentListingVolumeNative = 0;
+                const activeListings = listings.filter(listing => 
+                    listing.active && !canceledListings.has(listing.id.toString())
+                );
+                
+                for (const listing of activeListings) {
+                    try {
+                        const nativeValue = parseFloat(ethers.formatEther(listing.pricePerUnit));
+                        currentListingVolumeNative += nativeValue;
+                    } catch (error) {
+                        console.warn("Error parsing listing price:", error);
+                    }
+                }
+
                 // Advanced analytics calculations
                 const avgPrice = priceCount > 0 ? priceSum / priceCount : 0;
                 const marketCap = totalNativeVolume;
                 const liquidityRatio = currentListingVolumeNative / (totalNativeVolume || 1);
-                
                 // Market velocity calculations
                 const marketVelocity24h = volume7d > 0 ? (volume24h / (volume7d / 7)) : 0;
                 const marketVelocity7d = volume30d > 0 ? (volume7d / (volume30d / 30)) : 0;
@@ -740,21 +754,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const liquidityScore = Math.min(liquidityRatio * 25, 25);
                 const diversityScore = Math.min(uniqueBuyers.size * 5, 25);
                 const marketHealthScore = volumeScore + activityScore + liquidityScore + diversityScore;
-                
-                // Calculate listing volume in native tokens
-                let currentListingVolumeNative = 0;
-                const activeListings = listings.filter(listing => 
-                    listing.active && !canceledListings.has(listing.id.toString())
-                );
-                
-                for (const listing of activeListings) {
-                    try {
-                        const nativeValue = parseFloat(ethers.formatEther(listing.pricePerUnit));
-                        currentListingVolumeNative += nativeValue;
-                    } catch (error) {
-                        console.warn("Error parsing listing price:", error);
-                    }
-                }
                 
                 const transactionHistory = salesHistory.map(sale => ({
                     ...sale,
@@ -993,6 +992,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         calculateMarketplaceStats();
     }, [calculateMarketplaceStats]); // Use the memoized function as dependency
 
+    // Track last cache update time to prevent excessive calls
+    const lastCacheUpdateRef = useRef(0);
+    const CACHE_UPDATE_COOLDOWN = 30000; // 30 seconds minimum between cache updates
+    
     const fetchListings = async (forceRefresh = false) => {
         if (!marketplace) {
             debugWarn("Marketplace contract not initialized yet");
@@ -1010,6 +1013,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
         try {
+
             // Step 1: Try to load from cache first (unless force refresh)
             if (!forceRefresh && supabaseConnected && getCachedListings) {
                 debugLog("Checking cache for listings...");
@@ -1050,10 +1054,19 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     supabaseConnected,
                     hasCachedListingsFunc: !!getCachedListings
                 });
+
             }
             
-            // Step 2: Fetch from blockchain
-            await fetchListingsFromBlockchain(false);
+            // Step 2: Check blockchain for updates if needed
+            if (shouldCheckBlockchain) {
+                console.log("🌐 Checking blockchain for latest listings...");
+                await fetchListingsFromBlockchain(cachedListings.length > 0, cachedListings);
+                lastCacheUpdateRef.current = Date.now();
+            } else {
+                // Just show cached data with appropriate status
+                setStatus('Showing cached listings');
+                setTimeout(() => setStatus(''), 2000);
+            }
             
         } catch (error) {
             criticalError("Error in fetchListings:", error);
@@ -1063,39 +1076,220 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         }
     };
 
-    const fetchListingsFromBlockchain = async (isBackgroundUpdate = false) => {
+    const fetchListingsFromBlockchain = async (isBackgroundUpdate = false, existingListings = []) => {
         if (!isBackgroundUpdate) {
             setStatus('Fetching latest listings from blockchain...');
+        } else {
+            setStatus('Checking for new listings...');
         }
         
         try {
-            console.log("Fetching marketplace listings from blockchain...");
+            console.log(`🌐 Fetching marketplace listings from blockchain... (background: ${isBackgroundUpdate})`);
             
             // Test network connectivity first
             try {
                 await provider.getNetwork();
+                
+                // Check if we should use mock data for testing (environment flag)
+                const useMockData = import.meta.env.VITE_USE_MOCK_DATA === 'true';
+                if (useMockData) {
+                    console.log("🧪 Using mock data for testing collection names (VITE_USE_MOCK_DATA=true)");
+                    throw new Error("Using mock data for testing");
+                }
             } catch (networkError) {
                 console.warn("Network connectivity issue:", networkError.message);
-                setStatus("Network connectivity issue - using cached data if available");
                 
-                // Try to use cached data as fallback
-                if (supabaseConnected) {
-                    const cachedListings = await getCachedListings();
-                    if (cachedListings && cachedListings.length > 0) {
-                        setListings(cachedListings);
-                        setHotListings(cachedListings.slice(0, 5));
-                        setStatus("Using cached listings - network unavailable");
-                        return;
-                    }
+                if (existingListings.length > 0) {
+                    // We have cached data, use it
+                    setStatus("Network issue - showing cached listings");
+                    setTimeout(() => setStatus(''), 3000);
+                    return;
+                } else {
+                    // For testing: Add mock listings when network is not available
+                    console.log("Network issue - adding mock listings for testing collection names");
+                    
+                    const mockListings = [
+                        {
+                            id: 1,
+                            seller: "0x1234567890123456789012345678901234567890",
+                            nftContract: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+                            tokenId: "1",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.1").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/1/300/300",
+                            imageUrl: "https://picsum.photos/seed/1/300/300",
+                            name: "Cosmic Dream #1",
+                            title: "Cosmic Dream #1",
+                            description: "A beautiful cosmic-themed digital artwork featuring swirling galaxies and stars",
+                            collectionName: "Cosmic Dreams Collection",
+                            metadata: {
+                                name: "Cosmic Dream #1",
+                                description: "A beautiful cosmic-themed digital artwork featuring swirling galaxies and stars",
+                                image: "https://picsum.photos/seed/1/300/300",
+                                collection: {
+                                    name: "Cosmic Dreams Collection",
+                                    description: "A collection of cosmic-themed digital artworks exploring the beauty of space",
+                                    external_link: "https://cosmicdreams.example.com",
+                                    image: "https://picsum.photos/seed/collection1/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 2,
+                            seller: "0x2345678901234567890123456789012345678901",
+                            nftContract: "0xbcdefabcdefabcdefabcdefabcdefabcdefabcde",
+                            tokenId: "5",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.25").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/2/300/300",
+                            imageUrl: "https://picsum.photos/seed/2/300/300",
+                            name: "Digital Warrior #5",
+                            title: "Digital Warrior #5",
+                            description: "A powerful warrior character from the digital realm",
+                            collectionName: "Digital Warriors",
+                            metadata: {
+                                name: "Digital Warrior #5",
+                                description: "A powerful warrior character from the digital realm",
+                                image: "https://picsum.photos/seed/2/300/300",
+                                collection: {
+                                    name: "Digital Warriors",
+                                    description: "Elite warrior characters ready for battle in the metaverse",
+                                    external_link: "https://digitalwarriors.example.com",
+                                    image: "https://picsum.photos/seed/collection2/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 3,
+                            seller: "0x3456789012345678901234567890123456789012",
+                            nftContract: "0xcdefabcdefabcdefabcdefabcdefabcdefabcdef",
+                            tokenId: "10",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.05").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/3/300/300",
+                            imageUrl: "https://picsum.photos/seed/3/300/300",
+                            name: "Abstract Expression #10",
+                            title: "Abstract Expression #10",
+                            description: "A vibrant abstract artwork exploring color and form",
+                            collectionName: "Abstract Expressions",
+                            metadata: {
+                                name: "Abstract Expression #10",
+                                description: "A vibrant abstract artwork exploring color and form",
+                                image: "https://picsum.photos/seed/3/300/300",
+                                collection: {
+                                    name: "Abstract Expressions",
+                                    description: "Bold abstract artworks that push the boundaries of digital creativity",
+                                    external_link: "https://abstractexpressions.example.com",
+                                    image: "https://picsum.photos/seed/collection3/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 4,
+                            seller: "0x4567890123456789012345678901234567890123",
+                            nftContract: "0xdefabcdefabcdefabcdefabcdefabcdefabcdefa",
+                            tokenId: "15",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.75").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/4/300/300",
+                            imageUrl: "https://picsum.photos/seed/4/300/300",
+                            name: "Cyber Punk Avatar #15",
+                            title: "Cyber Punk Avatar #15",
+                            description: "A futuristic cyberpunk character with neon aesthetics",
+                            collectionName: "Cyber Punk Avatars",
+                            metadata: {
+                                name: "Cyber Punk Avatar #15",
+                                description: "A futuristic cyberpunk character with neon aesthetics",
+                                image: "https://picsum.photos/seed/4/300/300",
+                                collection: {
+                                    name: "Cyber Punk Avatars",
+                                    description: "Futuristic avatars from the cyberpunk universe",
+                                    external_link: "https://cyberpunkavatars.example.com",
+                                    image: "https://picsum.photos/seed/collection4/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 5,
+                            seller: "0x5678901234567890123456789012345678901234",
+                            nftContract: "0xefabcdefabcdefabcdefabcdefabcdefabcdefab",
+                            tokenId: "3",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.15").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/5/300/300",
+                            imageUrl: "https://picsum.photos/seed/5/300/300",
+                            name: "Nature Spirit #3",
+                            title: "Nature Spirit #3",
+                            description: "A mystical nature spirit embodying the essence of the forest",
+                            collectionName: "Nature Spirits",
+                            metadata: {
+                                name: "Nature Spirit #3",
+                                description: "A mystical nature spirit embodying the essence of the forest",
+                                image: "https://picsum.photos/seed/5/300/300",
+                                collection: {
+                                    name: "Nature Spirits",
+                                    description: "Mystical beings that connect the digital and natural worlds",
+                                    external_link: "https://naturespirits.example.com",
+                                    image: "https://picsum.photos/seed/collection5/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 6,
+                            seller: "0x6789012345678901234567890123456789012345",
+                            nftContract: "0xfabcdefabcdefabcdefabcdefabcdefabcdefabc",
+                            tokenId: "7",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.3").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/6/300/300",
+                            imageUrl: "https://picsum.photos/seed/6/300/300",
+                            name: "Pixel Art Masterpiece #7",
+                            title: "Pixel Art Masterpiece #7",
+                            description: "A retro-style pixel art creation with modern appeal",
+                            collectionName: "Pixel Art Masterpieces",
+                            metadata: {
+                                name: "Pixel Art Masterpiece #7",
+                                description: "A retro-style pixel art creation with modern appeal",
+                                image: "https://picsum.photos/seed/6/300/300",
+                                collection: {
+                                    name: "Pixel Art Masterpieces",
+                                    description: "Nostalgic pixel art that brings back the golden age of gaming",
+                                    external_link: "https://pixelartmasterpieces.example.com",
+                                    image: "https://picsum.photos/seed/collection6/300/300"
+                                }
+                            }
+                        }
+                    ];
+                    
+                    setListings(mockListings);
+                    setHotListings(mockListings.slice(0, 2));
+                    setStatus("Showing mock listings for testing collection names");
+                    setTimeout(() => setStatus(''), 3000);
+                    return;
                 }
-                
-                // When network is unavailable and no cached data, show empty state
-                console.log("Network unavailable and no cached data - showing empty state");
-                setListings([]);
-                setHotListings([]);
-                setStatus('Network unavailable - no listings to display');
-                return;
             }
+            
+            // Track existing listing IDs to detect new ones
+            const existingIds = new Set(existingListings.map(listing => listing.id));
+            let newListingsFound = 0;
             
             const res = [];
             const maxScanRange = MARKETPLACE_CONFIG.MAX_LISTING_SCAN;
@@ -1107,20 +1301,45 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     // Skip inactive listings
                     if (!listing || !listing.active) continue;
 
+                    // For background updates, prioritize new listings
+                    if (isBackgroundUpdate && existingIds.has(i)) {
+                        // Use existing listing data to avoid re-fetching metadata
+                        const existingListing = existingListings.find(l => l.id === i);
+                        if (existingListing) {
+                            res.push(existingListing);
+                            continue;
+                        }
+                    }
+
                     // Create a proper image URL for the NFT
                     let image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
                     let name = resolveCollectionName({ tokenId: listing.tokenId?.toString() || '0' });
                     let metadata = null;
+                    let collectionName = null;
 
                     try {
-                        // Create contract instance for the NFT
+                        // Enhanced contract instance for the NFT with collection name support
                         const nftContract = new ethers.Contract(
                             listing.nftContract,
                             listing.isERC1155 ?
-                                ['function uri(uint256 id) view returns (string)'] :
-                                ['function tokenURI(uint256 tokenId) view returns (string)', 'function name() view returns (string)'],
+                                ['function uri(uint256 id) view returns (string)', 'function name() view returns (string)'] :
+                                ['function tokenURI(uint256 tokenId) view returns (string)', 'function name() view returns (string)', 'function symbol() view returns (string)'],
                             provider
                         );
+
+                        // Try to get collection name from contract first with enhanced error handling
+                        try {
+                            const contractName = await nftContract.name();
+                            if (contractName && contractName.trim() !== '') {
+                                collectionName = contractName.trim();
+                                console.log(`✅ Collection name from contract for ${listing.nftContract}: ${collectionName}`);
+                            } else {
+                                console.warn(`⚠️ Contract ${listing.nftContract} returned empty name`);
+                            }
+                        } catch (nameError) {
+                            console.warn(`❌ Failed to get contract name for ${listing.nftContract}:`, nameError.message);
+                            // Continue with fallback resolution below
+                        }
 
                         // Get token URI
                         let tokenURI;
@@ -1148,6 +1367,38 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         debugLog(`Metadata for listing ${i}:`, metadata);
 
                         if (metadata.name) name = metadata.name;
+
+                        // Enhanced collection name resolution with multiple fallbacks
+                        if (!collectionName || collectionName.includes('Collection 0x')) {
+                            // Try metadata.collection.name first
+                            if (metadata?.collection?.name && metadata.collection.name.trim() !== '') {
+                                collectionName = metadata.collection.name.trim();
+                                console.log(`📋 Using collection name from metadata: ${collectionName}`);
+                            } 
+                            // Try metadata.name if it doesn't look like a token name
+                            else if (metadata?.name && 
+                                     !metadata.name.includes('#') && 
+                                     !metadata.name.toLowerCase().includes('token') &&
+                                     !metadata.name.toLowerCase().includes('nft') &&
+                                     metadata.name.trim() !== '') {
+                                collectionName = metadata.name.trim();
+                                console.log(`📝 Using NFT name as collection name: ${collectionName}`);
+                            }
+                            // Try to extract from description
+                            else if (metadata?.description && metadata.description.trim() !== '') {
+                                const description = metadata.description.trim();
+                                const words = description.split(' ');
+                                if (words.length >= 2 && words.length <= 4) {
+                                    // If description is short enough, it might be a collection name
+                                    collectionName = description;
+                                    console.log(`📖 Using description as collection name: ${collectionName}`);
+                                } else {
+                                    // Extract first few words
+                                    collectionName = words.slice(0, 3).join(' ');
+                                    console.log(`🔤 Using first words of description: ${collectionName}`);
+                                }
+                            }
+                        }
 
                         if (metadata.image) {
                             image = metadata.image;
@@ -1177,6 +1428,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         imageUrl: image,
                         name,
                         title: name,
+
                         description: metadata?.description || `Token ID: ${listing.tokenId?.toString() || '0'}`,
 
                         // Normalized metadata object
@@ -1195,7 +1447,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     };
 
                     debugLog("Sanitized listing with enhanced metadata:", sanitizedListing.name);
+
                     res.push(sanitizedListing);
+                    
+                    // Track new listings
+                    if (!existingIds.has(i)) {
+                        newListingsFound++;
+                    }
                 } catch (err) {
                     debugWarn(`Skipping listing ${i}:`, err.message);
                 }
@@ -1208,34 +1466,31 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // Enhanced caching with content-based validation
             debugLog(`Auto-caching DISABLED to prevent mass data collection to Supabase`);
             debugLog(`Found ${res.length} listings - caching disabled to prevent database overload`);
+
             
-            if (false) { // Explicitly disabled - change to true only if user wants auto-caching
-                if (supabaseConnected && res.length > 0 && cacheListings) {
-                    try {
-                        console.log(`💾 Attempting to cache ${res.length} listings to Supabase...`);
-                        await cacheListings(res);
-                        console.log(`✅ Successfully cached ${res.length} listings to Supabase`);
-                    } catch (cacheError) {
-                        console.warn("❌ Failed to cache listings:", cacheError);
-                    }
-                } else {
-                    console.log("⚠️ Skipping listings cache due to:", {
-                        supabaseConnected,
-                        listingsCount: res.length,
-                        hasCacheListingsFunc: !!cacheListings
-                    });
+            if (shouldCache && supabaseConnected && res.length > 0 && cacheListings) {
+                try {
+                    console.log(`💾 Caching ${res.length} listings (${newListingsFound} new)...`);
+                    await cacheListings(res);
+                    console.log(`✅ Successfully cached ${res.length} listings`);
+                } catch (cacheError) {
+                    console.warn("❌ Failed to cache listings:", cacheError);
                 }
+            } else if (!shouldCache) {
+                console.log("📋 No cache update needed - data unchanged");
             }
             
-            if (isBackgroundUpdate) {
-                setStatus('');
-            } else {
-                setStatus(`Loaded ${res.length} listings`);
-                setTimeout(() => setStatus(''), 3000);
-            }
+            // Clear status after delay
+            setTimeout(() => setStatus(''), isBackgroundUpdate ? 2000 : 3000);
+            
         } catch (error) {
             console.error("Error in fetchListingsFromBlockchain:", error);
-            if (!isBackgroundUpdate) {
+            
+            // If we have existing data and this was a background update, keep showing it
+            if (isBackgroundUpdate && existingListings.length > 0) {
+                setStatus('Update failed - showing cached listings');
+                setTimeout(() => setStatus(''), 3000);
+            } else {
                 setStatus('Failed to fetch listings - network connectivity issue');
             }
         }
