@@ -3,6 +3,9 @@ import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
+import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
+import { debugWarn } from '../utils/debugUtils';
+import './ListingCard.css';
 
 function ListingCard({ listing, featured = false, showSeller = true }) {
     const { buyListing, status } = useMarketplace();
@@ -31,8 +34,11 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
     const fallbackImage = `https://picsum.photos/seed/${listing.nftContract}${listing.tokenId}/300/300`;
     const imageUrl = listing.metadata?.image || listing.image || listing.imageUrl || fallbackImage;
 
-    // Use the NFT name from metadata if available
-    const nftName = listing.metadata?.name || listing.name || `NFT #${listing.tokenId.toString()}`;
+    // Use centralized collection name resolution
+    const nftName = resolveCollectionName(listing);
+    
+    // Normalize description
+    const nftDescription = normalizeDescription(listing?.metadata?.description || listing.description);
 
     // Format price and fetch token details when component mounts or listing changes
     useEffect(() => {
@@ -51,7 +57,7 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                 setPriceDisplay(priceInfo);
                 setTokenSymbol(priceInfo.tokenSymbol);
             } catch (error) {
-                console.error('Error formatting price with USDC:', error);
+                debugWarn('Error formatting price with USDC:', error);
                 // Fallback to basic formatting
                 const tokenDetails = await fetchTokenDetails(listing.paymentToken, provider).catch(() => ({
                     symbol: getTokenSymbol(listing.paymentToken),
@@ -62,7 +68,8 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                     tokenAmount: listing.pricePerUnit.toString(),
                     tokenSymbol: tokenDetails.symbol,
                     usdcValue: '0.00',
-                    formatted: `${listing.pricePerUnit.toString()} ${tokenDetails.symbol}`
+                    formatted: `${listing.pricePerUnit.toString()} ${tokenDetails.symbol}`,
+                    hasUSDCRate: false
                 });
                 setTokenSymbol(tokenDetails.symbol);
             }
@@ -72,48 +79,64 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
     }, [listing, provider]);
 
     return (
-        <div className={`listing-card ${featured ? 'featured' : ''}`}>
-            <div className="listing-image">
+        <article 
+            className={`${scopedClass('listing-card', 'ListingCard')} ${featured ? scopedClass('featured', 'ListingCard') : ''}`}
+            role="article"
+            aria-label={`NFT listing: ${nftName}`}
+        >
+            <div className={scopedClass('listing-image', 'ListingCard')}>
                 <img
                     src={imageUrl}
-                    alt={nftName}
+                    alt={`${nftName} - NFT artwork`}
+                    role="img"
+                    aria-describedby={nftDescription ? `description-${listing.id}` : undefined}
                     onError={(e) => {
-                        console.log("Image failed to load:", e.target.src);
+                        debugWarn("Image failed to load:", e.target.src);
                         e.target.src = fallbackImage;
                     }}
                 />
             </div>
 
-            <div className="listing-details">
-                <div className="listing-info">
-                    <h3>{nftName}</h3>
-                    <div className="listing-contract small">{listing.nftContract.slice(0, 6)}...{listing.nftContract.slice(-4)}</div>
+            <div className={scopedClass('listing-details', 'ListingCard')}>
+                <div className={scopedClass('listing-info', 'ListingCard')}>
+                    <h3 className={scopedClass('listing-title', 'ListingCard')}>{nftName}</h3>
+                    <div className={`${scopedClass('listing-contract', 'ListingCard')} ${scopedClass('small', 'ListingCard')}`}>
+                        {listing.nftContract.slice(0, 6)}...{listing.nftContract.slice(-4)}
+                    </div>
+                    {nftDescription && (
+                        <p 
+                            id={`description-${listing.id}`}
+                            className={scopedClass('listing-description', 'ListingCard')}
+                        >
+                            {nftDescription}
+                        </p>
+                    )}
                 </div>
 
-                <div className="listing-price">
+                <div className={scopedClass('listing-price', 'ListingCard')} role="region" aria-label="Price information">
                     {priceDisplay.hasUSDCRate ? (
                         <>
-                            <div className="price-amount">
+                            <div className={scopedClass('price-amount', 'ListingCard')}>
                                 ${priceDisplay.usdcValue}
                             </div>
-                            <div className="price-currency">
+                            <div className={scopedClass('price-currency', 'ListingCard')}>
                                 USDC
                             </div>
                             {priceDisplay.tokenSymbol !== 'USDC.pol' && (
-                                <div className="price-original">
+                                <div className={scopedClass('price-original', 'ListingCard')}>
                                     {priceDisplay.tokenAmount} {priceDisplay.tokenSymbol}
                                 </div>
                             )}
                         </>
                     ) : (
                         <>
-                            <div className="price-amount">
+                            <div className={scopedClass('price-amount', 'ListingCard')}>
                                 {priceDisplay.tokenAmount}
                             </div>
-                            <div className="price-currency">
+                            <div className={scopedClass('price-currency', 'ListingCard')}>
                                 {priceDisplay.tokenSymbol}
                             </div>
-                            <div className="price-note">
+                            <div className={scopedClass('price-note', 'ListingCard')}>
                                 No USDC rate available
                             </div>
                         </>
@@ -121,26 +144,39 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                 </div>
 
                 {showSeller && (
-                    <div className="listing-seller small">
+                    <div className={`${scopedClass('listing-seller', 'ListingCard')} ${scopedClass('small', 'ListingCard')}`}>
                         Seller: {listing.seller.slice(0, 6)}...{listing.seller.slice(-4)}
                     </div>
                 )}
 
-                <div className="listing-actions">
+                <div className={scopedClass('listing-actions', 'ListingCard')}>
                     {isOwner ? (
-                        <button className="secondary-button" disabled>You own this</button>
+                        <button 
+                            className={scopedClass('secondary-button', 'ListingCard')} 
+                            disabled 
+                            aria-label="You own this NFT"
+                        >
+                            You own this
+                        </button>
                     ) : (
                         <button
-                            className="primary-button buy-button"
+                            className={`${scopedClass('primary-button', 'ListingCard')} ${scopedClass('buy-button', 'ListingCard')}`}
                             onClick={handleBuy}
                             disabled={status.includes('Buying')}
+                            aria-label={`Buy ${nftName} for ${priceDisplay.formatted}`}
+                            aria-describedby={`price-${listing.id}`}
                         >
                             {status.includes('Buying') ? 'Processing...' : 'Buy Now'}
                         </button>
                     )}
                 </div>
             </div>
-        </div>
+            
+            {/* Hidden price description for screen readers */}
+            <div id={`price-${listing.id}`} className="sr-only">
+                Price: {priceDisplay.formatted}
+            </div>
+        </article>
     );
 }
 

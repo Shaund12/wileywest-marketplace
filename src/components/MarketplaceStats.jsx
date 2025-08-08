@@ -554,33 +554,51 @@ function MarketplaceStats() {
                                 <div className="trend-card">
                                     <h5>24h Growth Rate</h5>
                                     <div className="trend-value">
-                                        <span className={`growth-indicator ${(growthRate24h || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                            {(growthRate24h || 0) >= 0 ? '📈' : '📉'} {formatPrice(Math.abs(growthRate24h || 0))}%
-                                        </span>
+                                        {salesHistory.length > 0 ? (
+                                            <span className={`growth-indicator ${(growthRate24h || 0) >= 0 ? 'positive' : 'negative'}`}>
+                                                {(growthRate24h || 0) >= 0 ? '📈' : '📉'} {formatPrice(Math.abs(growthRate24h || 0))}%
+                                            </span>
+                                        ) : (
+                                            <span className="unavailable-metric">
+                                                📊 Insufficient data
+                                            </span>
+                                        )}
                                     </div>
-                                    <p>Compared to previous 24h period</p>
+                                    <p>{salesHistory.length > 0 ? 'Compared to previous 24h period' : 'Requires transaction history'}</p>
                                 </div>
 
                                 <div className="trend-card">
                                     <h5>7d Growth Rate</h5>
                                     <div className="trend-value">
-                                        <span className={`growth-indicator ${(growthRate7d || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                            {(growthRate7d || 0) >= 0 ? '📈' : '📉'} {formatPrice(Math.abs(growthRate7d || 0))}%
-                                        </span>
+                                        {salesHistory.length > 0 ? (
+                                            <span className={`growth-indicator ${(growthRate7d || 0) >= 0 ? 'positive' : 'negative'}`}>
+                                                {(growthRate7d || 0) >= 0 ? '📈' : '📉'} {formatPrice(Math.abs(growthRate7d || 0))}%
+                                            </span>
+                                        ) : (
+                                            <span className="unavailable-metric">
+                                                📊 Insufficient data
+                                            </span>
+                                        )}
                                     </div>
-                                    <p>Compared to previous 7d period</p>
+                                    <p>{salesHistory.length > 0 ? 'Compared to previous 7d period' : 'Requires transaction history'}</p>
                                 </div>
 
                                 <div className="trend-card">
                                     <h5>Market Momentum</h5>
                                     <div className="trend-value">
-                                        <span className="momentum-indicator">
-                                            {(marketVelocity24h || 0) > 1.5 ? '🚀 High' :
-                                                (marketVelocity24h || 0) > 1 ? '📈 Moderate' :
-                                                    (marketVelocity24h || 0) > 0.5 ? '➡️ Stable' : '📉 Low'}
-                                        </span>
+                                        {salesHistory.length > 0 ? (
+                                            <span className="momentum-indicator">
+                                                {(marketVelocity24h || 0) > 1.5 ? '🚀 High' :
+                                                    (marketVelocity24h || 0) > 1 ? '📈 Moderate' :
+                                                        (marketVelocity24h || 0) > 0.5 ? '➡️ Stable' : '📉 Low'}
+                                            </span>
+                                        ) : (
+                                            <span className="unavailable-metric">
+                                                📊 No data available
+                                            </span>
+                                        )}
                                     </div>
-                                    <p>Current trading momentum</p>
+                                    <p>{salesHistory.length > 0 ? 'Current trading momentum' : 'Based on transaction activity'}</p>
                                 </div>
                             </div>
                         </div>
