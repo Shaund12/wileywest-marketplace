@@ -306,30 +306,7 @@
         }
     }
 
-    /**
-     * Get fallback price when Uniswap data is not available
-     * @param {string} tokenAddress - Token address
-     * @returns {number} Fallback price in USD
-     */
-    function getFallbackPrice(tokenAddress) {
-        // Fallback prices for development/testing and when RPC is blocked
-        const fallbackPrices = {
-            [USDC_POL_ADDRESS]: 1.0,
-            [WVTRU_ADDRESS]: 0.037,
-            [VUSD_ADDRESS]: 0.98, // Stablecoin, slightly less than 1.0
-            [SEVO_ADDRESS]: 0.125,
-            [WSEVO_ADDRESS]: 0.125,
-            [VITEX_ADDRESS]: 0.089,
-            [VTRO_ADDRESS]: 0.052
-        };
 
-        // Handle native VTRU (zero address)
-        if (tokenAddress === ethers.ZeroAddress) {
-            return 0.037; // Same as WVTRU
-        }
-
-        return fallbackPrices[tokenAddress] || 0.01; // Default fallback
-    }
 
     /**
      * Fetch token price in USDC from Uniswap V3
@@ -361,10 +338,8 @@
             const { poolAddress, fee } = await getUniswapPool(actualTokenAddress, USDC_POL_ADDRESS, provider);
 
             if (!poolAddress) {
-                console.log(`No Uniswap pool found for ${tokenAddress}, using fallback price`);
-                const fallbackPrice = getFallbackPrice(tokenAddress);
-                priceCache[tokenAddress] = { price: fallbackPrice, timestamp: now };
-                return fallbackPrice;
+                console.log(`No Uniswap pool found for ${tokenAddress}, cannot fetch price`);
+                throw new Error(`No Uniswap pool available for token ${tokenAddress}`);
             }
 
             const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
@@ -421,33 +396,14 @@
             const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
             price = price * decimalAdjustment;
 
-            // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
-            // This validation ensures marketplace listings show the same prices as SellPage
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
-                tickNum < -300000) {
-                // Validate the calculated price against expected values
-                const expectedPrice = 0.037;
-                const tolerance = 0.01; // Allow 1% deviation
-                const deviation = Math.abs((price - expectedPrice) / expectedPrice);
-
-                if (deviation > tolerance) {
-                    console.log(`Price calculation verification failed for extreme tick. Using scientific formula.`);
-                    // Use scientific formula for tick to price conversion - mathematically derived
-                    price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                }
-            }
-
             // Cache the result
             priceCache[tokenAddress] = { price, timestamp: now };
 
             return price;
         } catch (error) {
             console.error(`Error fetching price for ${tokenAddress}:`, error);
-            // Use fallback pricing when Uniswap fails
-            console.log(`Using fallback price for token ${tokenAddress} due to error: ${error.message}`);
-            const fallbackPrice = getFallbackPrice(tokenAddress);
-            priceCache[tokenAddress] = { price: fallbackPrice, timestamp: now };
-            return fallbackPrice;
+            // Re-throw the error instead of using fallback pricing
+            throw error;
         }
     }
 
@@ -500,7 +456,7 @@
             try {
                 usdcValue = await convertToUSDCValue(tokenAmount, tokenAddress, provider);
             } catch (error) {
-                console.warn(`No USDC rate available for ${tokenAddress}:`, error);
+                console.warn(`Price unavailable for ${tokenAddress}:`, error);
                 usdcValue = 0;
                 hasUSDCRate = false;
             }
@@ -510,8 +466,8 @@
             
             let formatted;
             if (!hasUSDCRate) {
-                // When no USDC rate is available
-                formatted = `${tokenAmountFormatted} ${tokenDetails.symbol} (no USDC rate available)`;
+                // When no price data is available from blockchain
+                formatted = `${tokenAmountFormatted} ${tokenDetails.symbol} (Can't fetch price)`;
             } else if (tokenAddress === USDC_POL_ADDRESS) {
                 // For USDC.pol, just show the USDC amount
                 formatted = `$${tokenAmountFormatted}`;
@@ -538,7 +494,7 @@
                 tokenAmount: tokenAmountFormatted,
                 tokenSymbol,
                 usdcValue: '0.00',
-                formatted: `${tokenAmountFormatted} ${tokenSymbol} (no USDC rate available)`,
+                formatted: `${tokenAmountFormatted} ${tokenSymbol} (Can't fetch price)`,
                 hasUSDCRate: false
             };
         }

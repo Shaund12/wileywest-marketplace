@@ -137,9 +137,9 @@ function SellPage() {
                 if (token) {
                     try {
                         // Calculate USD value based on human-readable input
-                        let usdValue = 'Unknown';
+                        let usdValue = 'Can\'t fetch price';
                         const currentPrice = livePrice[formData.paymentToken];
-                        if (currentPrice) {
+                        if (currentPrice && currentPrice > 0) {
                             // For USDC, the USD value is the same as the input (1:1)
                             if (formData.paymentToken === USDC_ADDRESS) {
                                 usdValue = parseFloat(value).toFixed(2);
@@ -159,7 +159,7 @@ function SellPage() {
                         setDisplayPrice({
                             wei: '0',
                             eth: value,
-                            usd: 'Unknown'
+                            usd: 'Can\'t fetch price'
                         });
                     }
                 }
@@ -291,9 +291,9 @@ function SellPage() {
             if (token) {
                 try {
                     // Calculate USD value for current human-readable price
-                    let usdValue = 'Unknown';
+                    let usdValue = 'Can\'t fetch price';
                     const currentPrice = livePrice[tokenAddress];
-                    if (currentPrice) {
+                    if (currentPrice && currentPrice > 0) {
                         usdValue = (parseFloat(formData.price) * currentPrice).toFixed(2);
                     }
 
@@ -308,7 +308,7 @@ function SellPage() {
                     setDisplayPrice({
                         wei: '0',
                         eth: formData.price,
-                        usd: 'Unknown'
+                        usd: 'Can\'t fetch price'
                     });
                 }
             }
@@ -366,29 +366,7 @@ function SellPage() {
         }
     };
 
-    // Fallback price data for when Uniswap pools are not accessible
-    const getFallbackPrice = (tokenAddress, tokenSymbol) => {
-        // Fallback prices for development/testing and when RPC is blocked
-        const fallbackPrices = {
-            [ethers.ZeroAddress]: { price: 0.037, source: "Fallback Price (VTRU)" },
-            [WVTRU_ADDRESS]: { price: 0.037, source: "Fallback Price (WVTRU)" },
-            [VUSD_ADDRESS]: { price: 0.98, source: "Fallback Price (VUSD Stablecoin)" },
-            [SEVO_ADDRESS]: { price: 0.125, source: "Fallback Price (SEVO)" },
-            [WSEVO_ADDRESS]: { price: 0.125, source: "Fallback Price (WSEVO)" },
-            [VITEX_ADDRESS]: { price: 0.089, source: "Fallback Price (VITEX)" },
-            [VTRO_ADDRESS]: { price: 0.052, source: "Fallback Price (VTRO)" }
-        };
 
-        const fallback = fallbackPrices[tokenAddress];
-        if (fallback) {
-            console.log(`[DEBUG] Using fallback price for ${tokenSymbol}: $${fallback.price}`);
-            return fallback;
-        }
-
-        // Default fallback for unknown tokens
-        console.log(`[DEBUG] Using default fallback price for ${tokenSymbol}: $0.01`);
-        return { price: 0.01, source: `Fallback Price (${tokenSymbol})` };
-    };
 
     // Enhanced Uniswap V3 price calculation with better error handling and fallback
     const getUniswapPrice = async (tokenAddress) => {
@@ -428,9 +406,9 @@ function SellPage() {
             }
 
             if (!poolResult.poolAddress) {
-                // Instead of throwing error, use fallback prices for new tokens
-                console.log(`[DEBUG] No Uniswap pool found for ${tokenSymbol}, using fallback pricing`);
-                return getFallbackPrice(tokenAddress, tokenSymbol);
+                // No Uniswap pool found - cannot get price from blockchain
+                console.log(`[DEBUG] No Uniswap pool found for ${tokenSymbol}, cannot fetch price`);
+                throw new Error(`No Uniswap pool available for ${tokenSymbol}`);
             }
 
             const { poolAddress, fee } = poolResult;
@@ -502,22 +480,6 @@ function SellPage() {
 
             console.log(`[DEBUG] Raw calculated price for ${tokenSymbol}: $${price}`);
 
-            // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
-            // This was essential logic that was removed and caused the price fetching to fail
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
-                tickNum < -300000) {
-                // This is valid scientific calculation, NOT a hardcoded price
-                const expectedPrice = 0.037;
-                const tolerance = 0.01; // Allow 1% deviation
-                const deviation = Math.abs((price - expectedPrice) / expectedPrice);
-
-                if (deviation > tolerance) {
-                    console.log(`[DEBUG] Price calculation verification failed for extreme tick. Using scientific formula.`);
-                    // Use scientific formula for tick to price conversion - mathematically derived
-                    price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                }
-            }
-
             // Sanity check for unreasonable prices
             if (price <= 0 || !isFinite(price)) {
                 throw new Error(`Invalid price calculated: ${price}`);
@@ -542,10 +504,8 @@ function SellPage() {
             return { price, source };
         } catch (error) {
             console.error(`[ERROR] Price calculation failed for ${tokenAddress}: ${error.message}`);
-            // Use fallback pricing when Uniswap calculation fails
-            const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
-            console.log(`[DEBUG] Falling back to fallback pricing for ${tokenSymbol} due to error`);
-            return getFallbackPrice(tokenAddress, tokenSymbol);
+            // Re-throw the error instead of using fallback pricing
+            throw error;
         }
     };
 
@@ -577,13 +537,13 @@ function SellPage() {
             newSources[USDC_ADDRESS] = 'USD Stablecoin';
             changes[USDC_ADDRESS] = 0;
 
-            // Fetch WVTRU price first (needed for fallback calculations)
+            // Fetch WVTRU price first (base price for other token calculations)
             const tokenEntries = Object.entries(activeTokenList);
             const wvtruEntry = tokenEntries.find(([address]) => address === WVTRU_ADDRESS);
             
             if (wvtruEntry) {
                 const [address, token] = wvtruEntry;
-                console.log(`[DEBUG] Getting WVTRU price first for fallback calculations`);
+                console.log(`[DEBUG] Getting WVTRU price first for base price calculations`);
                 try {
                     const { price, source } = await getUniswapPrice(address);
 
@@ -603,12 +563,10 @@ function SellPage() {
                         throw new Error("Invalid price (zero or negative)");
                     }
                 } catch (error) {
-                    console.warn(`WVTRU price fetch failed, but fallback should have been provided:`, error);
-                    // This shouldn't happen now since getUniswapPrice provides fallbacks
-                    // But just in case, provide a final fallback
-                    newPrices[address] = 0.037;
-                    newSources[address] = `WVTRU Fallback Price`;
-                    changes[address] = 0;
+                    console.warn(`WVTRU price fetch failed:`, error);
+                    // Store the error instead of a fallback price
+                    errors[address] = error.message;
+                    newSources[address] = "Can't fetch price";
                 }
             }
 
@@ -640,12 +598,11 @@ function SellPage() {
                         throw new Error("Invalid price (zero or negative)");
                     }
                 } catch (error) {
-                    console.warn(`Price fetch failed for ${token.symbol}, but fallback should have been provided:`, error);
-                    // This shouldn't happen now since getUniswapPrice provides fallbacks
-                    // But just in case, provide a final fallback
-                    newPrices[address] = 0.01;
-                    newSources[address] = `Error: ${error.message}`;
-                    changes[address] = 0;
+                    console.warn(`Price fetch failed for ${token.symbol}:`, error);
+                    // Store the error instead of a fallback price
+                    errors[address] = error.message;
+                    newSources[address] = "Can't fetch price";
+                    // Don't set a price in newPrices - let it remain undefined
                 }
 
                 // Small delay between requests to avoid rate limiting
@@ -658,19 +615,8 @@ function SellPage() {
             console.log(`[DEBUG] WVTRU final price: ${newPrices[WVTRU_ADDRESS]}`);
             console.log(`[DEBUG] USDC final price: ${newPrices[USDC_ADDRESS]}`);
             
-            // Validate prices before setting state
-            const validatedPrices = {};
-            Object.entries(newPrices).forEach(([address, price]) => {
-                if (typeof price === 'number' && price > 0) {
-                    validatedPrices[address] = price;
-                } else {
-                    console.warn(`[DEBUG] Invalid price for ${address}: ${price}, using fallback`);
-                    // Provide final fallback for any remaining invalid prices
-                    validatedPrices[address] = 0.01;
-                }
-            });
-            
-            setLivePrice(validatedPrices);
+            // Only set valid prices - don't create fallbacks
+            setLivePrice(newPrices);
             setPriceChange(changes);
             setPriceSources(newSources);
             setPriceErrors(errors);
@@ -685,6 +631,11 @@ function SellPage() {
                         ...prev,
                         usd: usdValue
                     }));
+                } else {
+                    setDisplayPrice(prev => ({
+                        ...prev,
+                        usd: "Can't fetch price"
+                    }));
                 }
             }
 
@@ -692,13 +643,13 @@ function SellPage() {
             
             // Count successful vs failed prices
             const totalTokens = Object.keys(activeTokenList).length;
-            const successfulPrices = Object.values(validatedPrices).filter(price => price > 0).length;
+            const successfulPrices = Object.keys(newPrices).length;
             const failedPrices = totalTokens - successfulPrices;
             
             if (failedPrices > 0) {
-                console.warn(`[DEBUG] ${failedPrices}/${totalTokens} tokens had to use fallback prices`);
+                console.warn(`[DEBUG] ${failedPrices}/${totalTokens} tokens couldn't fetch prices from blockchain`);
             } else {
-                console.log(`[DEBUG] All ${totalTokens} tokens have valid prices`);
+                console.log(`[DEBUG] All ${totalTokens} tokens have valid prices from blockchain`);
             }
 
         } catch (error) {
@@ -1250,7 +1201,7 @@ function SellPage() {
             </div>
 
             {/* Price Ticker with Uniswap Price Data */}
-            {Object.keys(livePrice).length > 0 && (
+            {Object.keys(tokenList).length > 0 && (
                 <div className="price-ticker">
                     <div className="ticker-header">
                         <span>Uniswap V3 Token Prices</span>
@@ -1260,8 +1211,7 @@ function SellPage() {
                     </div>
                     <div className="ticker-items">
                         {Object.entries(tokenList)
-                            // Show tokens with valid prices > 0
-                            .filter(([address, token]) => livePrice[address] && livePrice[address] > 0)
+                            // Show all tokens
                             .map(([address, token]) => {
                                 const price = livePrice[address];
                                 const change = priceChange[address] || 0;
@@ -1271,7 +1221,7 @@ function SellPage() {
                                 return (
                                     <div className={`ticker-item ${error ? 'has-error' : ''}`} key={address}>
                                         <div className="ticker-symbol">{token.symbol}</div>
-                                        {price ? (
+                                        {price && price > 0 ? (
                                             <>
                                                 <div className="ticker-price">${price.toFixed(4)}</div>
                                                 <div className={`ticker-change ${change > 0 ? 'positive' : change < 0 ? 'negative' : ''}`}>
@@ -1279,10 +1229,10 @@ function SellPage() {
                                                 </div>
                                             </>
                                         ) : (
-                                            <div className="ticker-no-price">No Price Data</div>
+                                            <div className="ticker-no-price">Can't fetch</div>
                                         )}
                                         <div className="ticker-source" title={error || source}>
-                                            {error ? 'Error' : source}
+                                            {error ? 'Error' : (source || 'Can\'t fetch price')}
                                         </div>
                                     </div>
                                 );
@@ -1383,7 +1333,7 @@ function SellPage() {
                                                     {displayPrice.eth} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
                                                 </div>
                                                 <div className="price-usd">
-                                                    ≈ {displayPrice.usd === 'Unknown' ? 'Unknown USD value' : `$${displayPrice.usd} USD`}
+                                                    ≈ {(displayPrice.usd === 'Can\'t fetch price' || displayPrice.usd === 'Unknown') ? 'Can\'t fetch price' : `$${displayPrice.usd} USD`}
                                                 </div>
                                             </div>
                                         </div>
