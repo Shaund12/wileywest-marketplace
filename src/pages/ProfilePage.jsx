@@ -847,7 +847,7 @@ function ProfilePage() {
             // Step 2: Scan from blockchain
             // Reset scanning state before blockchain scan to avoid conflicts
             resetScanningState();
-            await scanUserNftsFromBlockchain(false);
+            await scanUserNftsFromBlockchain(false, forceRefresh);
 
         } catch (error) {
             console.error("Error loading user NFTs:", error);
@@ -858,7 +858,7 @@ function ProfilePage() {
         }
     };
 
-    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false) => {
+    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false) => {
         // Prevent scanning if already in progress or too recent
         if (scanningInProgress.current && !isBackgroundUpdate) {
             console.log("⏳ Blockchain scan already in progress, skipping...");
@@ -907,37 +907,55 @@ function ProfilePage() {
             console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting...`);
             const foundNfts = await scanner.scanAllNFTs();
             
-            // Update UI with found NFTs
-            setUserNfts(foundNfts);
-            
-            if (isBackgroundUpdate) {
-                console.log(`🔄 Background update: Found ${foundNfts.length} NFTs`);
+            // CRITICAL FIX: Don't clear existing NFTs if scan finds 0 NFTs (unless it's a force refresh)
+            if (foundNfts.length > 0) {
+                // Update UI with found NFTs only if we actually found some
+                setUserNfts(foundNfts);
+                
+                if (isBackgroundUpdate) {
+                    console.log(`🔄 Background update: Found ${foundNfts.length} NFTs`);
+                } else {
+                    setStatus(`✅ Found ${foundNfts.length} NFTs in your wallet`);
+                }
+                
+                // Cache the fresh data
+                if (supabaseConnected && cacheProfileData) {
+                    try {
+                        const profileData = {
+                            nfts: foundNfts,
+                            listings: userListings,
+                            balance: await provider.getBalance(wallet).then(b => b.toString())
+                        };
+                        
+                        await cacheProfileData(wallet, profileData);
+                        console.log(`✅ Cached profile data for ${wallet}`);
+                    } catch (cacheError) {
+                        console.warn("Failed to cache profile data:", cacheError);
+                    }
+                }
+                
+                // Batch fetch metadata for all NFTs
+                batchFetchMetadata(foundNfts);
             } else {
-                setStatus(`✅ Found ${foundNfts.length} NFTs in your wallet`);
-            }
-            
-            // Cache the fresh data
-            if (supabaseConnected && cacheProfileData && foundNfts.length > 0) {
-                try {
-                    const profileData = {
-                        nfts: foundNfts,
-                        listings: userListings,
-                        balance: await provider.getBalance(wallet).then(b => b.toString())
-                    };
+                // Handle case where scan found 0 NFTs
+                if (isForceRefresh) {
+                    // For force refresh, user explicitly requested to clear everything and rescan
+                    console.log(`🔄 Force refresh: Found 0 NFTs - clearing existing NFTs as requested`);
+                    setUserNfts([]);
+                    setStatus("Force refresh complete - no NFTs found in wallet");
+                } else if (isBackgroundUpdate) {
+                    console.log(`🔄 Background update: Found 0 NFTs - keeping existing NFTs to prevent clearing`);
+                } else {
+                    // For regular scans, don't clear existing NFTs if scan found 0
+                    console.warn("⚠️ Scan found 0 NFTs - this may indicate RPC issues or scanning problems");
+                    setStatus("⚠️ Scan found 0 NFTs - there may be RPC issues. Try 'Force Refresh' or check console for errors.");
                     
-                    await cacheProfileData(wallet, profileData);
-                    console.log(`✅ Cached profile data for ${wallet}`);
-                } catch (cacheError) {
-                    console.warn("Failed to cache profile data:", cacheError);
+                    // Don't clear existing NFTs unless user specifically requested a force refresh
+                    // This prevents the bug where scan clearing out all NFTs
                 }
             }
             
-            // Batch fetch metadata for all NFTs
-            if (foundNfts.length > 0) {
-                batchFetchMetadata(foundNfts);
-            }
-            
-            if (!isBackgroundUpdate) {
+            if (!isBackgroundUpdate && foundNfts.length > 0) {
                 setTimeout(() => setStatus(''), 3000);
             }
             

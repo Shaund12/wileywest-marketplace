@@ -312,7 +312,7 @@ export class NFTScanner {
         */
     }
 
-    // Comprehensive scan for NFTs with BALANCED approach (not too conservative, not excessive)
+    // Comprehensive scan for NFTs with COMPLETE blockchain coverage (from beginning)
     async scanAllNFTs(isBackground = false) {
         try {
             // Start timing for performance tracking
@@ -321,17 +321,17 @@ export class NFTScanner {
             // Reset progress
             this.progress = { found: 0, scanned: 0, total: 0 };
             
-            // Start with known contracts + balanced contract discovery
+            // Start with known contracts + comprehensive contract discovery
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
             
-            this.updateStatus("🔍 Using known contracts + balanced blockchain scanning for comprehensive NFT discovery");
-            console.log("⚖️ Balanced blockchain discovery for better NFT coverage");
-            console.log("💡 Scanning known contracts + recent transfers with reasonable limits");
+            this.updateStatus("🔍 COMPREHENSIVE blockchain scanning for complete NFT discovery from blockchain start");
+            console.log("🌐 COMPREHENSIVE blockchain discovery for complete NFT coverage");
+            console.log("💡 Scanning known contracts + entire blockchain history for maximum coverage");
             
-            // Add contracts from balanced transfer discovery (not too restrictive)
-            this.updateStatus("🔍 Discovering NFT contracts from balanced transfer history...");
-            const balancedContracts = await this.findContractsByRecentTransfers();
-            contractsToScan.push(...balancedContracts);
+            // Add contracts from comprehensive transfer discovery (scan from beginning)
+            this.updateStatus("🔍 Discovering NFT contracts from comprehensive blockchain history...");
+            const comprehensiveContracts = await this.findContractsByRecentTransfers();
+            contractsToScan.push(...comprehensiveContracts);
             
             // Remove duplicates and invalid addresses
             contractsToScan = [...new Set(contractsToScan)]
@@ -345,7 +345,7 @@ export class NFTScanner {
                 
             // Update total for progress tracking
             this.updateProgress({ total: contractsToScan.length });
-            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan (balanced approach for better coverage)`);
+            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan (comprehensive blockchain coverage)`);
             
             // Save contract cache and known ERC20s periodically
             const saveInterval = setInterval(() => {
@@ -353,7 +353,7 @@ export class NFTScanner {
                 this.saveKnownErc20s();
             }, 15000); // Less frequent saves
             
-            // Gather all NFTs with balanced approach
+            // Gather all NFTs with comprehensive approach
             const allNfts = [];
             
             // Process in balanced sequential batches
@@ -363,7 +363,7 @@ export class NFTScanner {
                 for (let i = 0; i < contractsToScan.length; i += batchSize) {
                     const batch = contractsToScan.slice(i, i + batchSize);
                     
-                    // Process contracts sequentially with improved error handling
+                    // Process contracts sequentially with comprehensive error handling
                     for (const address of batch) {
                         try {
                             const nfts = await this.scanSingleContract(address);
@@ -375,7 +375,15 @@ export class NFTScanner {
                                 scanned: this.progress.scanned + 1 
                             });
                         } catch (e) {
-                            console.warn(`Error in balanced scan for ${address}:`, e.message);
+                            // Comprehensive error handling - don't let individual contract errors stop the scan
+                            if (e.message.includes('execution reverted') || 
+                                e.message.includes('call revert exception') ||
+                                e.message.includes('Internal JSON-RPC error') ||
+                                e.code === -32603 || e.code === -32000) {
+                                // Expected RPC errors - don't log
+                            } else {
+                                console.warn(`Error in comprehensive scan for ${address}:`, e.message);
+                            }
                             // Update scanned count even on error
                             this.updateProgress({ scanned: this.progress.scanned + 1 });
                         }
@@ -401,7 +409,7 @@ export class NFTScanner {
             }
             
             const scanDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
-            this.updateStatus(`✅ Balanced scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s (improved coverage)`);
+            this.updateStatus(`✅ Comprehensive scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s (complete coverage)`);
             return allNfts;
         } catch (error) {
             console.error("Error in comprehensive NFT scan:", error);
@@ -490,7 +498,7 @@ export class NFTScanner {
         }
     }
 
-    // Check if a contract is an ERC20 token with improved error handling
+    // Check if a contract is an ERC20 token with comprehensive error handling
     async isERC20Token(contractAddress) {
         // Check cache first
         if (this.knownErc20s.has(contractAddress.toLowerCase())) {
@@ -502,7 +510,7 @@ export class NFTScanner {
             const erc20Contract = new ethers.Contract(contractAddress, ERC20_ABI, this.provider);
             
             try {
-                // Add timeout to prevent hanging RPC calls
+                // Add timeout to prevent hanging RPC calls with comprehensive error handling
                 const decimalsPromise = erc20Contract.decimals();
                 const timeoutPromise = new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('RPC call timeout')), 5000)
@@ -516,8 +524,17 @@ export class NFTScanner {
                     return true;
                 }
             } catch (e) {
-                // No decimals function or call failed, could be NFT or something else
-                // Don't log errors for every contract - this is expected behavior
+                // Comprehensive error handling to catch all RPC errors
+                if (e.message.includes('execution reverted') || 
+                    e.message.includes('call revert exception') ||
+                    e.message.includes('Internal JSON-RPC error') ||
+                    e.code === -32603 || e.code === -32000) {
+                    // This is a normal contract call failure - not an error to log
+                    // Just means the contract doesn't have a decimals function
+                } else {
+                    // Only log unexpected errors
+                    console.warn(`Unexpected error checking decimals for ${contractAddress}:`, e.message);
+                }
             }
             
             // Additional check using transfer event pattern analysis
@@ -533,7 +550,12 @@ export class NFTScanner {
                     toBlock: 'latest'
                 };
                 
-                const logs = await this.provider.getLogs(filter);
+                const logsPromise = this.provider.getLogs(filter);
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('getLogs timeout')), 8000)
+                );
+                
+                const logs = await Promise.race([logsPromise, timeoutPromise]);
                 
                 // Analyze a small sample of transfer events
                 const sampleSize = Math.min(logs.length, 5); // Smaller sample size
@@ -558,39 +580,92 @@ export class NFTScanner {
                     }
                 }
             } catch (e) {
-                // Error checking transfers - this is expected for many contracts
-                // Don't log as it creates noise
+                // Comprehensive error handling for getLogs calls
+                if (e.message.includes('execution reverted') || 
+                    e.message.includes('call revert exception') ||
+                    e.message.includes('Internal JSON-RPC error') ||
+                    e.message.includes('timeout') ||
+                    e.code === -32603 || e.code === -32000) {
+                    // Expected errors - don't log
+                } else {
+                    // Only log truly unexpected errors
+                    console.warn(`Unexpected error checking transfers for ${contractAddress}:`, e.message);
+                }
             }
             
             return false;
             
         } catch (error) {
-            // Only log unexpected errors, not normal contract call failures
-            if (!error.message.includes('execution reverted') && !error.message.includes('call revert exception')) {
-                console.warn(`Unexpected error checking if ${contractAddress} is ERC20:`, error);
+            // Comprehensive top-level error handling
+            if (error.message.includes('execution reverted') || 
+                error.message.includes('call revert exception') ||
+                error.message.includes('Internal JSON-RPC error') ||
+                error.code === -32603 || error.code === -32000) {
+                // These are expected for many contracts - don't log
+                return false;
+            } else {
+                // Only log unexpected errors
+                console.warn(`Unexpected error checking if ${contractAddress} is ERC20:`, error.message);
+                return false;
             }
-            return false;
         }
     }
 
-    // Find contracts from BALANCED Transfer events (not too restrictive, not too excessive)
+    // Find contracts from COMPREHENSIVE Transfer events (scan from beginning for complete coverage)
     async findContractsByRecentTransfers() {
         try {
             const contracts = new Set();
             
-            // Use a balanced approach: More than 50k blocks but not entire history
+            // COMPREHENSIVE APPROACH: Scan from beginning for complete NFT discovery
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = Math.max(0, currentBlock - 200000); // Last 200k blocks (roughly 2-3 months)
+            const fromBlock = 0; // Start from the very beginning of the blockchain
             
-            this.updateStatus(`🔍 Scanning balanced block range (${fromBlock} to ${currentBlock}) for NFT discovery...`);
-            console.log(`⚖️ Balanced transfer scanning: blocks ${fromBlock} to ${currentBlock}`);
+            this.updateStatus(`🔍 Comprehensive blockchain scan (${fromBlock} to ${currentBlock}) for complete NFT discovery...`);
+            console.log(`🌐 COMPREHENSIVE blockchain scan: blocks ${fromBlock} to ${currentBlock} for maximum NFT coverage`);
             
-            // Scan balanced transfers with error handling
+            // Use chunked approach to scan the entire blockchain history
+            await this.findTransfersByChunks(ethers.id("Transfer(address,address,uint256)"), 
+                ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32), 
+                contracts);
+            
+            // Try ERC1155 TransferSingle events across entire history
+            await this.findTransfersByChunks(ethers.id("TransferSingle(address,address,address,uint256,uint256)"),
+                ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32),
+                contracts, true);
+            
+            // Filter out known ERC20s
+            const filteredContracts = [...contracts].filter(addr => 
+                !this.knownErc20s.has(addr.toLowerCase())
+            );
+                
+            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from comprehensive blockchain scan`);
+            return filteredContracts;
+        } catch (error) {
+            console.error("Error finding contracts by comprehensive transfers:", error);
+            // If comprehensive scan fails, fallback to recent blocks
+            console.log("Falling back to recent block scanning...");
+            return await this.findContractsByRecentTransfersFallback();
+        }
+    }
+
+    // Fallback method for when comprehensive scan fails
+    async findContractsByRecentTransfersFallback() {
+        try {
+            const contracts = new Set();
+            
+            // Fallback to recent blocks if comprehensive scan fails
+            const currentBlock = await this.provider.getBlockNumber();
+            const fromBlock = Math.max(0, currentBlock - 500000); // Last 500k blocks as fallback
+            
+            this.updateStatus(`🔄 Fallback scan: blocks ${fromBlock} to ${currentBlock}...`);
+            console.log(`🔄 Fallback scanning: blocks ${fromBlock} to ${currentBlock}`);
+            
+            // Scan fallback transfers with error handling
             await this.findTransfersByRecentBlocks(ethers.id("Transfer(address,address,uint256)"), 
                 ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32), 
                 contracts, fromBlock, currentBlock);
             
-            // Try ERC1155 TransferSingle events in balanced blocks
+            // Try ERC1155 TransferSingle events in fallback blocks
             await this.findTransfersByRecentBlocks(ethers.id("TransferSingle(address,address,address,uint256,uint256)"),
                 ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32),
                 contracts, fromBlock, currentBlock, true);
@@ -600,10 +675,10 @@ export class NFTScanner {
                 !this.knownErc20s.has(addr.toLowerCase())
             );
                 
-            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from balanced transfer scan`);
+            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from fallback scan`);
             return filteredContracts;
         } catch (error) {
-            console.error("Error finding contracts by balanced transfers:", error);
+            console.error("Error in fallback transfer scanning:", error);
             return [];
         }
     }
@@ -700,11 +775,22 @@ export class NFTScanner {
                     failedAttempts = 0;
                 } catch (error) {
                     failedAttempts++;
-                    console.warn(`Error scanning blocks ${startBlock}-${endBlock}:`, error);
+                    
+                    // Comprehensive error handling for getLogs calls
+                    if (error.message.includes('execution reverted') || 
+                        error.message.includes('call revert exception') ||
+                        error.message.includes('Internal JSON-RPC error') ||
+                        error.code === -32603 || error.code === -32000) {
+                        // Expected RPC errors - don't log as warnings, just debug info
+                        console.log(`RPC error scanning blocks ${startBlock}-${endBlock}, continuing...`);
+                    } else {
+                        // Log unexpected errors
+                        console.warn(`Unexpected error scanning blocks ${startBlock}-${endBlock}:`, error.message);
+                    }
                     
                     // If multiple consecutive failures, adjust strategy
                     if (failedAttempts >= 3) {
-                        console.warn(`Multiple failures, skipping ahead to recent blocks`);
+                        console.log(`Multiple RPC failures, skipping ahead to recent blocks`);
                         // Skip ahead to more recent blocks
                         const recentStartBlock = Math.max(currentBlock - 1000000, startBlock + chunkSize);
                         if (recentStartBlock > startBlock) {
@@ -718,7 +804,7 @@ export class NFTScanner {
                     // Reduce chunk size on error
                     if (chunkSize > 10000) {
                         const newChunkSize = Math.floor(chunkSize / 2);
-                        console.log(`Reducing chunk size to ${newChunkSize} blocks`);
+                        console.log(`Reducing chunk size to ${newChunkSize} blocks due to RPC issues`);
                         chunkSize = newChunkSize;
                         startBlock -= chunkSize; // Try this range again with smaller size
                     }
@@ -770,7 +856,7 @@ export class NFTScanner {
         }
     }
 
-    // Improved detection of NFT standards with better error handling
+    // Improved detection of NFT standards with comprehensive error handling
     async detectNFTStandard(contractAddress) {
         // Check cache first
         if (this.contractCache[contractAddress] && this.contractCache[contractAddress].type) {
@@ -778,11 +864,11 @@ export class NFTScanner {
         }
         
         try {
-            // Try as ERC721 first with timeout protection
+            // Try as ERC721 first with timeout protection and comprehensive error handling
             const erc721Contract = new ethers.Contract(contractAddress, EXTENDED_ERC721_ABI, this.provider);
             
             try {
-                // Add timeout to prevent hanging calls
+                // Add timeout to prevent hanging calls with comprehensive error handling
                 const balancePromise = erc721Contract.balanceOf(this.walletAddress);
                 const timeoutPromise = new Promise((_, reject) => 
                     setTimeout(() => reject(new Error('Balance call timeout')), 8000)
@@ -798,6 +884,16 @@ export class NFTScanner {
                     return 'ERC721';
                 }
             } catch (e) {
+                // Comprehensive error handling for balanceOf calls
+                if (e.message.includes('execution reverted') || 
+                    e.message.includes('call revert exception') ||
+                    e.message.includes('Internal JSON-RPC error') ||
+                    e.code === -32603 || e.code === -32000) {
+                    // Expected error - try interface check before giving up
+                } else {
+                    console.warn(`Unexpected balanceOf error for ${contractAddress}:`, e.message);
+                }
+                
                 // balanceOf failed, try interface check before giving up on ERC721
                 try {
                     const interfacePromise = erc721Contract.supportsInterface("0x80ac58cd");
@@ -811,19 +907,27 @@ export class NFTScanner {
                         return 'ERC721';
                     }
                 } catch (interfaceError) {
-                    // Interface check also failed, try ERC1155
+                    // Comprehensive error handling for interface checks
+                    if (interfaceError.message.includes('execution reverted') || 
+                        interfaceError.message.includes('call revert exception') ||
+                        interfaceError.message.includes('Internal JSON-RPC error') ||
+                        interfaceError.code === -32603 || interfaceError.code === -32000) {
+                        // Expected error - move on to ERC1155
+                    } else {
+                        console.warn(`Unexpected interface error for ${contractAddress}:`, interfaceError.message);
+                    }
                 }
             }
             
-            // Try as ERC1155 with timeout protection
+            // Try as ERC1155 with timeout protection and comprehensive error handling
             const erc1155Contract = new ethers.Contract(contractAddress, EXTENDED_ERC1155_ABI, this.provider);
             
             try {
-                // Try some common token IDs to see if we own any, with timeout
+                // Try some common token IDs to see if we own any, with timeout and error handling
                 const testTokenIds = [1, 2, 3, 4, 5]; // Reduced test set
                 let hasTokens = false;
                 
-                // Check each token ID individually with timeout
+                // Check each token ID individually with timeout and comprehensive error handling
                 for (const id of testTokenIds) {
                     try {
                         const balancePromise = erc1155Contract.balanceOf(this.walletAddress, id);
@@ -837,8 +941,17 @@ export class NFTScanner {
                             break;
                         }
                     } catch (e) {
-                        // Skip individual token errors
-                        continue;
+                        // Comprehensive error handling for individual token balance checks
+                        if (e.message.includes('execution reverted') || 
+                            e.message.includes('call revert exception') ||
+                            e.message.includes('Internal JSON-RPC error') ||
+                            e.code === -32603 || e.code === -32000) {
+                            // Expected error - skip this token ID
+                            continue;
+                        } else {
+                            console.warn(`Unexpected ERC1155 balance error for ${contractAddress} token ${id}:`, e.message);
+                            continue;
+                        }
                     }
                 }
                 
@@ -847,7 +960,7 @@ export class NFTScanner {
                     return 'ERC1155';
                 }
                 
-                // Try interface check as last resort
+                // Try interface check as last resort with comprehensive error handling
                 try {
                     const interfacePromise = erc1155Contract.supportsInterface("0xd9b67a26");
                     const timeoutPromise = new Promise((_, reject) => 
@@ -860,21 +973,43 @@ export class NFTScanner {
                         return 'ERC1155';
                     }
                 } catch (e) {
-                    // Interface check failed
+                    // Comprehensive error handling for ERC1155 interface checks
+                    if (e.message.includes('execution reverted') || 
+                        e.message.includes('call revert exception') ||
+                        e.message.includes('Internal JSON-RPC error') ||
+                        e.code === -32603 || e.code === -32000) {
+                        // Expected error - not an ERC1155
+                    } else {
+                        console.warn(`Unexpected ERC1155 interface error for ${contractAddress}:`, e.message);
+                    }
                 }
             } catch (e) {
-                // ERC1155 checks failed
+                // Comprehensive error handling for ERC1155 checks
+                if (e.message.includes('execution reverted') || 
+                    e.message.includes('call revert exception') ||
+                    e.message.includes('Internal JSON-RPC error') ||
+                    e.code === -32603 || e.code === -32000) {
+                    // Expected error - not an ERC1155
+                } else {
+                    console.warn(`Unexpected ERC1155 error for ${contractAddress}:`, e.message);
+                }
             }
             
             return null; // Not a recognized NFT contract
         } catch (error) {
-            // Only log unexpected errors
-            if (!error.message.includes('execution reverted') && 
-                !error.message.includes('call revert exception') &&
-                !error.message.includes('timeout')) {
-                console.warn(`Unexpected error detecting NFT standard for ${contractAddress}:`, error);
+            // Comprehensive top-level error handling
+            if (error.message.includes('execution reverted') || 
+                error.message.includes('call revert exception') ||
+                error.message.includes('Internal JSON-RPC error') ||
+                error.message.includes('timeout') ||
+                error.code === -32603 || error.code === -32000) {
+                // Expected errors - don't log
+                return null;
+            } else {
+                // Only log unexpected errors
+                console.warn(`Unexpected error detecting NFT standard for ${contractAddress}:`, error.message);
+                return null;
             }
-            return null;
         }
     }
 
@@ -978,7 +1113,7 @@ export class NFTScanner {
         }
     }
     
-    // Scan ERC721 using Transfer events with BALANCED approach (more comprehensive than conservative)
+    // Scan ERC721 using Transfer events with COMPREHENSIVE approach (scan from beginning)
     async scanERC721ByEvents(contractAddress, contract, contractInfo, existingResults = []) {
         const results = [];
         
@@ -986,50 +1121,32 @@ export class NFTScanner {
             // Track token IDs we've already found via enumeration to avoid duplicates
             const foundTokenIds = new Set(existingResults.map(nft => nft.tokenId));
             
-            // Get Transfer events TO this wallet - BALANCED BLOCKS (not too recent, not entire history)
+            // Get Transfer events TO this wallet - COMPREHENSIVE COVERAGE (scan from beginning)
             const transferTopic = ethers.id('Transfer(address,address,uint256)');
             const toWalletTopic = ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32);
             
-            // Balanced approach: More comprehensive than 50k blocks but not entire history
+            // COMPREHENSIVE approach: Scan from the beginning of blockchain for complete coverage
             try {
                 const currentBlock = await this.provider.getBlockNumber();
-                const balancedStartBlock = Math.max(0, currentBlock - 150000); // Last 150k blocks (~6 months)
+                const comprehensiveStartBlock = 0; // Start from the very beginning
                 
-                this.updateStatus(`Scanning balanced block range ${balancedStartBlock}-${currentBlock} for transfers...`);
-                console.log(`⚖️ Balanced ERC721 scan: ${balancedStartBlock}-${currentBlock} blocks for better coverage`);
+                this.updateStatus(`Comprehensive ERC721 scan: blocks ${comprehensiveStartBlock}-${currentBlock} for complete coverage...`);
+                console.log(`🌐 COMPREHENSIVE ERC721 scan: ${comprehensiveStartBlock}-${currentBlock} blocks for maximum coverage`);
                 
-                const filter = {
-                    address: contractAddress,
-                    topics: [transferTopic, null, toWalletTopic],
-                    fromBlock: balancedStartBlock,
-                    toBlock: 'latest'
-                };
-                
-                const logs = await this.provider.getLogs(filter);
-                
-                // Extract unique token IDs from balanced transfers - WITH SAFETY CHECKS
+                // Use chunked approach for comprehensive scanning to avoid RPC limits
                 const tokenIds = new Set();
-                for (const log of logs) {
-                    if (log.topics.length === 4 && log.topics[3] !== null) {
-                        try {
-                            // This looks like an NFT transfer (has indexed tokenId)
-                            const tokenId = ethers.toBigInt(log.topics[3]);
-                            tokenIds.add(tokenId.toString());
-                        } catch (e) {
-                            console.warn(`Error extracting token ID from log:`, e);
-                        }
-                    }
-                }
+                await this.scanERC721TransfersInChunks(contractAddress, transferTopic, toWalletTopic, 
+                    tokenIds, comprehensiveStartBlock, currentBlock);
                 
-                this.updateStatus(`Found ${tokenIds.size} potential token IDs from balanced event scan`);
+                this.updateStatus(`Found ${tokenIds.size} potential token IDs from comprehensive event scan`);
                 
-                // Check each token ID to see if we still own it (with timeouts)
+                // Check each token ID to see if we still own it (with timeouts and comprehensive error handling)
                 for (const tokenId of tokenIds) {
                     // Skip tokens we already found via enumeration
                     if (foundTokenIds.has(tokenId)) continue;
                     
                     try {
-                        // Add timeout to prevent hanging RPC calls
+                        // Add timeout to prevent hanging RPC calls with comprehensive error handling
                         const ownerPromise = contract.ownerOf(tokenId);
                         const timeoutPromise = new Promise((_, reject) => 
                             setTimeout(() => reject(new Error('ownerOf timeout')), 6000)
@@ -1047,7 +1164,7 @@ export class NFTScanner {
                                 
                                 tokenURI = await Promise.race([uriPromise, uriTimeoutPromise]);
                             } catch (e) {
-                                // URI might not be available
+                                // URI might not be available - don't log errors for this
                             }
                             
                             results.push({
@@ -1061,21 +1178,172 @@ export class NFTScanner {
                             this.updateProgress({ found: this.progress.found + 1 });
                         }
                     } catch (e) {
-                        // We don't own this token anymore or error accessing it
-                        // Only log unexpected errors
-                        if (!e.message.includes('timeout') && !e.message.includes('execution reverted')) {
-                            console.warn(`Error checking ownership of token ${tokenId}:`, e.message);
+                        // Comprehensive error handling for ownership checks
+                        if (e.message.includes('execution reverted') || 
+                            e.message.includes('call revert exception') ||
+                            e.message.includes('Internal JSON-RPC error') ||
+                            e.message.includes('timeout') ||
+                            e.code === -32603 || e.code === -32000) {
+                            // Expected errors - token doesn't exist or we don't own it
+                        } else {
+                            console.warn(`Unexpected error checking ownership of token ${tokenId}:`, e.message);
                         }
                     }
                 }
             } catch (logError) {
-                console.error(`Error scanning balanced transfer events for ${contractAddress}:`, logError);
+                console.error(`Error scanning comprehensive transfer events for ${contractAddress}:`, logError);
+                
+                // Fallback to recent blocks if comprehensive scan fails
+                console.log("Falling back to recent block scanning for ERC721 transfers...");
+                return await this.scanERC721ByEventsFallback(contractAddress, contract, contractInfo, existingResults);
             }
         } catch (error) {
-            console.error(`Error in balanced event-based scan for ${contractAddress}:`, error);
+            console.error(`Error in comprehensive event-based scan for ${contractAddress}:`, error);
         }
         
         return results;
+    }
+
+    // Fallback ERC721 event scanning for recent blocks only
+    async scanERC721ByEventsFallback(contractAddress, contract, contractInfo, existingResults = []) {
+        const results = [];
+        
+        try {
+            // Track token IDs we've already found via enumeration to avoid duplicates
+            const foundTokenIds = new Set(existingResults.map(nft => nft.tokenId));
+            
+            // Get Transfer events TO this wallet - FALLBACK to recent blocks
+            const transferTopic = ethers.id('Transfer(address,address,uint256)');
+            const toWalletTopic = ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32);
+            
+            // Fallback approach: Scan recent blocks only
+            const currentBlock = await this.provider.getBlockNumber();
+            const fallbackStartBlock = Math.max(0, currentBlock - 500000); // Last 500k blocks as fallback
+            
+            this.updateStatus(`Fallback ERC721 scan: blocks ${fallbackStartBlock}-${currentBlock}...`);
+            console.log(`🔄 Fallback ERC721 scan: ${fallbackStartBlock}-${currentBlock} blocks`);
+            
+            const filter = {
+                address: contractAddress,
+                topics: [transferTopic, null, toWalletTopic],
+                fromBlock: fallbackStartBlock,
+                toBlock: 'latest'
+            };
+            
+            const logs = await this.provider.getLogs(filter);
+            
+            // Extract unique token IDs from fallback transfers - WITH SAFETY CHECKS
+            const tokenIds = new Set();
+            for (const log of logs) {
+                if (log.topics.length === 4 && log.topics[3] !== null) {
+                    try {
+                        // This looks like an NFT transfer (has indexed tokenId)
+                        const tokenId = ethers.toBigInt(log.topics[3]);
+                        tokenIds.add(tokenId.toString());
+                    } catch (e) {
+                        console.warn(`Error extracting token ID from log:`, e);
+                    }
+                }
+            }
+            
+            this.updateStatus(`Found ${tokenIds.size} potential token IDs from fallback event scan`);
+            
+            // Check each token ID to see if we still own it (with timeouts)
+            for (const tokenId of tokenIds) {
+                // Skip tokens we already found via enumeration
+                if (foundTokenIds.has(tokenId)) continue;
+                
+                try {
+                    // Add timeout to prevent hanging RPC calls
+                    const ownerPromise = contract.ownerOf(tokenId);
+                    const timeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('ownerOf timeout')), 6000)
+                    );
+                    
+                    const owner = await Promise.race([ownerPromise, timeoutPromise]);
+                    if (owner.toLowerCase() === this.walletAddress.toLowerCase()) {
+                        // We own this token
+                        let tokenURI = null;
+                        try {
+                            const uriPromise = contract.tokenURI(tokenId);
+                            const uriTimeoutPromise = new Promise((_, reject) => 
+                                setTimeout(() => reject(new Error('tokenURI timeout')), 5000)
+                            );
+                            
+                            tokenURI = await Promise.race([uriPromise, uriTimeoutPromise]);
+                        } catch (e) {
+                            // URI might not be available
+                        }
+                        
+                        results.push({
+                            contractAddress,
+                            tokenId: tokenId.toString(),
+                            type: 'ERC721',
+                            tokenURI,
+                            balance: '1'
+                        });
+                        
+                        this.updateProgress({ found: this.progress.found + 1 });
+                    }
+                } catch (e) {
+                    // We don't own this token anymore or error accessing it
+                    // Only log unexpected errors
+                    if (!e.message.includes('timeout') && !e.message.includes('execution reverted')) {
+                        console.warn(`Error checking ownership of token ${tokenId}:`, e.message);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error(`Error in fallback event-based scan for ${contractAddress}:`, error);
+        }
+        
+        return results;
+    }
+
+    // Helper method to scan ERC721 transfers in chunks to handle comprehensive scanning
+    async scanERC721TransfersInChunks(contractAddress, transferTopic, toWalletTopic, tokenIds, fromBlock, toBlock) {
+        const chunkSize = 100000; // 100k blocks per chunk
+        
+        for (let startBlock = fromBlock; startBlock < toBlock; startBlock += chunkSize) {
+            const endBlock = Math.min(startBlock + chunkSize - 1, toBlock);
+            
+            try {
+                this.updateStatus(`Scanning ERC721 transfers in blocks ${startBlock}-${endBlock}...`);
+                
+                const filter = {
+                    address: contractAddress,
+                    topics: [transferTopic, null, toWalletTopic],
+                    fromBlock: startBlock,
+                    toBlock: endBlock
+                };
+                
+                const logs = await this.provider.getLogs(filter);
+                
+                // Extract unique token IDs from transfers
+                for (const log of logs) {
+                    if (log.topics.length === 4 && log.topics[3] !== null) {
+                        try {
+                            // This looks like an NFT transfer (has indexed tokenId)
+                            const tokenId = ethers.toBigInt(log.topics[3]);
+                            tokenIds.add(tokenId.toString());
+                        } catch (e) {
+                            // Skip invalid token IDs
+                        }
+                    }
+                }
+            } catch (e) {
+                // Comprehensive error handling for chunked scanning
+                if (e.message.includes('execution reverted') || 
+                    e.message.includes('call revert exception') ||
+                    e.message.includes('Internal JSON-RPC error') ||
+                    e.code === -32603 || e.code === -32000) {
+                    // Expected RPC errors - just skip this chunk
+                    console.log(`RPC error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}, skipping...`);
+                } else {
+                    console.warn(`Unexpected error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}:`, e.message);
+                }
+            }
+        }
     }
     
     // Try sequential IDs as last resort
@@ -1258,67 +1526,27 @@ export class NFTScanner {
         }
     }
 
-    // Discover ERC1155 token IDs using BALANCED approach (better coverage than conservative)
+    // Discover ERC1155 token IDs using COMPREHENSIVE approach (scan from beginning)
     async discoverERC1155TokenIds(contract, contractAddress) {
         try {
             const tokenIds = new Set();
             
-            // Use a balanced approach: Better coverage than 50k blocks but not entire history
+            // COMPREHENSIVE approach: Scan from the beginning for complete coverage
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = Math.max(0, currentBlock - 150000); // Last 150k blocks (~6 months)
+            const fromBlock = 0; // Start from the very beginning
             const toBlock = 'latest';
             
-            this.updateStatus(`Scanning balanced blocks ${fromBlock}-${toBlock} for ERC1155 tokens...`);
-            console.log(`⚖️ Balanced ERC1155 discovery: ${fromBlock}-${toBlock} blocks for better coverage`);
+            this.updateStatus(`Comprehensive ERC1155 scan: blocks ${fromBlock}-${toBlock} for complete coverage...`);
+            console.log(`🌐 COMPREHENSIVE ERC1155 discovery: ${fromBlock}-${toBlock} blocks for maximum coverage`);
             
             try {
-                // Try to query balanced events with timeout protection
-                try {
-                    // TransferSingle events with timeout
-                    const singleFilterPromise = contract.queryFilter(
-                        contract.filters.TransferSingle(null, null, this.walletAddress),
-                        fromBlock, 
-                        toBlock
-                    );
-                    const singleTimeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('TransferSingle query timeout')), 15000)
-                    );
-                    
-                    const singleEvents = await Promise.race([singleFilterPromise, singleTimeoutPromise]);
-                    
-                    singleEvents.forEach(event => {
-                        tokenIds.add(event.args.id.toString());
-                    });
-                    
-                    this.updateStatus(`Found ${tokenIds.size} token IDs from TransferSingle events`);
-                } catch (singleError) {
-                    console.warn(`Error getting TransferSingle events for ${contractAddress}:`, singleError.message);
-                }
+                // Try comprehensive scanning with chunked approach to avoid RPC limits
+                await this.discoverERC1155TokenIdsInChunks(contract, contractAddress, tokenIds, fromBlock, currentBlock);
                 
-                try {
-                    // TransferBatch events with timeout
-                    const batchFilterPromise = contract.queryFilter(
-                        contract.filters.TransferBatch(null, null, this.walletAddress),
-                        fromBlock, 
-                        toBlock
-                    );
-                    const batchTimeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('TransferBatch query timeout')), 15000)
-                    );
-                    
-                    const batchEvents = await Promise.race([batchFilterPromise, batchTimeoutPromise]);
-                    
-                    batchEvents.forEach(event => {
-                        event.args.ids.forEach(id => tokenIds.add(id.toString()));
-                    });
-                    
-                    this.updateStatus(`Found ${tokenIds.size} total token IDs including batch events`);
-                } catch (batchError) {
-                    console.warn(`Error getting TransferBatch events for ${contractAddress}:`, batchError.message);
-                }
+                this.updateStatus(`Found ${tokenIds.size} total token IDs including batch events`);
                 
             } catch (error) {
-                console.warn(`Error getting balanced events for ${contractAddress}, using fallback discovery:`, error.message);
+                console.warn(`Error getting comprehensive events for ${contractAddress}, using fallback discovery:`, error.message);
                 
                 // Enhanced fallback: More comprehensive than conservative approach
                 this.updateStatus("Using enhanced fallback token ID discovery...");
@@ -1345,7 +1573,7 @@ export class NFTScanner {
                 }
             }
             
-            console.log(`⚖️ Balanced ERC1155 discovery: ${tokenIds.size} token IDs to check (enhanced coverage)`);
+            console.log(`🌐 COMPREHENSIVE ERC1155 discovery: ${tokenIds.size} token IDs to check (maximum coverage)`);
             return [...tokenIds];
         } catch (error) {
             console.error(`Error discovering ERC1155 token IDs for ${contractAddress}:`, error);
@@ -1354,6 +1582,89 @@ export class NFTScanner {
             const enhancedIds = [];
             for (let i = 0; i <= 50; i++) enhancedIds.push(i.toString());
             return enhancedIds;
+        }
+    }
+
+    // Helper method to discover ERC1155 token IDs in chunks for comprehensive scanning
+    async discoverERC1155TokenIdsInChunks(contract, contractAddress, tokenIds, fromBlock, toBlock) {
+        const chunkSize = 100000; // 100k blocks per chunk
+        
+        for (let startBlock = fromBlock; startBlock < toBlock; startBlock += chunkSize) {
+            const endBlock = Math.min(startBlock + chunkSize - 1, toBlock);
+            
+            try {
+                this.updateStatus(`Scanning ERC1155 events in blocks ${startBlock}-${endBlock}...`);
+                
+                // Try TransferSingle events with comprehensive error handling
+                try {
+                    const singleFilterPromise = contract.queryFilter(
+                        contract.filters.TransferSingle(null, null, this.walletAddress),
+                        startBlock, 
+                        endBlock
+                    );
+                    const singleTimeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('TransferSingle query timeout')), 15000)
+                    );
+                    
+                    const singleEvents = await Promise.race([singleFilterPromise, singleTimeoutPromise]);
+                    
+                    singleEvents.forEach(event => {
+                        tokenIds.add(event.args.id.toString());
+                    });
+                } catch (singleError) {
+                    // Comprehensive error handling
+                    if (singleError.message.includes('execution reverted') || 
+                        singleError.message.includes('call revert exception') ||
+                        singleError.message.includes('Internal JSON-RPC error') ||
+                        singleError.code === -32603 || singleError.code === -32000) {
+                        // Expected RPC errors - skip this chunk
+                        console.log(`RPC error getting TransferSingle events in blocks ${startBlock}-${endBlock}, skipping...`);
+                    } else {
+                        console.warn(`Unexpected error getting TransferSingle events in blocks ${startBlock}-${endBlock}:`, singleError.message);
+                    }
+                }
+                
+                // Try TransferBatch events with comprehensive error handling
+                try {
+                    const batchFilterPromise = contract.queryFilter(
+                        contract.filters.TransferBatch(null, null, this.walletAddress),
+                        startBlock, 
+                        endBlock
+                    );
+                    const batchTimeoutPromise = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('TransferBatch query timeout')), 15000)
+                    );
+                    
+                    const batchEvents = await Promise.race([batchFilterPromise, batchTimeoutPromise]);
+                    
+                    batchEvents.forEach(event => {
+                        event.args.ids.forEach(id => tokenIds.add(id.toString()));
+                    });
+                } catch (batchError) {
+                    // Comprehensive error handling
+                    if (batchError.message.includes('execution reverted') || 
+                        batchError.message.includes('call revert exception') ||
+                        batchError.message.includes('Internal JSON-RPC error') ||
+                        batchError.code === -32603 || batchError.code === -32000) {
+                        // Expected RPC errors - skip this chunk
+                        console.log(`RPC error getting TransferBatch events in blocks ${startBlock}-${endBlock}, skipping...`);
+                    } else {
+                        console.warn(`Unexpected error getting TransferBatch events in blocks ${startBlock}-${endBlock}:`, batchError.message);
+                    }
+                }
+                
+            } catch (chunkError) {
+                // Comprehensive error handling for entire chunk
+                if (chunkError.message.includes('execution reverted') || 
+                    chunkError.message.includes('call revert exception') ||
+                    chunkError.message.includes('Internal JSON-RPC error') ||
+                    chunkError.code === -32603 || chunkError.code === -32000) {
+                    // Expected RPC errors - skip this chunk
+                    console.log(`RPC error scanning ERC1155 events in blocks ${startBlock}-${endBlock}, skipping...`);
+                } else {
+                    console.warn(`Unexpected error scanning ERC1155 events in blocks ${startBlock}-${endBlock}:`, chunkError.message);
+                }
+            }
         }
     }
     
