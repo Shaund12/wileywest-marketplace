@@ -495,6 +495,62 @@ function ProfilePage() {
         }
     };
 
+    // Fetch contract info (name/symbol) for all unique contract addresses from discovered NFTs
+    const fetchContractInfoForNfts = async (nfts) => {
+        // Get unique contract addresses
+        const uniqueContracts = [...new Set(nfts.map(nft => nft.contractAddress))];
+        
+        console.log(`🏷️ Fetching collection names/symbols for ${uniqueContracts.length} contracts from blockchain...`);
+        setStatus(`Fetching collection info for ${uniqueContracts.length} contracts...`);
+        
+        // Fetch contract info for each unique contract in parallel
+        const contractInfoPromises = uniqueContracts.map(async (contractAddress) => {
+            // Skip if we already have this info
+            if (contractInfo[contractAddress]) {
+                return { contractAddress, info: contractInfo[contractAddress] };
+            }
+            
+            try {
+                // Determine contract type from NFTs
+                const nftOfThisContract = nfts.find(nft => nft.contractAddress === contractAddress);
+                const contractType = nftOfThisContract?.type || 'ERC721';
+                
+                const info = await getContractInfo(contractAddress, contractType);
+                console.log(`✅ Fetched info for ${contractAddress}: ${info.name} (${info.symbol})`);
+                return { contractAddress, info };
+            } catch (error) {
+                console.warn(`⚠️ Failed to fetch contract info for ${contractAddress}:`, error);
+                // Return fallback info
+                const fallbackInfo = {
+                    name: `Collection ${contractAddress.slice(0, 6)}...${contractAddress.slice(-4)}`,
+                    symbol: ''
+                };
+                return { contractAddress, info: fallbackInfo };
+            }
+        });
+        
+        try {
+            // Wait for all contract info to be fetched
+            const results = await Promise.all(contractInfoPromises);
+            
+            // Update contract info state with all results
+            const newContractInfo = {};
+            results.forEach(({ contractAddress, info }) => {
+                newContractInfo[contractAddress] = info;
+            });
+            
+            setContractInfo(prev => ({
+                ...prev,
+                ...newContractInfo
+            }));
+            
+            console.log(`🏷️ Successfully fetched collection info for ${results.length} contracts`);
+            
+        } catch (error) {
+            console.error("Error fetching contract info batch:", error);
+        }
+    };
+
     // Get contract name and symbol with better error handling
     const getContractInfo = async (contractAddress, contractType) => {
         // Skip if we already have this info
@@ -826,6 +882,9 @@ function ProfilePage() {
                     setUserNfts(cachedProfile.nfts);
                     setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache`);
 
+                    // Fetch collection names/symbols from blockchain for cached NFTs
+                    await fetchContractInfoForNfts(cachedProfile.nfts);
+
                     // Add this line to fetch metadata for cached NFTs immediately
                     console.log("🔄 Fetching metadata for cached NFTs...");
                     batchFetchMetadata(cachedProfile.nfts);
@@ -917,6 +976,9 @@ function ProfilePage() {
                 } else {
                     setStatus(`✅ Found ${foundNfts.length} NFTs in your wallet`);
                 }
+                
+                // Fetch collection names/symbols from blockchain for all discovered contracts
+                await fetchContractInfoForNfts(foundNfts);
                 
                 // Cache the fresh data
                 if (supabaseConnected && cacheProfileData) {
