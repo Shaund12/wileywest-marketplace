@@ -689,11 +689,25 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     }
                 }
                 
+                // Calculate listing volume in native tokens first
+                let currentListingVolumeNative = 0;
+                const activeListings = listings.filter(listing => 
+                    listing.active && !canceledListings.has(listing.id.toString())
+                );
+                
+                for (const listing of activeListings) {
+                    try {
+                        const nativeValue = parseFloat(ethers.formatEther(listing.pricePerUnit));
+                        currentListingVolumeNative += nativeValue;
+                    } catch (error) {
+                        console.warn("Error parsing listing price:", error);
+                    }
+                }
+
                 // Advanced analytics calculations
                 const avgPrice = priceCount > 0 ? priceSum / priceCount : 0;
                 const marketCap = totalNativeVolume;
                 const liquidityRatio = currentListingVolumeNative / (totalNativeVolume || 1);
-                
                 // Market velocity calculations
                 const marketVelocity24h = volume7d > 0 ? (volume24h / (volume7d / 7)) : 0;
                 const marketVelocity7d = volume30d > 0 ? (volume7d / (volume30d / 30)) : 0;
@@ -708,21 +722,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const liquidityScore = Math.min(liquidityRatio * 25, 25);
                 const diversityScore = Math.min(uniqueBuyers.size * 5, 25);
                 const marketHealthScore = volumeScore + activityScore + liquidityScore + diversityScore;
-                
-                // Calculate listing volume in native tokens
-                let currentListingVolumeNative = 0;
-                const activeListings = listings.filter(listing => 
-                    listing.active && !canceledListings.has(listing.id.toString())
-                );
-                
-                for (const listing of activeListings) {
-                    try {
-                        const nativeValue = parseFloat(ethers.formatEther(listing.pricePerUnit));
-                        currentListingVolumeNative += nativeValue;
-                    } catch (error) {
-                        console.warn("Error parsing listing price:", error);
-                    }
-                }
                 
                 const transactionHistory = salesHistory.map(sale => ({
                     ...sale,
@@ -1041,6 +1040,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // Test network connectivity first
             try {
                 await provider.getNetwork();
+                
+                // Check if we should use mock data for testing (environment flag)
+                const useMockData = import.meta.env.VITE_USE_MOCK_DATA === 'true';
+                if (useMockData) {
+                    console.log("🧪 Using mock data for testing collection names (VITE_USE_MOCK_DATA=true)");
+                    throw new Error("Using mock data for testing");
+                }
             } catch (networkError) {
                 console.warn("Network connectivity issue:", networkError.message);
                 
@@ -1050,7 +1056,184 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     setTimeout(() => setStatus(''), 3000);
                     return;
                 } else {
-                    setStatus("Network connectivity issue - no listings available");
+                    // For testing: Add mock listings when network is not available
+                    console.log("Network issue - adding mock listings for testing collection names");
+                    
+                    const mockListings = [
+                        {
+                            id: 1,
+                            seller: "0x1234567890123456789012345678901234567890",
+                            nftContract: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+                            tokenId: "1",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.1").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/1/300/300",
+                            imageUrl: "https://picsum.photos/seed/1/300/300",
+                            name: "Cosmic Dream #1",
+                            title: "Cosmic Dream #1",
+                            description: "A beautiful cosmic-themed digital artwork featuring swirling galaxies and stars",
+                            collectionName: "Cosmic Dreams Collection",
+                            metadata: {
+                                name: "Cosmic Dream #1",
+                                description: "A beautiful cosmic-themed digital artwork featuring swirling galaxies and stars",
+                                image: "https://picsum.photos/seed/1/300/300",
+                                collection: {
+                                    name: "Cosmic Dreams Collection",
+                                    description: "A collection of cosmic-themed digital artworks exploring the beauty of space",
+                                    external_link: "https://cosmicdreams.example.com",
+                                    image: "https://picsum.photos/seed/collection1/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 2,
+                            seller: "0x2345678901234567890123456789012345678901",
+                            nftContract: "0xbcdefabcdefabcdefabcdefabcdefabcdefabcde",
+                            tokenId: "5",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.25").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/2/300/300",
+                            imageUrl: "https://picsum.photos/seed/2/300/300",
+                            name: "Digital Warrior #5",
+                            title: "Digital Warrior #5",
+                            description: "A powerful warrior character from the digital realm",
+                            collectionName: "Digital Warriors",
+                            metadata: {
+                                name: "Digital Warrior #5",
+                                description: "A powerful warrior character from the digital realm",
+                                image: "https://picsum.photos/seed/2/300/300",
+                                collection: {
+                                    name: "Digital Warriors",
+                                    description: "Elite warrior characters ready for battle in the metaverse",
+                                    external_link: "https://digitalwarriors.example.com",
+                                    image: "https://picsum.photos/seed/collection2/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 3,
+                            seller: "0x3456789012345678901234567890123456789012",
+                            nftContract: "0xcdefabcdefabcdefabcdefabcdefabcdefabcdef",
+                            tokenId: "10",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.05").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/3/300/300",
+                            imageUrl: "https://picsum.photos/seed/3/300/300",
+                            name: "Abstract Expression #10",
+                            title: "Abstract Expression #10",
+                            description: "A vibrant abstract artwork exploring color and form",
+                            collectionName: "Abstract Expressions",
+                            metadata: {
+                                name: "Abstract Expression #10",
+                                description: "A vibrant abstract artwork exploring color and form",
+                                image: "https://picsum.photos/seed/3/300/300",
+                                collection: {
+                                    name: "Abstract Expressions",
+                                    description: "Bold abstract artworks that push the boundaries of digital creativity",
+                                    external_link: "https://abstractexpressions.example.com",
+                                    image: "https://picsum.photos/seed/collection3/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 4,
+                            seller: "0x4567890123456789012345678901234567890123",
+                            nftContract: "0xdefabcdefabcdefabcdefabcdefabcdefabcdefa",
+                            tokenId: "15",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.75").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/4/300/300",
+                            imageUrl: "https://picsum.photos/seed/4/300/300",
+                            name: "Cyber Punk Avatar #15",
+                            title: "Cyber Punk Avatar #15",
+                            description: "A futuristic cyberpunk character with neon aesthetics",
+                            collectionName: "Cyber Punk Avatars",
+                            metadata: {
+                                name: "Cyber Punk Avatar #15",
+                                description: "A futuristic cyberpunk character with neon aesthetics",
+                                image: "https://picsum.photos/seed/4/300/300",
+                                collection: {
+                                    name: "Cyber Punk Avatars",
+                                    description: "Futuristic avatars from the cyberpunk universe",
+                                    external_link: "https://cyberpunkavatars.example.com",
+                                    image: "https://picsum.photos/seed/collection4/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 5,
+                            seller: "0x5678901234567890123456789012345678901234",
+                            nftContract: "0xefabcdefabcdefabcdefabcdefabcdefabcdefab",
+                            tokenId: "3",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.15").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/5/300/300",
+                            imageUrl: "https://picsum.photos/seed/5/300/300",
+                            name: "Nature Spirit #3",
+                            title: "Nature Spirit #3",
+                            description: "A mystical nature spirit embodying the essence of the forest",
+                            collectionName: "Nature Spirits",
+                            metadata: {
+                                name: "Nature Spirit #3",
+                                description: "A mystical nature spirit embodying the essence of the forest",
+                                image: "https://picsum.photos/seed/5/300/300",
+                                collection: {
+                                    name: "Nature Spirits",
+                                    description: "Mystical beings that connect the digital and natural worlds",
+                                    external_link: "https://naturespirits.example.com",
+                                    image: "https://picsum.photos/seed/collection5/300/300"
+                                }
+                            }
+                        },
+                        {
+                            id: 6,
+                            seller: "0x6789012345678901234567890123456789012345",
+                            nftContract: "0xfabcdefabcdefabcdefabcdefabcdefabcdefabc",
+                            tokenId: "7",
+                            quantity: "1",
+                            pricePerUnit: ethers.parseEther("0.3").toString(),
+                            paymentToken: ethers.ZeroAddress,
+                            isERC1155: false,
+                            active: true,
+                            image: "https://picsum.photos/seed/6/300/300",
+                            imageUrl: "https://picsum.photos/seed/6/300/300",
+                            name: "Pixel Art Masterpiece #7",
+                            title: "Pixel Art Masterpiece #7",
+                            description: "A retro-style pixel art creation with modern appeal",
+                            collectionName: "Pixel Art Masterpieces",
+                            metadata: {
+                                name: "Pixel Art Masterpiece #7",
+                                description: "A retro-style pixel art creation with modern appeal",
+                                image: "https://picsum.photos/seed/6/300/300",
+                                collection: {
+                                    name: "Pixel Art Masterpieces",
+                                    description: "Nostalgic pixel art that brings back the golden age of gaming",
+                                    external_link: "https://pixelartmasterpieces.example.com",
+                                    image: "https://picsum.photos/seed/collection6/300/300"
+                                }
+                            }
+                        }
+                    ];
+                    
+                    setListings(mockListings);
+                    setHotListings(mockListings.slice(0, 2));
+                    setStatus("Showing mock listings for testing collection names");
+                    setTimeout(() => setStatus(''), 3000);
                     return;
                 }
             }
@@ -1093,12 +1276,18 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             provider
                         );
 
-                        // Try to get collection name from contract first
+                        // Try to get collection name from contract first with enhanced error handling
                         try {
-                            collectionName = await nftContract.name();
-                            console.log(`Collection name from contract for ${listing.nftContract}: ${collectionName}`);
+                            const contractName = await nftContract.name();
+                            if (contractName && contractName.trim() !== '') {
+                                collectionName = contractName.trim();
+                                console.log(`✅ Collection name from contract for ${listing.nftContract}: ${collectionName}`);
+                            } else {
+                                console.warn(`⚠️ Contract ${listing.nftContract} returned empty name`);
+                            }
                         } catch (nameError) {
-                            console.warn(`Failed to get contract name for ${listing.nftContract}:`, nameError.message);
+                            console.warn(`❌ Failed to get contract name for ${listing.nftContract}:`, nameError.message);
+                            // Continue with fallback resolution below
                         }
 
                         // Get token URI
@@ -1125,6 +1314,38 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         console.log(`Metadata for listing ${i}:`, metadata);
 
                         if (metadata.name) name = metadata.name;
+
+                        // Enhanced collection name resolution with multiple fallbacks
+                        if (!collectionName || collectionName.includes('Collection 0x')) {
+                            // Try metadata.collection.name first
+                            if (metadata?.collection?.name && metadata.collection.name.trim() !== '') {
+                                collectionName = metadata.collection.name.trim();
+                                console.log(`📋 Using collection name from metadata: ${collectionName}`);
+                            } 
+                            // Try metadata.name if it doesn't look like a token name
+                            else if (metadata?.name && 
+                                     !metadata.name.includes('#') && 
+                                     !metadata.name.toLowerCase().includes('token') &&
+                                     !metadata.name.toLowerCase().includes('nft') &&
+                                     metadata.name.trim() !== '') {
+                                collectionName = metadata.name.trim();
+                                console.log(`📝 Using NFT name as collection name: ${collectionName}`);
+                            }
+                            // Try to extract from description
+                            else if (metadata?.description && metadata.description.trim() !== '') {
+                                const description = metadata.description.trim();
+                                const words = description.split(' ');
+                                if (words.length >= 2 && words.length <= 4) {
+                                    // If description is short enough, it might be a collection name
+                                    collectionName = description;
+                                    console.log(`📖 Using description as collection name: ${collectionName}`);
+                                } else {
+                                    // Extract first few words
+                                    collectionName = words.slice(0, 3).join(' ');
+                                    console.log(`🔤 Using first words of description: ${collectionName}`);
+                                }
+                            }
+                        }
 
                         if (metadata.image) {
                             if (metadata.image.startsWith('ipfs://')) {
@@ -1157,23 +1378,30 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         name,
                         title: name,
                         description: `Token ID: ${listing.tokenId?.toString() || '0'}`,
-
-                        // Add the full metadata object - CRUCIAL!
-                        // ListingCard is likely expecting this structure
-                        metadata: {
-                            ...metadata,
-                            image: image, // Ensure the IPFS URL is resolved in the metadata object too
-                            collection: {
-                                name: collectionName || metadata?.collection?.name || metadata?.name || `Collection ${listing.nftContract.slice(0, 6)}...`,
-                                description: metadata?.collection?.description || '',
-                                external_link: metadata?.collection?.external_link || metadata?.external_url || '',
-                                image: metadata?.collection?.image || image
-                            }
-                        },
-
-                        // Add direct collection name property for easy access
-                        collectionName: collectionName || metadata?.collection?.name || metadata?.name || `Collection ${listing.nftContract.slice(0, 6)}...`
                     };
+
+                    // Enhanced final collection name resolution with better fallbacks
+                    const finalCollectionName = collectionName || 
+                                               metadata?.collection?.name || 
+                                               (metadata?.name && !metadata.name.includes('#') ? metadata.name : null) ||
+                                               `${listing.nftContract.slice(0, 8)}...${listing.nftContract.slice(-6)}`;
+                    
+                    console.log(`🏷️ Final collection name for ${listing.nftContract}: "${finalCollectionName}"`);
+
+                    // Add enhanced metadata and collection information
+                    sanitizedListing.metadata = {
+                        ...metadata,
+                        image: image, // Ensure the IPFS URL is resolved in the metadata object too
+                        collection: {
+                            name: finalCollectionName,
+                            description: metadata?.collection?.description || metadata?.description || '',
+                            external_link: metadata?.collection?.external_link || metadata?.external_url || '',
+                            image: metadata?.collection?.image || image
+                        }
+                    };
+
+                    // Add direct collection name property for easy access
+                    sanitizedListing.collectionName = finalCollectionName;
 
                     console.log("Sanitized listing with image:", sanitizedListing);
                     res.push(sanitizedListing);

@@ -87,6 +87,15 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
             <div className="listing-details">
                 <div className="listing-info">
                     <h3>{nftName}</h3>
+                    <div className="collection-name">
+                        {(listing.collectionName && listing.collectionName.trim() !== '' && !listing.collectionName.includes('Collection 0x')) ? 
+                         listing.collectionName.trim() :
+                         (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') ?
+                         listing.metadata.collection.name.trim() :
+                         (listing.metadata?.name && listing.metadata.name.trim() !== '' && !listing.metadata.name.includes('#') && !listing.metadata.name.toLowerCase().includes('token') && !listing.metadata.name.toLowerCase().includes('nft')) ?
+                         listing.metadata.name.trim() :
+                         `${listing.nftContract.slice(0, 8)}...${listing.nftContract.slice(-6)}`}
+                    </div>
                     <div className="listing-contract small">{listing.nftContract.slice(0, 6)}...{listing.nftContract.slice(-4)}</div>
                 </div>
 

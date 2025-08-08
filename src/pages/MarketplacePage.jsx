@@ -169,23 +169,33 @@ function MarketplacePage() {
                     for (const listing of activeListings) {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
-                            // Enhanced collection name resolution with multiple fallbacks
-                            let collectionName = `Collection ${collectionAddress.slice(0, 6)}...`;
+                            // Enhanced collection name resolution with multiple fallbacks and validation
+                            let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
                             let collectionDescription = '';
                             let collectionImage = listing.image || listing.imageUrl;
                             let collectionWebsite = '';
                             
-                            // Priority order for collection name:
+                            // Priority order for collection name with validation:
                             // 1. Direct collectionName property (from contract name())
                             // 2. metadata.collection.name 
                             // 3. metadata.name (if it doesn't look like a token name)
-                            // 4. Fallback to address truncation
-                            if (listing.collectionName) {
-                                collectionName = listing.collectionName;
-                            } else if (listing.metadata?.collection?.name) {
-                                collectionName = listing.metadata.collection.name;
-                            } else if (listing.metadata?.name && !listing.metadata.name.includes('#') && !listing.metadata.name.toLowerCase().includes('token')) {
-                                collectionName = listing.metadata.name;
+                            // 4. Enhanced fallback to better formatted address
+                            if (listing.collectionName && listing.collectionName.trim() !== '' && 
+                                !listing.collectionName.includes('Collection 0x')) {
+                                collectionName = listing.collectionName.trim();
+                                console.log(`✅ Using direct collection name: ${collectionName}`);
+                            } else if (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') {
+                                collectionName = listing.metadata.collection.name.trim();
+                                console.log(`📋 Using metadata collection name: ${collectionName}`);
+                            } else if (listing.metadata?.name && 
+                                       listing.metadata.name.trim() !== '' &&
+                                       !listing.metadata.name.includes('#') && 
+                                       !listing.metadata.name.toLowerCase().includes('token') &&
+                                       !listing.metadata.name.toLowerCase().includes('nft')) {
+                                collectionName = listing.metadata.name.trim();
+                                console.log(`📝 Using NFT name as collection: ${collectionName}`);
+                            } else {
+                                console.log(`⚠️ Using fallback address for collection: ${collectionName}`);
                             }
 
                             // Extract additional collection information
@@ -311,13 +321,18 @@ function MarketplacePage() {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
                             // Use the same enhanced collection name resolution in fallback
-                            let collectionName = `Collection ${collectionAddress.slice(0, 6)}...`;
-                            if (listing.collectionName) {
-                                collectionName = listing.collectionName;
-                            } else if (listing.metadata?.collection?.name) {
-                                collectionName = listing.metadata.collection.name;
-                            } else if (listing.metadata?.name && !listing.metadata.name.includes('#')) {
-                                collectionName = listing.metadata.name;
+                            let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
+                            if (listing.collectionName && listing.collectionName.trim() !== '' && 
+                                !listing.collectionName.includes('Collection 0x')) {
+                                collectionName = listing.collectionName.trim();
+                            } else if (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') {
+                                collectionName = listing.metadata.collection.name.trim();
+                            } else if (listing.metadata?.name && 
+                                       listing.metadata.name.trim() !== '' &&
+                                       !listing.metadata.name.includes('#') && 
+                                       !listing.metadata.name.toLowerCase().includes('token') &&
+                                       !listing.metadata.name.toLowerCase().includes('nft')) {
+                                collectionName = listing.metadata.name.trim();
                             }
 
                             collectionMap[collectionAddress] = {
@@ -556,7 +571,13 @@ function MarketplacePage() {
                             <div className="featured-details">
                                 <h3>{featuredNFT.name || featuredNFT.metadata?.name || `NFT #${featuredNFT.tokenId}`}</h3>
                                 <p className="featured-collection">
-                                    {featuredNFT.collectionName || featuredNFT.metadata?.collection?.name || `Collection ${featuredNFT.nftContract.slice(0, 6)}...`}
+                                    {(featuredNFT.collectionName && featuredNFT.collectionName.trim() !== '' && !featuredNFT.collectionName.includes('Collection 0x')) ? 
+                                     featuredNFT.collectionName.trim() :
+                                     (featuredNFT.metadata?.collection?.name && featuredNFT.metadata.collection.name.trim() !== '') ?
+                                     featuredNFT.metadata.collection.name.trim() :
+                                     (featuredNFT.metadata?.name && featuredNFT.metadata.name.trim() !== '' && !featuredNFT.metadata.name.includes('#') && !featuredNFT.metadata.name.toLowerCase().includes('token') && !featuredNFT.metadata.name.toLowerCase().includes('nft')) ?
+                                     featuredNFT.metadata.name.trim() :
+                                     `${featuredNFT.nftContract.slice(0, 8)}...${featuredNFT.nftContract.slice(-6)}`}
                                 </p>
                                 {featuredNFT.metadata?.collection?.description && (
                                     <p className="featured-description">

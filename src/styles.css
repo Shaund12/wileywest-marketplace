@@ -576,6 +576,21 @@ body {
   color: var(--text-light);
 }
 
+.collection-name {
+  font-size: 0.9rem;
+  color: var(--primary);
+  font-weight: 500;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+}
+
+.collection-name::before {
+  content: "📁";
+  margin-right: 6px;
+  font-size: 0.8rem;
+}
+
 .listing-price {
   display: flex;
   align-items: baseline;
