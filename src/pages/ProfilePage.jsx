@@ -843,8 +843,10 @@ function ProfilePage() {
         setIsScanning(false);
     };
     
-    // Find ALL NFTs owned by the user with cache-first approach and throttling
-    const findAllUserNfts = async (forceRefresh = false) => {
+    // Find ALL NFTs owned by the user with cache-first approach and smart scanning
+    // NEW BEHAVIOR: Only performs background scanning when explicitly allowed and cache is stale
+    // This prevents continuous rescanning and follows best practices for when to refresh data
+    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false) => {
         if (!wallet || !provider) return;
 
         // Prevent multiple simultaneous scans (with force override option)
@@ -889,15 +891,25 @@ function ProfilePage() {
                     console.log("🔄 Fetching metadata for cached NFTs...");
                     batchFetchMetadata(cachedProfile.nfts);
 
-                    // Only schedule background update if no scan happened recently
-                    const now = Date.now();
-                    if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
-                        console.log("📅 Scheduling background blockchain scan...");
-                        setTimeout(() => {
-                            if (!scanningInProgress.current) {
-                                scanUserNftsFromBlockchain(true);
-                            }
-                        }, 5000); // Delay background scan by 5 seconds
+                    // IMPROVED: Only schedule background update if explicitly allowed and conditions are met
+                    if (allowBackgroundUpdate) {
+                        const now = Date.now();
+                        const cacheAge = now - (cachedProfile.timestamp || 0);
+                        const isStaleCache = cacheAge > (2 * 60 * 60 * 1000); // Cache older than 2 hours
+                        
+                        if (isStaleCache && now - lastScanTime.current > SCAN_THROTTLE_MS) {
+                            console.log("📅 Cache is stale, scheduling background refresh...");
+                            setTimeout(() => {
+                                if (!scanningInProgress.current) {
+                                    console.log("🔄 Running background refresh due to stale cache");
+                                    scanUserNftsFromBlockchain(true);
+                                }
+                            }, 10000); // Delay background scan by 10 seconds for stale cache
+                        } else {
+                            console.log("✅ Cache is fresh, no background scan needed");
+                        }
+                    } else {
+                        console.log("✅ Cache loaded successfully, no automatic background scan");
                     }
                     return;
                 }
@@ -1189,13 +1201,14 @@ function ProfilePage() {
     // Fetch NFTs when tab is changed to collection
     useEffect(() => {
         if (activeTab === 'collection' && wallet && !userNfts.length) {
-            findAllUserNfts();
+            // Initial load - allow background update if cache is stale
+            findAllUserNfts(false, true);
         }
     }, [activeTab, wallet]);
 
-    // Set up real-time subscriptions for profile updates with throttling
+    // Set up real-time subscriptions for profile updates with improved throttling
     const lastScanTime = useRef(0);
-    const SCAN_THROTTLE_MS = 30000; // Limit scans to once every 30 seconds
+    const SCAN_THROTTLE_MS = 2 * 60 * 1000; // Increased to 2 minutes to reduce frequency
     
     useEffect(() => {
         if (supabaseConnected && subscribeToProfiles && wallet) {
@@ -1208,11 +1221,12 @@ function ProfilePage() {
                 if (payload.new?.wallet_address === wallet.toLowerCase()) {
                     const now = Date.now();
                     
-                    // Throttle blockchain scanning to prevent excessive calls
+                    // More aggressive throttling for real-time updates to prevent continuous scanning
                     if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
                         console.log("🔄 Refreshing profile due to real-time update (throttled)");
                         lastScanTime.current = now;
-                        findAllUserNfts(true); // Force refresh
+                        // Force refresh but don't allow additional background updates
+                        findAllUserNfts(true, false);
                     } else {
                         console.log("⏳ Profile update throttled - skipping scan (too recent)");
                     }
@@ -1424,7 +1438,7 @@ function ProfilePage() {
                                 <div className="action-buttons">
                                     <button
                                         className="primary-button action-button"
-                                        onClick={() => findAllUserNfts(false)}
+                                        onClick={() => findAllUserNfts(false, true)}
                                         disabled={isLoading || isScanning}
                                     >
                                         {isScanning ? (
@@ -1443,7 +1457,7 @@ function ProfilePage() {
                                     </button>
                                     <button
                                         className="secondary-button action-button force-refresh-button"
-                                        onClick={() => findAllUserNfts(true)}
+                                        onClick={() => findAllUserNfts(true, false)}
                                         disabled={false}
                                         title="Force refresh - bypasses stuck scanning state and cache"
                                     >
@@ -1615,7 +1629,7 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true)}
+                                            onClick={() => findAllUserNfts(true, false)}
                                             disabled={isScanning}
                                         >
                                             {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
@@ -1693,7 +1707,7 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true)}
+                                            onClick={() => findAllUserNfts(true, false)}
                                             disabled={isScanning}
                                         >
                                             {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
