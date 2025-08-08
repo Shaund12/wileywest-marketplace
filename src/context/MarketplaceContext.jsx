@@ -1,8 +1,18 @@
-import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
 import { useSupabase } from './SupabaseContext';
 import { convertToUSDCValue } from '../utils/tokenUtils';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { 
+    MARKETPLACE_CONFIG,
+    standardizeBigInt,
+    normalizeNFTMetadata,
+    resolveCollectionName,
+    createContentSignature,
+    isCacheValid,
+    scopedClass
+} from '../utils/nftUtils';
 
 const MarketplaceContext = createContext();
 
@@ -20,6 +30,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const [listings, setListings] = useState([]);
     const [hotListings, setHotListings] = useState([]);
     const [status, setStatus] = useState('');
+    const [persistentStatus, setPersistentStatus] = useState(''); // For stale data warnings
+    const [statusType, setStatusType] = useState('info'); // 'info', 'warning', 'error', 'success'
     const [isInitialized, setIsInitialized] = useState(false);
     const isConnectedRef = useRef(false);
     const cacheUpdateInterval = useRef(null);
@@ -67,6 +79,29 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         mostActiveSellers: []
     });
 
+    // State for tracking loading operations to prevent race conditions
+    const [isLoading, setIsLoading] = useState(false);
+    const [lastCacheSignature, setLastCacheSignature] = useState(null);
+
+    // Enhanced status management with persistence for important messages
+    const setStatusWithType = (message, type = 'info', persistent = false) => {
+        setStatus(message);
+        setStatusType(type);
+        
+        if (persistent) {
+            setPersistentStatus(message);
+        }
+    };
+    
+    const clearStatus = () => {
+        setStatus('');
+        setStatusType('info');
+    };
+    
+    const clearPersistentStatus = () => {
+        setPersistentStatus('');
+    };
+
     // Load sales history from Supabase cache first, fallback to localStorage
     // Use a ref to prevent infinite loops from function reference changes
     const hasLoadedInitialData = useRef(false);
@@ -81,15 +116,15 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             try {
                 // Try to load from Supabase cache first
                 if (supabaseConnected && getCachedSalesHistory) {
-                    console.log("🔍 Loading sales history from Supabase cache...");
+                    debugLog("Loading sales history from Supabase cache...");
                     const cachedSales = await getCachedSalesHistory();
                     
                     if (cachedSales && cachedSales.length > 0) {
-                        console.log(`📦 Loaded ${cachedSales.length} sales from Supabase cache`);
+                        debugLog(`Loaded ${cachedSales.length} sales from Supabase cache`);
                         setSalesHistory(cachedSales);
                     } else {
                         // Fallback to localStorage if no Supabase cache
-                        console.log("No Supabase cache found, falling back to localStorage");
+                        debugLog("No Supabase cache found, falling back to localStorage");
                         loadFromLocalStorage();
                     }
                 } else {
@@ -108,7 +143,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 hasLoadedInitialData.current = true;
                 hasLoadedInitialData.supabaseState = supabaseConnected;
             } catch (error) {
-                console.error("Error loading persisted marketplace data:", error);
+                criticalError("Error loading persisted marketplace data:", error);
                 // Fallback to localStorage on any error
                 loadFromLocalStorage();
                 hasLoadedInitialData.current = true;
@@ -121,46 +156,42 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const savedSalesHistory = localStorage.getItem('marketplace_sales_history');
                 if (savedSalesHistory) {
                     const parsedHistory = JSON.parse(savedSalesHistory);
-                    console.log("Loaded persisted sales history from localStorage:", parsedHistory);
+                    debugLog("Loaded persisted sales history from localStorage:", parsedHistory.length, "transactions");
                     setSalesHistory(parsedHistory);
                 }
             } catch (error) {
-                console.error("Error loading from localStorage:", error);
+                criticalError("Error loading from localStorage:", error);
             }
         };
         
         loadPersistedData();
     }, [supabaseConnected]); // Removed getCachedSalesHistory from dependencies to prevent infinite loops
 
-    // DISABLED: Persist sales history to Supabase to prevent mass data collection
-    // Use a ref to track last cached count to prevent unnecessary Supabase calls
+    // Enhanced cache persistence with content-based invalidation
     const lastCachedSalesCount = useRef(0);
     useEffect(() => {
         if (salesHistory.length > 0) {
             try {
                 // Always persist to localStorage for immediate access
                 localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
-                console.log("Persisted sales history to localStorage:", salesHistory.length, "transactions");
+                debugLog("Persisted sales history to localStorage:", salesHistory.length, "transactions");
                 
-                // DISABLED: Auto-caching to Supabase to prevent mass data collection
-                console.log("💾 Auto-caching to Supabase DISABLED to prevent mass data collection");
-                console.log(`💡 ${salesHistory.length} sales in memory - Supabase auto-cache disabled`);
-                
-                if (false) { // Explicitly disabled - change to true only if user wants auto-caching
-                    // Only cache to Supabase if we have new sales data
-                    if (supabaseConnected && cacheSalesHistory && salesHistory.length !== lastCachedSalesCount.current) {
-                        console.log("💾 Caching sales history to Supabase...");
-                        lastCachedSalesCount.current = salesHistory.length;
-                        cacheSalesHistory(salesHistory).catch(error => {
-                            console.warn("Failed to cache sales history to Supabase:", error);
-                        });
-                    }
+                // Check if content has actually changed using signature
+                const currentSignature = createContentSignature({ salesHistory });
+                if (lastCacheSignature !== currentSignature) {
+                    setLastCacheSignature(currentSignature);
+                    debugLog("Sales history content changed, signature updated");
                 }
+                
+                // Supabase caching disabled to prevent mass data collection
+                debugLog("Auto-caching to Supabase DISABLED to prevent mass data collection");
+                debugLog(`${salesHistory.length} sales in memory - Supabase auto-cache disabled`);
+                
             } catch (error) {
-                console.error("Error persisting sales history:", error);
+                criticalError("Error persisting sales history:", error);
             }
         }
-    }, [salesHistory, supabaseConnected]); // Removed cacheSalesHistory from dependencies
+    }, [salesHistory]); // Removed supabaseConnected from dependencies as noted in original
 
     // Persist canceled listings to localStorage whenever they change
     useEffect(() => {
@@ -590,7 +621,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     };
 
     // Enhanced comprehensive marketplace statistics with detailed analytics
-    const calculateMarketplaceStats = async () => {
+    // Memoized to prevent unnecessary recalculations
+    const calculateMarketplaceStats = useCallback(async () => {
         if (!provider) return;
 
         try {
@@ -952,45 +984,68 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             });
 
         } catch (error) {
-            console.error("Error calculating marketplace stats:", error);
+            criticalError("Error calculating marketplace stats:", error);
         }
-    };
+    }, [salesHistory, listings, canceledListings, provider]); // Dependencies for useCallback
 
-    // Recalculate stats when data changes
+    // Recalculate stats when data changes - audit dependencies to ensure all inputs are covered
     useEffect(() => {
         calculateMarketplaceStats();
-    }, [salesHistory, listings, canceledListings, provider]);
+    }, [calculateMarketplaceStats]); // Use the memoized function as dependency
 
     const fetchListings = async (forceRefresh = false) => {
         if (!marketplace) {
-            console.warn("Marketplace contract not initialized yet");
+            debugWarn("Marketplace contract not initialized yet");
             return;
         }
         
+        // Prevent concurrent fetches to avoid race conditions
+        if (isLoading) {
+            debugLog("Fetch already in progress, skipping concurrent request");
+            return;
+        }
+        
+        setIsLoading(true);
         setStatus('Loading listings...');
-        console.log(`🔄 fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
+        debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
         try {
             // Step 1: Try to load from cache first (unless force refresh)
             if (!forceRefresh && supabaseConnected && getCachedListings) {
-                console.log("🔍 Checking cache for listings...");
+                debugLog("Checking cache for listings...");
                 const cachedListings = await getCachedListings();
                 
                 if (cachedListings && cachedListings.length > 0) {
-                    console.log(`📦 Loaded ${cachedListings.length} listings from cache`);
-                    setListings(cachedListings);
-                    setHotListings(cachedListings.slice(0, 5));
-                    setStatus('Loaded from cache');
+                    // Validate cache using content signature if available
+                    const cacheValid = !lastCacheSignature || isCacheValid(
+                        { signature: lastCacheSignature }, 
+                        { listings: cachedListings }
+                    );
                     
-                    // Remove automatic background fetch to prevent refresh loops
-                    // User can manually refresh if needed
-                    setTimeout(() => setStatus(''), 2000);
-                    return;
+                    if (cacheValid) {
+                        debugLog(`Loaded ${cachedListings.length} listings from cache`);
+                        setListings(cachedListings);
+                        setHotListings(cachedListings.slice(0, 5));
+                        
+                        // Check if cache is stale (older than 1 hour)
+                        const cacheAge = Date.now() - (cachedListings[0]?.timestamp || 0);
+                        if (cacheAge > 60 * 60 * 1000) {
+                            setStatusWithType('Loaded from cache (data may be stale)', 'warning', true);
+                        } else {
+                            setStatusWithType('Loaded from cache', 'success');
+                        }
+                        
+                        // Clear non-persistent status after delay
+                        setTimeout(() => clearStatus(), 2000);
+                        return;
+                    } else {
+                        debugLog("Cache signature mismatch, fetching fresh data");
+                    }
                 } else {
-                    console.log("🔍 No cached listings found, fetching from blockchain");
+                    debugLog("No cached listings found, fetching from blockchain");
                 }
             } else {
-                console.log("🔍 Skipping cache check:", {
+                debugLog("Skipping cache check:", {
                     forceRefresh,
                     supabaseConnected,
                     hasCachedListingsFunc: !!getCachedListings
@@ -1001,8 +1056,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             await fetchListingsFromBlockchain(false);
             
         } catch (error) {
-            console.error("Error in fetchListings:", error);
+            criticalError("Error in fetchListings:", error);
             setStatus('Failed to fetch listings');
+        } finally {
+            setIsLoading(false);
         }
     };
 
@@ -1041,7 +1098,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             }
             
             const res = [];
-            for (let i = 1; i < 20; i++) {
+            const maxScanRange = MARKETPLACE_CONFIG.MAX_LISTING_SCAN;
+            
+            for (let i = MARKETPLACE_CONFIG.MIN_LISTING_SCAN; i <= maxScanRange; i++) {
                 try {
                     const listing = await marketplace.listings(i);
 
@@ -1049,8 +1108,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     if (!listing || !listing.active) continue;
 
                     // Create a proper image URL for the NFT
-                    let image = '/placeholders/nft-placeholder.jpg';
-                    let name = `NFT #${listing.tokenId?.toString() || '0'}`;
+                    let image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+                    let name = resolveCollectionName({ tokenId: listing.tokenId?.toString() || '0' });
                     let metadata = null;
 
                     try {
@@ -1072,7 +1131,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             tokenURI = await nftContract.tokenURI(listing.tokenId);
                         }
 
-                        console.log(`Token URI for listing ${i}: ${tokenURI}`);
+                        debugLog(`Token URI for listing ${i}: ${tokenURI}`);
 
                         // Resolve IPFS URI
                         const resolvedURI = tokenURI.startsWith('ipfs://')
@@ -1082,67 +1141,73 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         // Fetch metadata
                         const response = await fetch(resolvedURI);
                         const metadataJson = await response.json();
-                        metadata = metadataJson; // Save the full metadata object
+                        
+                        // Normalize metadata using utility function
+                        metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
 
-                        console.log(`Metadata for listing ${i}:`, metadata);
+                        debugLog(`Metadata for listing ${i}:`, metadata);
 
                         if (metadata.name) name = metadata.name;
 
                         if (metadata.image) {
-                            if (metadata.image.startsWith('ipfs://')) {
-                                image = metadata.image.replace('ipfs://', 'https://ipfs.io/ipfs/');
-                            } else {
-                                image = metadata.image;
-                            }
-                            console.log(`Image URL for listing ${i}: ${image}`);
+                            image = metadata.image;
+                            debugLog(`Image URL for listing ${i}: ${image}`);
                         }
                     } catch (error) {
-                        console.warn(`Failed to fetch metadata for listing ${i}:`, error);
+                        debugWarn(`Failed to fetch metadata for listing ${i}:`, error);
+                        // Use fallback metadata
+                        metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
+                        name = metadata.name;
                     }
 
-                    // Create the sanitized listing object
+                    // Create the sanitized listing object with standardized BigInt handling
                     const sanitizedListing = {
                         id: i,
                         seller: listing.seller || ethers.ZeroAddress,
                         nftContract: listing.nftContract || ethers.ZeroAddress,
                         tokenId: listing.tokenId?.toString() || '0',
-                        quantity: listing.quantity?.toString() || '0',
-                        pricePerUnit: listing.pricePerUnit?.toString() || '0',
+                        quantity: standardizeBigInt(listing.quantity || '0'),
+                        pricePerUnit: standardizeBigInt(listing.pricePerUnit || '0'),
                         paymentToken: listing.paymentToken || ethers.ZeroAddress,
                         isERC1155: !!listing.isERC1155,
                         active: !!listing.active,
 
-                        // CRITICAL: Add both direct properties AND a nested metadata object
-                        // This ensures we cover both access patterns
+                        // Enhanced metadata structure with proper fallbacks
                         image,
                         imageUrl: image,
                         name,
                         title: name,
-                        description: `Token ID: ${listing.tokenId?.toString() || '0'}`,
+                        description: metadata?.description || `Token ID: ${listing.tokenId?.toString() || '0'}`,
 
-                        // Add the full metadata object - CRUCIAL!
-                        // ListingCard is likely expecting this structure
+                        // Normalized metadata object
                         metadata: {
                             ...metadata,
-                            image: image // Ensure the IPFS URL is resolved in the metadata object too
-                        }
+                            image: image // Ensure the resolved URL is in metadata too
+                        },
+                        
+                        // Add content signature for cache validation
+                        signature: createContentSignature({
+                            tokenId: listing.tokenId?.toString(),
+                            pricePerUnit: listing.pricePerUnit?.toString(),
+                            active: listing.active,
+                            metadata: metadata
+                        })
                     };
 
-                    console.log("Sanitized listing with image:", sanitizedListing);
+                    debugLog("Sanitized listing with enhanced metadata:", sanitizedListing.name);
                     res.push(sanitizedListing);
                 } catch (err) {
-                    console.log(`Skipping listing ${i}:`, err.message);
+                    debugWarn(`Skipping listing ${i}:`, err.message);
                 }
             }
 
-            console.log(`Successfully loaded ${res.length} listings from blockchain`);
+            debugLog(`Successfully loaded ${res.length} listings from blockchain`);
             setListings(res);
             setHotListings(res.slice(0, 5));
             
-            // DISABLED: Automatic caching to prevent mass data collection to Supabase
-            // Cache the fresh data only if user explicitly enables it
-            console.log(`🔧 Auto-caching DISABLED to prevent mass data collection to Supabase`);
-            console.log(`💡 Found ${res.length} listings - caching disabled to prevent database overload`);
+            // Enhanced caching with content-based validation
+            debugLog(`Auto-caching DISABLED to prevent mass data collection to Supabase`);
+            debugLog(`Found ${res.length} listings - caching disabled to prevent database overload`);
             
             if (false) { // Explicitly disabled - change to true only if user wants auto-caching
                 if (supabaseConnected && res.length > 0 && cacheListings) {
@@ -1459,11 +1524,16 @@ const ERC1155_APPROVAL_ABI = [
             listings,
             hotListings,
             status,
-            setStatus,
+            persistentStatus,
+            statusType,
+            setStatus: setStatusWithType,
+            clearStatus,
+            clearPersistentStatus,
             fetchListings,
             buyListing,
             createListing,
             isInitialized,
+            isLoading,
             // New marketplace statistics and data
             salesHistory,
             canceledListings,

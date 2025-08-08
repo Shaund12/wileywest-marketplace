@@ -1,0 +1,195 @@
+/* StatusMessage scoped styles */
+.StatusMessage__status-container {
+    position: relative;
+    z-index: 10;
+}
+
+.StatusMessage__status-message,
+.StatusMessage__persistent-message {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    margin-bottom: 0.5rem;
+    animation: statusSlideIn 0.3s ease-out;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.StatusMessage__persistent-message {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    border: 1px solid;
+    animation: persistentPulse 2s ease-in-out infinite;
+}
+
+.StatusMessage__status-info {
+    background: var(--info-bg, rgba(59, 130, 246, 0.1));
+    color: var(--info-color, #3b82f6);
+    border-left: 4px solid var(--info-color, #3b82f6);
+}
+
+.StatusMessage__status-success {
+    background: var(--success-bg, rgba(16, 185, 129, 0.1));
+    color: var(--success-color, #10b981);
+    border-left: 4px solid var(--success-color, #10b981);
+}
+
+.StatusMessage__status-warning {
+    background: var(--warning-bg, rgba(245, 158, 11, 0.1));
+    color: var(--warning-color, #f59e0b);
+    border-left: 4px solid var(--warning-color, #f59e0b);
+}
+
+.StatusMessage__status-error {
+    background: var(--error-bg, rgba(239, 68, 68, 0.1));
+    color: var(--error-color, #ef4444);
+    border-left: 4px solid var(--error-color, #ef4444);
+}
+
+.StatusMessage__status-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+}
+
+.StatusMessage__status-text {
+    flex: 1;
+    line-height: 1.4;
+}
+
+.StatusMessage__clear-button {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 3px;
+    transition: background-color 0.2s ease;
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    opacity: 0.7;
+}
+
+.StatusMessage__clear-button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    opacity: 1;
+}
+
+.StatusMessage__clear-button:focus {
+    outline: 2px solid currentColor;
+    outline-offset: 1px;
+}
+
+/* Inline status styles */
+.StatusMessage__inline-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.85rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.StatusMessage__inline-icon {
+    font-size: 0.8rem;
+}
+
+.StatusMessage__inline-info {
+    color: var(--info-color, #3b82f6);
+}
+
+.StatusMessage__inline-success {
+    color: var(--success-color, #10b981);
+}
+
+.StatusMessage__inline-warning {
+    color: var(--warning-color, #f59e0b);
+}
+
+.StatusMessage__inline-error {
+    color: var(--error-color, #ef4444);
+}
+
+.StatusMessage__inline-loading {
+    color: var(--accent-color, #00ff88);
+}
+
+.StatusMessage__inline-loading .StatusMessage__inline-icon {
+    animation: spin 1s linear infinite;
+}
+
+/* Animations */
+@keyframes statusSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes persistentPulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.8;
+    }
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Accessibility improvements */
+@media (prefers-reduced-motion: reduce) {
+    .StatusMessage__status-message,
+    .StatusMessage__persistent-message {
+        animation: none;
+    }
+    
+    .StatusMessage__persistent-message {
+        animation: none;
+    }
+    
+    .StatusMessage__inline-loading .StatusMessage__inline-icon {
+        animation: none;
+    }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+    .StatusMessage__status-message,
+    .StatusMessage__persistent-message {
+        border: 2px solid currentColor;
+    }
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+    .StatusMessage__status-info {
+        background: rgba(59, 130, 246, 0.15);
+    }
+    
+    .StatusMessage__status-success {
+        background: rgba(16, 185, 129, 0.15);
+    }
+    
+    .StatusMessage__status-warning {
+        background: rgba(245, 158, 11, 0.15);
+    }
+    
+    .StatusMessage__status-error {
+        background: rgba(239, 68, 68, 0.15);
+    }
+}
