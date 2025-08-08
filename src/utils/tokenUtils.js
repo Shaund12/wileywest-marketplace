@@ -43,8 +43,9 @@
      * @returns {Promise<{symbol: string, decimals: number}>} Token details
      */
     export async function fetchTokenDetails(tokenAddress, provider) {
-      if (!tokenAddress || !tokenAddress.startsWith('0x')) {
-        return { symbol: tokenAddress || 'VTRU', decimals: 18 };
+      // Handle native VTRU (zero address)
+      if (!tokenAddress || tokenAddress === ethers.ZeroAddress || !tokenAddress.startsWith('0x')) {
+        return { symbol: 'VTRU', decimals: 18 };
       }
   
       const addressLower = tokenAddress.toLowerCase();
@@ -81,11 +82,17 @@
      * @returns {string} Token symbol
      */
     export function getTokenSymbol(tokenAddress) {
-      if (!tokenAddress) return 'VTRU';
+      // Handle native VTRU (zero address or null/undefined)
+      if (!tokenAddress || tokenAddress === ethers.ZeroAddress) return 'VTRU';
   
       if (!tokenAddress.startsWith('0x')) return tokenAddress;
   
       const addressLower = tokenAddress.toLowerCase();
+      
+      // Check for zero address (native VTRU)
+      if (addressLower === ethers.ZeroAddress.toLowerCase()) {
+          return 'VTRU';
+      }
       
       // Check for specific known addresses
       if (addressLower === USDC_POL_ADDRESS.toLowerCase()) {
@@ -110,11 +117,17 @@
      * @returns {number} Number of decimals
      */
     export function getTokenDecimals(tokenAddress) {
-      if (!tokenAddress) return 18;
+      // Handle native VTRU (zero address or null/undefined)
+      if (!tokenAddress || tokenAddress === ethers.ZeroAddress) return 18;
   
       // Handle addresses
       if (tokenAddress.startsWith('0x')) {
         const addressLower = tokenAddress.toLowerCase();
+        
+        // Check for zero address (native VTRU)
+        if (addressLower === ethers.ZeroAddress.toLowerCase()) {
+            return 18;
+        }
         
         // Check for specific known addresses
         if (addressLower === USDC_POL_ADDRESS.toLowerCase()) {
@@ -157,18 +170,39 @@
             // Handle undefined, null or empty values
             if (!amount) return '0';
 
+            // Convert amount to string to handle BigInt values
+            const amountStr = amount.toString();
+
             // Get decimals based on token type
             const decimals = getTokenDecimals(tokenAddress);
 
-            // Format units - handle ethers v6 API
+            // Format units - handle ethers v6 API with proper error handling for large numbers
             let formatted;
-            if (ethers.formatUnits) {
-                // ethers v6
-                formatted = ethers.formatUnits(amount.toString(), decimals);
-            } else {
-                // Manual fallback
-                const divisor = 10 ** decimals;
-                formatted = (Number(amount) / divisor).toString();
+            try {
+                if (ethers.formatUnits) {
+                    // ethers v6 - handles BigInt properly
+                    formatted = ethers.formatUnits(amountStr, decimals);
+                } else {
+                    // Manual fallback with BigInt support for large numbers
+                    const divisor = BigInt(10) ** BigInt(decimals);
+                    const amountBigInt = BigInt(amountStr);
+                    const wholePart = amountBigInt / divisor;
+                    const fractionalPart = amountBigInt % divisor;
+                    
+                    // Convert fractional part to decimal string
+                    const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
+                    const trimmedFractional = fractionalStr.replace(/0+$/, '');
+                    
+                    formatted = trimmedFractional.length > 0 ? 
+                        `${wholePart.toString()}.${trimmedFractional}` : 
+                        wholePart.toString();
+                }
+            } catch (conversionError) {
+                console.warn(`Conversion error for amount ${amountStr}, using simplified approach:`, conversionError);
+                // Fallback to simple division for very large numbers
+                const amountNum = parseFloat(amountStr);
+                const divisor = Math.pow(10, decimals);
+                formatted = (amountNum / divisor).toString();
             }
 
             // Parse as float and format with fixed decimals
@@ -176,22 +210,36 @@
 
             if (value === 0) return '0';
 
-            // Format with different precision based on token type
+            // Format with different precision based on token type and value size
             if (decimals === 6) {
                 // For USDC, show at most 2 decimal places
                 return value.toFixed(Math.min(2, countDecimals(value)));
             } else {
-                // For other tokens, show at most 4 decimal places
-                return value.toFixed(Math.min(4, countDecimals(value)));
+                // For VTRU and other 18-decimal tokens, adjust precision based on value
+                if (value >= 1000) {
+                    // For large values, show fewer decimals
+                    return value.toFixed(2);
+                } else if (value >= 1) {
+                    // For regular values, show up to 4 decimals
+                    return value.toFixed(Math.min(4, countDecimals(value)));
+                } else {
+                    // For small values, show up to 6 decimals
+                    return value.toFixed(Math.min(6, Math.max(2, countDecimals(value))));
+                }
             }
         } catch (error) {
             console.error(`Error formatting amount ${amount} for token ${tokenAddress}:`, error);
-            // Simplified fallback for currency addresses
-            if (tokenAddress && tokenAddress.startsWith('0x')) {
-                // If tokenSymbol is an address, assume 6 decimals (for USDC-like tokens)
-                return (Number(amount) / 1000000).toFixed(2);
+            // Enhanced fallback handling
+            try {
+                const decimals = getTokenDecimals(tokenAddress);
+                const amountNum = parseFloat(amount.toString());
+                const divisor = Math.pow(10, decimals);
+                const result = (amountNum / divisor);
+                return result.toFixed(decimals === 6 ? 2 : 4);
+            } catch (fallbackError) {
+                console.error(`Fallback formatting also failed:`, fallbackError);
+                return '0'; // Ultimate fallback
             }
-            return '0'; // Ultimate fallback
         }
     }
 
