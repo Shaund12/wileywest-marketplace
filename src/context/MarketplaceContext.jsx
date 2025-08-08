@@ -961,6 +961,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         calculateMarketplaceStats();
     }, [salesHistory, listings, canceledListings, provider]);
 
+    // Track last cache update time to prevent excessive calls
+    const lastCacheUpdateRef = useRef(0);
+    const CACHE_UPDATE_COOLDOWN = 30000; // 30 seconds minimum between cache updates
+    
     const fetchListings = async (forceRefresh = false) => {
         if (!marketplace) {
             console.warn("Marketplace contract not initialized yet");
@@ -971,34 +975,52 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         console.log(`🔄 fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
         try {
-            // Step 1: Try to load from cache first (unless force refresh)
-            if (!forceRefresh && supabaseConnected && getCachedListings) {
-                console.log("🔍 Checking cache for listings...");
-                const cachedListings = await getCachedListings();
-                
-                if (cachedListings && cachedListings.length > 0) {
-                    console.log(`📦 Loaded ${cachedListings.length} listings from cache`);
-                    setListings(cachedListings);
-                    setHotListings(cachedListings.slice(0, 5));
-                    setStatus('Loaded from cache');
+            let cachedListings = [];
+            let shouldCheckBlockchain = forceRefresh;
+            
+            // Step 1: Always try to load from cache first for fast UX
+            if (supabaseConnected && getCachedListings) {
+                console.log("🔍 Loading cached listings for fast UX...");
+                try {
+                    cachedListings = await getCachedListings();
                     
-                    // Remove automatic background fetch to prevent refresh loops
-                    // User can manually refresh if needed
-                    setTimeout(() => setStatus(''), 2000);
-                    return;
-                } else {
-                    console.log("🔍 No cached listings found, fetching from blockchain");
+                    if (cachedListings && cachedListings.length > 0) {
+                        console.log(`📦 Loaded ${cachedListings.length} listings from cache`);
+                        setListings(cachedListings);
+                        setHotListings(cachedListings.slice(0, 5));
+                        setStatus('Loaded from cache - checking for updates...');
+                        
+                        // Always check blockchain for updates unless we just updated cache recently
+                        const timeSinceLastUpdate = Date.now() - lastCacheUpdateRef.current;
+                        if (timeSinceLastUpdate > CACHE_UPDATE_COOLDOWN) {
+                            shouldCheckBlockchain = true;
+                            console.log("📡 Cache loaded, now checking blockchain for new listings...");
+                        } else {
+                            console.log(`⏳ Cache recently updated (${Math.round(timeSinceLastUpdate/1000)}s ago), skipping blockchain check`);
+                        }
+                    } else {
+                        console.log("🔍 No cached listings found, will fetch from blockchain");
+                        shouldCheckBlockchain = true;
+                    }
+                } catch (cacheError) {
+                    console.warn("Error loading cache, will fetch from blockchain:", cacheError);
+                    shouldCheckBlockchain = true;
                 }
             } else {
-                console.log("🔍 Skipping cache check:", {
-                    forceRefresh,
-                    supabaseConnected,
-                    hasCachedListingsFunc: !!getCachedListings
-                });
+                console.log("🔍 No cache available, fetching from blockchain");
+                shouldCheckBlockchain = true;
             }
             
-            // Step 2: Fetch from blockchain
-            await fetchListingsFromBlockchain(false);
+            // Step 2: Check blockchain for updates if needed
+            if (shouldCheckBlockchain) {
+                console.log("🌐 Checking blockchain for latest listings...");
+                await fetchListingsFromBlockchain(cachedListings.length > 0, cachedListings);
+                lastCacheUpdateRef.current = Date.now();
+            } else {
+                // Just show cached data with appropriate status
+                setStatus('Showing cached listings');
+                setTimeout(() => setStatus(''), 2000);
+            }
             
         } catch (error) {
             console.error("Error in fetchListings:", error);
@@ -1006,39 +1028,36 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         }
     };
 
-    const fetchListingsFromBlockchain = async (isBackgroundUpdate = false) => {
+    const fetchListingsFromBlockchain = async (isBackgroundUpdate = false, existingListings = []) => {
         if (!isBackgroundUpdate) {
             setStatus('Fetching latest listings from blockchain...');
+        } else {
+            setStatus('Checking for new listings...');
         }
         
         try {
-            console.log("Fetching marketplace listings from blockchain...");
+            console.log(`🌐 Fetching marketplace listings from blockchain... (background: ${isBackgroundUpdate})`);
             
             // Test network connectivity first
             try {
                 await provider.getNetwork();
             } catch (networkError) {
                 console.warn("Network connectivity issue:", networkError.message);
-                setStatus("Network connectivity issue - using cached data if available");
                 
-                // Try to use cached data as fallback
-                if (supabaseConnected) {
-                    const cachedListings = await getCachedListings();
-                    if (cachedListings && cachedListings.length > 0) {
-                        setListings(cachedListings);
-                        setHotListings(cachedListings.slice(0, 5));
-                        setStatus("Using cached listings - network unavailable");
-                        return;
-                    }
+                if (existingListings.length > 0) {
+                    // We have cached data, use it
+                    setStatus("Network issue - showing cached listings");
+                    setTimeout(() => setStatus(''), 3000);
+                    return;
+                } else {
+                    setStatus("Network connectivity issue - no listings available");
+                    return;
                 }
-                
-                // When network is unavailable and no cached data, show empty state
-                console.log("Network unavailable and no cached data - showing empty state");
-                setListings([]);
-                setHotListings([]);
-                setStatus('Network unavailable - no listings to display');
-                return;
             }
+            
+            // Track existing listing IDs to detect new ones
+            const existingIds = new Set(existingListings.map(listing => listing.id));
+            let newListingsFound = 0;
             
             const res = [];
             for (let i = 1; i < 20; i++) {
@@ -1047,6 +1066,16 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
                     // Skip inactive listings
                     if (!listing || !listing.active) continue;
+
+                    // For background updates, prioritize new listings
+                    if (isBackgroundUpdate && existingIds.has(i)) {
+                        // Use existing listing data to avoid re-fetching metadata
+                        const existingListing = existingListings.find(l => l.id === i);
+                        if (existingListing) {
+                            res.push(existingListing);
+                            continue;
+                        }
+                    }
 
                     // Create a proper image URL for the NFT
                     let image = '/placeholders/nft-placeholder.jpg';
@@ -1130,47 +1159,56 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
                     console.log("Sanitized listing with image:", sanitizedListing);
                     res.push(sanitizedListing);
+                    
+                    // Track new listings
+                    if (!existingIds.has(i)) {
+                        newListingsFound++;
+                    }
                 } catch (err) {
                     console.log(`Skipping listing ${i}:`, err.message);
                 }
             }
 
-            console.log(`Successfully loaded ${res.length} listings from blockchain`);
+            console.log(`🎉 Successfully loaded ${res.length} listings from blockchain`);
+            
+            // Update status based on what we found
+            if (isBackgroundUpdate && newListingsFound > 0) {
+                setStatus(`Found ${newListingsFound} new listings!`);
+            } else if (isBackgroundUpdate) {
+                setStatus('Cache is up to date');
+            } else {
+                setStatus(`Loaded ${res.length} listings`);
+            }
+            
             setListings(res);
             setHotListings(res.slice(0, 5));
             
-            // DISABLED: Automatic caching to prevent mass data collection to Supabase
-            // Cache the fresh data only if user explicitly enables it
-            console.log(`🔧 Auto-caching DISABLED to prevent mass data collection to Supabase`);
-            console.log(`💡 Found ${res.length} listings - caching disabled to prevent database overload`);
+            // Smart caching: Only cache if we have more/newer data than before
+            const shouldCache = !isBackgroundUpdate || newListingsFound > 0 || res.length !== existingListings.length;
             
-            if (false) { // Explicitly disabled - change to true only if user wants auto-caching
-                if (supabaseConnected && res.length > 0 && cacheListings) {
-                    try {
-                        console.log(`💾 Attempting to cache ${res.length} listings to Supabase...`);
-                        await cacheListings(res);
-                        console.log(`✅ Successfully cached ${res.length} listings to Supabase`);
-                    } catch (cacheError) {
-                        console.warn("❌ Failed to cache listings:", cacheError);
-                    }
-                } else {
-                    console.log("⚠️ Skipping listings cache due to:", {
-                        supabaseConnected,
-                        listingsCount: res.length,
-                        hasCacheListingsFunc: !!cacheListings
-                    });
+            if (shouldCache && supabaseConnected && res.length > 0 && cacheListings) {
+                try {
+                    console.log(`💾 Caching ${res.length} listings (${newListingsFound} new)...`);
+                    await cacheListings(res);
+                    console.log(`✅ Successfully cached ${res.length} listings`);
+                } catch (cacheError) {
+                    console.warn("❌ Failed to cache listings:", cacheError);
                 }
+            } else if (!shouldCache) {
+                console.log("📋 No cache update needed - data unchanged");
             }
             
-            if (isBackgroundUpdate) {
-                setStatus('');
-            } else {
-                setStatus(`Loaded ${res.length} listings`);
-                setTimeout(() => setStatus(''), 3000);
-            }
+            // Clear status after delay
+            setTimeout(() => setStatus(''), isBackgroundUpdate ? 2000 : 3000);
+            
         } catch (error) {
             console.error("Error in fetchListingsFromBlockchain:", error);
-            if (!isBackgroundUpdate) {
+            
+            // If we have existing data and this was a background update, keep showing it
+            if (isBackgroundUpdate && existingListings.length > 0) {
+                setStatus('Update failed - showing cached listings');
+                setTimeout(() => setStatus(''), 3000);
+            } else {
                 setStatus('Failed to fetch listings - network connectivity issue');
             }
         }

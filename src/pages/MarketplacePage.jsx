@@ -9,6 +9,15 @@ import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
 
 // Icons for the marketplace UI
+// Refresh Icon component
+const RefreshIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <polyline points="1 20 1 14 7 14"></polyline>
+        <path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+    </svg>
+);
+
 const SearchIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="11" cy="11" r="8"></circle>
@@ -564,8 +573,24 @@ function MarketplacePage() {
             {/* Main Marketplace Section */}
             <div className="main-marketplace">
                 <div className="marketplace-header">
-                    <h2>Browse NFTs</h2>
+                    <div className="header-content">
+                        <h2>Browse NFTs</h2>
+                        {status && (
+                            <div className="cache-status">
+                                <span className="status-indicator">{status}</span>
+                            </div>
+                        )}
+                    </div>
                     <div className="marketplace-actions">
+                        <button
+                            className="refresh-button"
+                            onClick={() => fetchListings(true)}
+                            disabled={isLoading}
+                            title="Refresh listings from blockchain"
+                        >
+                            <RefreshIcon /> 
+                            {isLoading ? 'Loading...' : 'Refresh'}
+                        </button>
                         <button
                             className={`filter-button ${isFiltersOpen ? 'active' : ''}`}
                             onClick={() => setIsFiltersOpen(!isFiltersOpen)}

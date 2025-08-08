@@ -367,11 +367,75 @@
   margin-bottom: 20px;
 }
 
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.cache-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-indicator {
+  padding: 6px 12px;
+  background: #f0f8ff;
+  border: 1px solid #4361ee;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #4361ee;
+  font-weight: 500;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .marketplace-actions {
   display: flex;
   gap: 15px;
   margin-top: 15px;
   flex-wrap: wrap;
+}
+
+.refresh-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border: 1px solid #4361ee;
+  border-radius: 8px;
+  background: #4361ee;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.refresh-button:hover:not(:disabled) {
+  background: #3651d9;
+  border-color: #3651d9;
+  transform: translateY(-1px);
+}
+
+.refresh-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.refresh-button svg {
+  transition: transform 0.3s ease;
+}
+
+.refresh-button:hover:not(:disabled) svg {
+  transform: rotate(180deg);
 }
 
 .filter-button {
