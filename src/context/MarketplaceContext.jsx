@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from './WalletContext';
 import { useSupabase } from './SupabaseContext';
@@ -621,7 +621,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     };
 
     // Enhanced comprehensive marketplace statistics with detailed analytics
-    const calculateMarketplaceStats = async () => {
+    // Memoized to prevent unnecessary recalculations
+    const calculateMarketplaceStats = useCallback(async () => {
         if (!provider) return;
 
         try {
@@ -983,14 +984,14 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             });
 
         } catch (error) {
-            console.error("Error calculating marketplace stats:", error);
+            criticalError("Error calculating marketplace stats:", error);
         }
-    };
+    }, [salesHistory, listings, canceledListings, provider]); // Dependencies for useCallback
 
-    // Recalculate stats when data changes
+    // Recalculate stats when data changes - audit dependencies to ensure all inputs are covered
     useEffect(() => {
         calculateMarketplaceStats();
-    }, [salesHistory, listings, canceledListings, provider]);
+    }, [calculateMarketplaceStats]); // Use the memoized function as dependency
 
     const fetchListings = async (forceRefresh = false) => {
         if (!marketplace) {

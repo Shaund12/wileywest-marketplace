@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
+import { scopedClass } from '../utils/nftUtils';
+import './marketplace.css';
 
 function MarketplaceStats() {
     const { marketplaceStats, refreshBlockchainData, salesHistory, status } = useMarketplace();
@@ -83,11 +85,11 @@ function MarketplaceStats() {
     };
 
     return (
-        <div className="marketplace-stats-container">
-            <div className="stats-header">
-                <h2>BlockDust Marketplace Statistics</h2>
+        <div className={scopedClass('container', 'MarketplaceStats')}>
+            <div className={scopedClass('header', 'MarketplaceStats')}>
+                <h2 className={scopedClass('title', 'MarketplaceStats')}>BlockDust Marketplace Statistics</h2>
                 <button
-                    className={`refresh-button ${isRefreshing ? 'refreshing' : ''}`}
+                    className={`${scopedClass('refresh-button', 'MarketplaceStats')} ${isRefreshing ? scopedClass('refreshing', 'MarketplaceStats') : ''}`}
                     onClick={handleRefresh}
                     disabled={isRefreshing}
                 >
@@ -113,60 +115,60 @@ function MarketplaceStats() {
             )}
 
             {/* Tab Navigation */}
-            <div className="stats-tabs">
+            <div className={scopedClass('tabs', 'MarketplaceStats')}>
                 {tabs.map(tab => (
                     <button
                         key={tab.id}
-                        className={`tab-button ${activeTab === tab.id ? 'active' : ''}`}
+                        className={`${scopedClass('tab-button', 'MarketplaceStats')} ${activeTab === tab.id ? scopedClass('tab-button--active', 'MarketplaceStats') : ''}`}
                         onClick={() => setActiveTab(tab.id)}
                     >
                         {tab.label}
                         {tab.id === 'transactions' && salesHistory.length > 0 && (
-                            <span className="tab-badge">{salesHistory.length}</span>
+                            <span className={scopedClass('tab-badge', 'MarketplaceStats')}>{salesHistory.length}</span>
                         )}
                         {tab.id === 'volume' && totalSales > 0 && (
-                            <span className="tab-badge">📊</span>
+                            <span className={scopedClass('tab-badge', 'MarketplaceStats')}>📊</span>
                         )}
                     </button>
                 ))}
             </div>
 
             {/* Tab Content */}
-            <div className="stats-content">
+            <div className={scopedClass('content', 'MarketplaceStats')}>
                 {activeTab === 'overview' && (
                     <div className="overview-stats">
-                        <div className="stats-grid">
-                            <div className="stat-card highlight">
+                        <div className={scopedClass('stats-grid', 'MarketplaceStats')}>
+                            <div className={`${scopedClass('stat-card', 'MarketplaceStats')} ${scopedClass('stat-card--highlight', 'MarketplaceStats')}`}>
                                 <h3>🔥 1h Volume</h3>
-                                <p className="stat-value">${formatPrice(volume1h || 0)}</p>
-                                <span className="stat-label">{sales1h || 0} sales last hour</span>
+                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>${formatPrice(volume1h || 0)}</p>
+                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>{sales1h || 0} sales last hour</span>
                             </div>
-                            <div className="stat-card highlight">
+                            <div className={`${scopedClass('stat-card', 'MarketplaceStats')} ${scopedClass('stat-card--highlight', 'MarketplaceStats')}`}>
                                 <h3>🔥 24h Volume</h3>
-                                <p className="stat-value">${formatPrice(volume24h || 0)}</p>
-                                <span className="stat-label">{sales24h || 0} sales in last 24 hours</span>
+                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>${formatPrice(volume24h || 0)}</p>
+                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>{sales24h || 0} sales in last 24 hours</span>
                             </div>
-                            <div className="stat-card">
+                            <div className={scopedClass('stat-card', 'MarketplaceStats')}>
                                 <h3>📈 Total Volume (All Time)</h3>
-                                <p className="stat-value">${formatPrice(volumeAllTime || actualSoldVolume || 0)}</p>
-                                <span className="stat-label">{totalSales} total transactions</span>
+                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>${formatPrice(volumeAllTime || actualSoldVolume || 0)}</p>
+                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>{totalSales} total transactions</span>
                             </div>
-                            <div className="stat-card">
+                            <div className={scopedClass('stat-card', 'MarketplaceStats')}>
                                 <h3>💰 Current Listings</h3>
-                                <p className="stat-value">${formatPrice(currentListingVolume)}</p>
-                                <span className="stat-label">Available for purchase</span>
+                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>${formatPrice(currentListingVolume)}</p>
+                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>Available for purchase</span>
                             </div>
-                            <div className="stat-card">
+                            <div className={scopedClass('stat-card', 'MarketplaceStats')}>
                                 <h3>📊 Average Sale</h3>
-                                <p className="stat-value">
+                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>
                                     ${formatPrice(avgPrice || 0)}
                                 </p>
-                                <span className="stat-label">Per transaction</span>
+                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>Per transaction</span>
                             </div>
-                            <div className="stat-card">
+                            <div className={scopedClass('stat-card', 'MarketplaceStats')}>
                                 <h3>🏆 Market Health</h3>
-                                <p className="stat-value">{formatPrice(marketHealthScore || 0)}/100</p>
-                                <span className="stat-label">
+                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>{formatPrice(marketHealthScore || 0)}/100</p>
+                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>
                                     {marketHealthScore >= 75 ? '🟢 Excellent' :
                                         marketHealthScore >= 50 ? '🟡 Good' :
                                             marketHealthScore >= 25 ? '🟠 Fair' : '🔴 Poor'}
