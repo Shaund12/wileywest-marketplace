@@ -495,6 +495,62 @@ function ProfilePage() {
         }
     };
 
+    // Fetch contract info (name/symbol) for all unique contract addresses from discovered NFTs
+    const fetchContractInfoForNfts = async (nfts) => {
+        // Get unique contract addresses
+        const uniqueContracts = [...new Set(nfts.map(nft => nft.contractAddress))];
+        
+        console.log(`🏷️ Fetching collection names/symbols for ${uniqueContracts.length} contracts from blockchain...`);
+        setStatus(`Fetching collection info for ${uniqueContracts.length} contracts...`);
+        
+        // Fetch contract info for each unique contract in parallel
+        const contractInfoPromises = uniqueContracts.map(async (contractAddress) => {
+            // Skip if we already have this info
+            if (contractInfo[contractAddress]) {
+                return { contractAddress, info: contractInfo[contractAddress] };
+            }
+            
+            try {
+                // Determine contract type from NFTs
+                const nftOfThisContract = nfts.find(nft => nft.contractAddress === contractAddress);
+                const contractType = nftOfThisContract?.type || 'ERC721';
+                
+                const info = await getContractInfo(contractAddress, contractType);
+                console.log(`✅ Fetched info for ${contractAddress}: ${info.name} (${info.symbol})`);
+                return { contractAddress, info };
+            } catch (error) {
+                console.warn(`⚠️ Failed to fetch contract info for ${contractAddress}:`, error);
+                // Return fallback info
+                const fallbackInfo = {
+                    name: `Collection ${contractAddress.slice(0, 6)}...${contractAddress.slice(-4)}`,
+                    symbol: ''
+                };
+                return { contractAddress, info: fallbackInfo };
+            }
+        });
+        
+        try {
+            // Wait for all contract info to be fetched
+            const results = await Promise.all(contractInfoPromises);
+            
+            // Update contract info state with all results
+            const newContractInfo = {};
+            results.forEach(({ contractAddress, info }) => {
+                newContractInfo[contractAddress] = info;
+            });
+            
+            setContractInfo(prev => ({
+                ...prev,
+                ...newContractInfo
+            }));
+            
+            console.log(`🏷️ Successfully fetched collection info for ${results.length} contracts`);
+            
+        } catch (error) {
+            console.error("Error fetching contract info batch:", error);
+        }
+    };
+
     // Get contract name and symbol with better error handling
     const getContractInfo = async (contractAddress, contractType) => {
         // Skip if we already have this info
@@ -787,8 +843,10 @@ function ProfilePage() {
         setIsScanning(false);
     };
     
-    // Find ALL NFTs owned by the user with cache-first approach and throttling
-    const findAllUserNfts = async (forceRefresh = false) => {
+    // Find ALL NFTs owned by the user with cache-first approach and smart scanning
+    // NEW BEHAVIOR: Only performs background scanning when explicitly allowed and cache is stale
+    // This prevents continuous rescanning and follows best practices for when to refresh data
+    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false) => {
         if (!wallet || !provider) return;
 
         // Prevent multiple simultaneous scans (with force override option)
@@ -826,19 +884,32 @@ function ProfilePage() {
                     setUserNfts(cachedProfile.nfts);
                     setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache`);
 
+                    // Fetch collection names/symbols from blockchain for cached NFTs
+                    await fetchContractInfoForNfts(cachedProfile.nfts);
+
                     // Add this line to fetch metadata for cached NFTs immediately
                     console.log("🔄 Fetching metadata for cached NFTs...");
                     batchFetchMetadata(cachedProfile.nfts);
 
-                    // Only schedule background update if no scan happened recently
-                    const now = Date.now();
-                    if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
-                        console.log("📅 Scheduling background blockchain scan...");
-                        setTimeout(() => {
-                            if (!scanningInProgress.current) {
-                                scanUserNftsFromBlockchain(true);
-                            }
-                        }, 5000); // Delay background scan by 5 seconds
+                    // IMPROVED: Only schedule background update if explicitly allowed and conditions are met
+                    if (allowBackgroundUpdate) {
+                        const now = Date.now();
+                        const cacheAge = now - (cachedProfile.timestamp || 0);
+                        const isStaleCache = cacheAge > (2 * 60 * 60 * 1000); // Cache older than 2 hours
+                        
+                        if (isStaleCache && now - lastScanTime.current > SCAN_THROTTLE_MS) {
+                            console.log("📅 Cache is stale, scheduling background refresh...");
+                            setTimeout(() => {
+                                if (!scanningInProgress.current) {
+                                    console.log("🔄 Running background refresh due to stale cache");
+                                    scanUserNftsFromBlockchain(true);
+                                }
+                            }, 10000); // Delay background scan by 10 seconds for stale cache
+                        } else {
+                            console.log("✅ Cache is fresh, no background scan needed");
+                        }
+                    } else {
+                        console.log("✅ Cache loaded successfully, no automatic background scan");
                     }
                     return;
                 }
@@ -847,7 +918,7 @@ function ProfilePage() {
             // Step 2: Scan from blockchain
             // Reset scanning state before blockchain scan to avoid conflicts
             resetScanningState();
-            await scanUserNftsFromBlockchain(false);
+            await scanUserNftsFromBlockchain(false, forceRefresh);
 
         } catch (error) {
             console.error("Error loading user NFTs:", error);
@@ -858,7 +929,7 @@ function ProfilePage() {
         }
     };
 
-    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false) => {
+    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false) => {
         // Prevent scanning if already in progress or too recent
         if (scanningInProgress.current && !isBackgroundUpdate) {
             console.log("⏳ Blockchain scan already in progress, skipping...");
@@ -889,55 +960,96 @@ function ProfilePage() {
         lastScanTime.current = now;
         
         try {
-            // Create a new NFT scanner with current wallet
-            const scanner = new NFTScanner(provider, wallet, (statusMsg) => {
-                if (!isBackgroundUpdate) {
-                    setStatus(statusMsg);
-                }
-            });
+            // Create a new NFT scanner with current wallet - with validation
+            let scanner;
+            try {
+                scanner = new NFTScanner(provider, wallet, (statusMsg) => {
+                    if (!isBackgroundUpdate) {
+                        setStatus(statusMsg);
+                    }
+                });
+            } catch (scannerError) {
+                console.error("Error creating NFT scanner:", scannerError);
+                setStatus(`Error initializing scanner: ${scannerError.message}`);
+                return;
+            }
             
-            // Start the comprehensive scan
+            // Start the comprehensive scan with enhanced error handling
             console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting...`);
             const foundNfts = await scanner.scanAllNFTs();
             
-            // Update UI with found NFTs
-            setUserNfts(foundNfts);
-            
-            if (isBackgroundUpdate) {
-                console.log(`🔄 Background update: Found ${foundNfts.length} NFTs`);
+            // CRITICAL FIX: Don't clear existing NFTs if scan finds 0 NFTs (unless it's a force refresh)
+            if (foundNfts.length > 0) {
+                // Update UI with found NFTs only if we actually found some
+                setUserNfts(foundNfts);
+                
+                if (isBackgroundUpdate) {
+                    console.log(`🔄 Background update: Found ${foundNfts.length} NFTs`);
+                } else {
+                    setStatus(`✅ Found ${foundNfts.length} NFTs in your wallet`);
+                }
+                
+                // Fetch collection names/symbols from blockchain for all discovered contracts
+                await fetchContractInfoForNfts(foundNfts);
+                
+                // Cache the fresh data
+                if (supabaseConnected && cacheProfileData) {
+                    try {
+                        const profileData = {
+                            nfts: foundNfts,
+                            listings: userListings,
+                            balance: await provider.getBalance(wallet).then(b => b.toString())
+                        };
+                        
+                        await cacheProfileData(wallet, profileData);
+                        console.log(`✅ Cached profile data for ${wallet}`);
+                    } catch (cacheError) {
+                        console.warn("Failed to cache profile data:", cacheError);
+                    }
+                }
+                
+                // Batch fetch metadata for all NFTs
+                batchFetchMetadata(foundNfts);
             } else {
-                setStatus(`Found ${foundNfts.length} NFTs in your wallet`);
-            }
-            
-            // Cache the fresh data
-            if (supabaseConnected && cacheProfileData && foundNfts.length > 0) {
-                try {
-                    const profileData = {
-                        nfts: foundNfts,
-                        listings: userListings,
-                        balance: await provider.getBalance(wallet).then(b => b.toString())
-                    };
+                // Handle case where scan found 0 NFTs
+                if (isForceRefresh) {
+                    // For force refresh, user explicitly requested to clear everything and rescan
+                    console.log(`🔄 Force refresh: Found 0 NFTs - clearing existing NFTs as requested`);
+                    setUserNfts([]);
+                    setStatus("Force refresh complete - no NFTs found in wallet");
+                } else if (isBackgroundUpdate) {
+                    console.log(`🔄 Background update: Found 0 NFTs - keeping existing NFTs to prevent clearing`);
+                } else {
+                    // For regular scans, don't clear existing NFTs if scan found 0
+                    console.warn("⚠️ Scan found 0 NFTs - this may indicate RPC issues or scanning problems");
+                    setStatus("⚠️ Scan found 0 NFTs - there may be RPC issues. Try 'Force Refresh' or check console for errors.");
                     
-                    await cacheProfileData(wallet, profileData);
-                    console.log(`✅ Cached profile data for ${wallet}`);
-                } catch (cacheError) {
-                    console.warn("Failed to cache profile data:", cacheError);
+                    // Don't clear existing NFTs unless user specifically requested a force refresh
+                    // This prevents the bug where scan clearing out all NFTs
                 }
             }
             
-            // Batch fetch metadata for all NFTs
-            if (foundNfts.length > 0) {
-                batchFetchMetadata(foundNfts);
-            }
-            
-            if (!isBackgroundUpdate) {
+            if (!isBackgroundUpdate && foundNfts.length > 0) {
                 setTimeout(() => setStatus(''), 3000);
             }
             
         } catch (error) {
             console.error("Error during NFT scan:", error);
+            
+            // Provide specific error messages for common issues
+            let errorMessage = "Error scanning for NFTs";
+            if (error.message.includes('network')) {
+                errorMessage = "Network error - please check your connection and try again";
+            } else if (error.message.includes('timeout')) {
+                errorMessage = "Scan timed out - please try again";
+            } else if (error.message.includes('rate limit')) {
+                errorMessage = "Too many requests - please wait a moment and try again";
+            } else {
+                errorMessage = `Error scanning: ${error.message}`;
+            }
+            
             if (!isBackgroundUpdate) {
-                setStatus(`Error scanning: ${error.message}`);
+                setStatus(errorMessage);
             }
         } finally {
             if (!isBackgroundUpdate) {
@@ -1089,13 +1201,14 @@ function ProfilePage() {
     // Fetch NFTs when tab is changed to collection
     useEffect(() => {
         if (activeTab === 'collection' && wallet && !userNfts.length) {
-            findAllUserNfts();
+            // Initial load - allow background update if cache is stale
+            findAllUserNfts(false, true);
         }
     }, [activeTab, wallet]);
 
-    // Set up real-time subscriptions for profile updates with throttling
+    // Set up real-time subscriptions for profile updates with improved throttling
     const lastScanTime = useRef(0);
-    const SCAN_THROTTLE_MS = 30000; // Limit scans to once every 30 seconds
+    const SCAN_THROTTLE_MS = 2 * 60 * 1000; // Increased to 2 minutes to reduce frequency
     
     useEffect(() => {
         if (supabaseConnected && subscribeToProfiles && wallet) {
@@ -1108,11 +1221,12 @@ function ProfilePage() {
                 if (payload.new?.wallet_address === wallet.toLowerCase()) {
                     const now = Date.now();
                     
-                    // Throttle blockchain scanning to prevent excessive calls
+                    // More aggressive throttling for real-time updates to prevent continuous scanning
                     if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
                         console.log("🔄 Refreshing profile due to real-time update (throttled)");
                         lastScanTime.current = now;
-                        findAllUserNfts(true); // Force refresh
+                        // Force refresh but don't allow additional background updates
+                        findAllUserNfts(true, false);
                     } else {
                         console.log("⏳ Profile update throttled - skipping scan (too recent)");
                     }
@@ -1324,7 +1438,7 @@ function ProfilePage() {
                                 <div className="action-buttons">
                                     <button
                                         className="primary-button action-button"
-                                        onClick={() => findAllUserNfts(false)}
+                                        onClick={() => findAllUserNfts(false, true)}
                                         disabled={isLoading || isScanning}
                                     >
                                         {isScanning ? (
@@ -1343,7 +1457,7 @@ function ProfilePage() {
                                     </button>
                                     <button
                                         className="secondary-button action-button force-refresh-button"
-                                        onClick={() => findAllUserNfts(true)}
+                                        onClick={() => findAllUserNfts(true, false)}
                                         disabled={false}
                                         title="Force refresh - bypasses stuck scanning state and cache"
                                     >
@@ -1515,7 +1629,7 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true)}
+                                            onClick={() => findAllUserNfts(true, false)}
                                             disabled={isScanning}
                                         >
                                             {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
@@ -1593,7 +1707,7 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true)}
+                                            onClick={() => findAllUserNfts(true, false)}
                                             disabled={isScanning}
                                         >
                                             {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
@@ -1831,17 +1945,26 @@ function ProfilePage() {
             <div className="nft-scanner-disclaimer">
                 <div className="disclaimer-header">
                     <i className="fas fa-info-circle"></i>
-                    <h3>NFT Scanning Process</h3>
+                    <h3>Enhanced NFT Scanning</h3>
                 </div>
-                <p>Loading NFTs may take several minutes as we scan the entire blockchain history to find all your tokens. This thorough scanning ensures we find older NFTs that other viewers might miss.</p>
+                <p>Searching for your NFTs using a balanced approach that covers the last 6 months of blockchain history. This ensures comprehensive coverage while maintaining good performance.</p>
                 <div className="tips-container">
-                    <h4>Tips:</h4>
+                    <h4>What we're doing:</h4>
                     <ul>
-                        <li>Recently acquired NFTs will appear first</li>
-                        <li>Cached results will load instantly on future visits</li>
-                        <li>You can continue browsing while scanning runs in the background</li>
+                        <li>Scanning known NFT contracts and recent transfer history</li>
+                        <li>Automatically retrying failed network requests</li>
+                        <li>Caching results for instant future loading</li>
+                        <li>Using timeouts to prevent hanging requests</li>
                     </ul>
                 </div>
+                {scanProgress.total > 0 && (
+                    <div className="scan-details">
+                        <small>
+                            Progress: {scanProgress.scanned}/{scanProgress.total} contracts checked, 
+                            {scanProgress.found} NFTs found
+                        </small>
+                    </div>
+                )}
             </div>
         );
     }
