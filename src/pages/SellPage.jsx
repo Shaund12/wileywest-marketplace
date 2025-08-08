@@ -478,29 +478,21 @@ function SellPage() {
 
             console.log(`[DEBUG] Raw calculated price for ${tokenSymbol}: $${price}`);
 
-            // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
-            // This was essential logic that was removed and caused the price fetching to fail
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
-                tickNum < -300000) {
-                // This is valid scientific calculation, NOT a hardcoded price
-                const expectedPrice = 0.037;
-                const tolerance = 0.01; // Allow 1% deviation
-                const deviation = Math.abs((price - expectedPrice) / expectedPrice);
-
-                if (deviation > tolerance) {
-                    console.log(`[DEBUG] Price calculation verification failed for extreme tick. Using scientific formula.`);
-                    // Use scientific formula for tick to price conversion - mathematically derived
-                    price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                }
-            }
-
-            // Sanity check for unreasonable prices
-            if (price <= 0 || !isFinite(price)) {
+            // Enhanced price validation - reject unreasonable prices
+            if (price <= 0 || !isFinite(price) || isNaN(price)) {
                 throw new Error(`Invalid price calculated: ${price}`);
             }
 
-            if (price > 1000000) {
-                console.warn(`[DEBUG] Very high price calculated (${price}), might be incorrect`);
+            // Reject extremely high prices (likely calculation errors)
+            if (price > 100000) {
+                console.warn(`[DEBUG] Extremely high price calculated (${price}) for ${tokenSymbol}, rejecting as unreliable`);
+                throw new Error(`Price too high: ${price} - likely calculation error`);
+            }
+
+            // Reject extremely low prices (likely calculation errors)  
+            if (price < 0.000001) {
+                console.warn(`[DEBUG] Extremely low price calculated (${price}) for ${tokenSymbol}, rejecting as unreliable`);
+                throw new Error(`Price too low: ${price} - likely calculation error`);
             }
 
             console.log(`[DEBUG] Final calculated price for ${tokenSymbol}: $${price}`);
