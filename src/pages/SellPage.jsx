@@ -467,10 +467,10 @@ function SellPage() {
                 price = rawPrice;
             }
 
-            // Apply decimal adjustment - CORRECTED FORMULA
-            // The price ratio from Uniswap gives us token1/token0 ratio
-            // We need to adjust for decimal differences between the tokens
-            const decimalAdjustment = Math.pow(10, tokenDecimals - priceTokenDecimalsActual);
+            // Apply decimal adjustment - FIXED FORMULA  
+            // For tokens with more decimals than price token, we need to divide by the difference
+            // For tokens with fewer decimals than price token, we need to multiply by the difference
+            const decimalAdjustment = Math.pow(10, priceTokenDecimalsActual - tokenDecimals);
             price = price * decimalAdjustment;
 
             // Apply base price (for USDC this is 1.0, for WVTRU it's the WVTRU/USD price)
