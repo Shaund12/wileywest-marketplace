@@ -3,6 +3,13 @@ import { ethers } from 'ethers';
 import { useSearchParams } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import {
+    fetchTokenPriceInUSDC,
+    convertToUSDCValue,
+    formatPriceWithUSDC,
+    getTokenSymbol,
+    getTokenDecimals
+} from '../utils/tokenUtils';
 import './SellPage.css';
 
 // ERC721/ERC1155 metadata interfaces
