@@ -428,62 +428,25 @@ function SellPage() {
             // Determine token position in the pool
             const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-            // Calculate price from tick with better precision handling
+            // Calculate price using correct Uniswap V3 tick-based formula
             const tickNum = Number(tick);
-            let rawPrice;
-
-            // Use high-precision calculation for all tick values
-            try {
-                if (Math.abs(tickNum) > 50000) {
-                    // For very extreme tick values, use logarithmic approach
-                    const logBase = Math.log(1.0001);
-                    const logResult = tickNum * logBase;
-                    rawPrice = Math.exp(logResult);
-                    console.log(`[DEBUG] Used logarithmic calculation for extreme tick ${tickNum}`);
-                } else {
-                    // For normal ticks, direct calculation
-                    rawPrice = Math.pow(1.0001, tickNum);
-                }
-            } catch (mathError) {
-                console.warn(`[DEBUG] Math calculation failed for tick ${tickNum}, using fallback`, mathError);
-                // Fallback calculation for extreme values
-                rawPrice = Math.exp(tickNum * Math.log(1.0001));
-            }
-
-            // Apply token position adjustment
+            
+            // Calculate price1Per0 = (1.0001 ^ tick) * 10^(decimals1 - decimals0)
+            const price1Per0 = Math.pow(1.0001, tickNum) * Math.pow(10, priceTokenDecimalsActual - tokenDecimals);
+            
             let price;
             if (isTokenToken0) {
-                // If our token is token0, we need the inverse
-                price = 1 / rawPrice;
+                // If our token is token0, price = price1Per0 (price token per 1 our token)
+                price = price1Per0;
             } else {
-                // If our token is token1, we use direct price
-                price = rawPrice;
+                // If our token is token1, price = 1 / price1Per0 (price token per 1 our token)
+                price = 1 / price1Per0;
             }
-
-            // Apply decimal adjustment
-            const decimalAdjustment = Math.pow(10, priceTokenDecimalsActual - tokenDecimals);
-            price = price * decimalAdjustment;
 
             // Apply base price (for USDC this is 1.0, for WVTRU it's the WVTRU/USD price)
             price = price * basePrice;
 
             console.log(`[DEBUG] Raw calculated price for ${tokenSymbol}: $${price}`);
-
-            // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
-            // This was essential logic that was removed and caused the price fetching to fail
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
-                tickNum < -300000) {
-                // This is valid scientific calculation, NOT a hardcoded price
-                const expectedPrice = 0.037;
-                const tolerance = 0.01; // Allow 1% deviation
-                const deviation = Math.abs((price - expectedPrice) / expectedPrice);
-
-                if (deviation > tolerance) {
-                    console.log(`[DEBUG] Price calculation verification failed for extreme tick. Using scientific formula.`);
-                    // Use scientific formula for tick to price conversion - mathematically derived
-                    price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                }
-            }
 
             // Sanity check for unreasonable prices
             if (price <= 0 || !isFinite(price)) {
