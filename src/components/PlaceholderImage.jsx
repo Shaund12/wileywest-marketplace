@@ -106,23 +106,84 @@ function PlaceholderImage({
         return colors[index];
     };
 
+    // Generate a beautiful NFT-style SVG fallback image
+    const generateFallbackImage = (seed, contractAddress, tokenId) => {
+        try {
+            // Create deterministic values from seed
+            let hash = 0;
+            for (let i = 0; i < seed.length; i++) {
+                const char = seed.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Convert to 32-bit integer
+            }
+
+            // Generate dynamic angles and colors
+            const angle = Math.abs(hash % 360);
+            const hue1 = Math.abs(hash % 360);
+            const hue2 = (hue1 + 180) % 360;
+
+            // Extract collection info for display
+            let collectionName = 'NFT';
+            let displayTokenId = tokenId || '?';
+            
+            if (contractAddress && contractAddress.length > 10) {
+                const shortContract = contractAddress.slice(0, 6) + '...' + contractAddress.slice(-4);
+                collectionName = shortContract;
+            }
+
+            // Create an SVG that looks like a professional NFT with cyberpunk style
+            const svgContent = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'>
+                <rect width='300' height='300' fill='%230f0f0f'/>
+                <circle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/>
+                <circle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/>
+                <path d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/>
+                <path d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/>
+                <circle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/>
+                <text x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'>%23${displayTokenId}</text>
+                <text x='150' y='170' font-family='monospace' font-size='14' fill='hsl(${hue1},80%,60%)' text-anchor='middle'>${collectionName}</text>
+                <text x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'>NFT</text>
+            </svg>`;
+
+            return `data:image/svg+xml,${encodeURIComponent(svgContent)}`;
+        } catch (err) {
+            console.error("Error generating NFT SVG:", err);
+            // Ultra simple fallback
+            return `data:image/svg+xml,${encodeURIComponent(`<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><rect width='300' height='300' fill='#000'/><text x='150' y='150' fill='#fff' text-anchor='middle' font-size='24'>#${tokenId || '?'}</text></svg>`)}`;
+        }
+    };
+
     const placeholderStyle = {
         background: generateColor(seed),
         width: width,
         height: height
     };
 
-    // Show placeholder if no image sources available or all failed
+    // Show NFT-style SVG fallback if no image sources available or all failed
     if ((imageSources.length === 0) || (imageError && fallbackAttempts >= imageSources.length - 1)) {
+        const fallbackImageUrl = generateFallbackImage(seed, contractAddress, tokenId);
+        
         return (
-            <div 
-                className={`placeholder-image ${className}`}
-                style={placeholderStyle}
-                aria-label={alt}
-            >
-                <div className="placeholder-content">
-                    <div className="placeholder-icon">🖼️</div>
-                    <div className="placeholder-text">NFT</div>
+            <div className={`image-container ${className}`}>
+                <img
+                    src={fallbackImageUrl}
+                    alt={alt}
+                    className="nft-image"
+                    style={{ width: width, height: height, objectFit: 'cover' }}
+                    onError={(e) => {
+                        // If SVG generation somehow fails, show simple gradient placeholder
+                        e.target.style.display = 'none';
+                        e.target.nextElementSibling.style.display = 'flex';
+                    }}
+                />
+                <div 
+                    className={`placeholder-image ${className}`}
+                    style={{...placeholderStyle, display: 'none'}}
+                    aria-label={alt}
+                >
+                    <div className="placeholder-content">
+                        <div className="placeholder-icon">🖼️</div>
+                        <div className="placeholder-text">NFT</div>
+                    </div>
                 </div>
             </div>
         );
