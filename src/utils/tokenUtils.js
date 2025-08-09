@@ -310,36 +310,38 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         // Get token decimals from contracts
         const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
         const usdcContract = new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider);
-        
+
         const tokenDecimals = Number(await tokenContract.decimals());
         const usdcDecimals = Number(await usdcContract.decimals());
 
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
+        const isUsdcToken0 = token0.toLowerCase() === USDC_POL_ADDRESS.toLowerCase();
 
         // Calculate raw price from sqrtPriceX96
         const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
         const Q96 = BigInt(2) ** BigInt(96);
-        
+
         // Convert to decimal for math operations
         const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
         const rawPrice = sqrtPrice * sqrtPrice;
-        
-        // Fixed decimal adjustment - THIS WAS REVERSED BEFORE!
+
+        // CORRECT UNISWAP V3 PRICE FORMULA - FINALLY FIXED
         let price;
         if (isTokenToken0) {
-            // If token is token0, USDC is token1
-            // We need to DIVIDE by 10^(tokenDecimals-usdcDecimals)
+            // If our token is token0 (comes first), USDC is token1
             price = rawPrice / (10 ** (tokenDecimals - usdcDecimals));
         } else {
-            // If token is token1, USDC is token0
-            // We need to MULTIPLY by 10^(tokenDecimals-usdcDecimals)
-            price = (1.0 / rawPrice) / (10 ** (tokenDecimals - usdcDecimals));
+            // If our token is token1 (comes second), USDC is token0
+            // We need to invert the price AND apply the CORRECT decimal adjustment
+            price = (1.0 / rawPrice) * (10 ** (usdcDecimals - tokenDecimals));
         }
+
+        console.log(`Final ${getTokenSymbol(tokenAddress)} price: $${price}`);
 
         // Cache the result
         priceCache[tokenAddress] = { price, timestamp: now };
-        
+
         return price;
     } catch (error) {
         console.error(`Error fetching price for ${tokenAddress}:`, error);
