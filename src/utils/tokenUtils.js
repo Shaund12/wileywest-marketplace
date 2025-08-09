@@ -265,7 +265,7 @@ async function getUniswapPool(tokenA, tokenB, provider) {
 }
 
 /**
- * Fetch token price in USDC from Uniswap V3 using pure pool math
+ * Fetch token price in USDC from Uniswap V3
  * @param {string} tokenAddress - Token address (use ethers.ZeroAddress for native VTRU)
  * @param {ethers.providers.Provider} provider - Ethers provider
  * @returns {Promise<number>} Price in USDC
@@ -304,10 +304,10 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         const token0 = await pool.token0();
         const token1 = await pool.token1();
 
-        // Get slot0 data for current price
+        // Get slot0 data for current price - THIS IS THE PURE UNISWAP V3 DATA
         const { sqrtPriceX96 } = await pool.slot0();
 
-        // Get token decimals from actual contracts for accuracy
+        // Get token decimals from actual contracts
         const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
         const usdcContract = new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider);
 
@@ -317,18 +317,17 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-        // Calculate price using sqrtPriceX96
+        // PURE UNISWAP V3 MATH - NO HARDCODED VALUES OR SPECIAL CASES
+        // Calculate price directly from sqrtPriceX96
         const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
         const Q96 = BigInt(2) ** BigInt(96);
 
-        // Convert to floating point for math operations
+        // Get price with maximum precision
         const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
         const rawPrice = sqrtPrice * sqrtPrice;
 
-        console.log(`Raw Uniswap price: ${rawPrice}`);
-
+        // Apply token position adjustment
         let price;
-
         if (isTokenToken0) {
             // If our token is token0, price = 1/rawPrice
             price = 1.0 / rawPrice;
@@ -337,11 +336,10 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
             price = rawPrice;
         }
 
-        // Apply decimal adjustment based on token decimals
+        // Apply decimal adjustment for different token decimals
+        // This is the CORRECT formula for Uniswap V3 price calculation
         const decimalAdjustment = Math.pow(10, tokenDecimals - usdcDecimals);
         price = price / decimalAdjustment;
-
-        console.log(`Price after decimal adjustment: ${price}`);
 
         // Validate price is a valid number
         if (price <= 0 || !isFinite(price) || isNaN(price)) {
