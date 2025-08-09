@@ -265,9 +265,9 @@ async function getUniswapPool(tokenA, tokenB, provider) {
 }
 
 /**
- * Fetch token price in USDC using direct RPC calls to Uniswap pools
+ * Fetch token price in USDC using direct RPC calls to Uniswap pools - NO FALLBACKS
  * @param {string} tokenAddress - Token address (use ethers.ZeroAddress for native VTRU)
- * @param {ethers.providers.Provider} provider - Ethers provider connected to rpc.vitruveo.xyz
+ * @param {ethers.providers.Provider} provider - Ethers provider 
  * @returns {Promise<number>} Price in USDC
  */
 export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
@@ -301,8 +301,8 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         // Use direct RPC calls to get pool data
         const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
 
-        // Get slot0 data and token arrangement in pool
-        const [token0, token1, slotData, tokenDecimals, usdcDecimals] = await Promise.all([
+        // Get all required data in parallel
+        const [token0, token1, slotData, tokenDecimalsRaw, usdcDecimalsRaw] = await Promise.all([
             pool.token0(),
             pool.token1(),
             pool.slot0(),
@@ -310,38 +310,45 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
             new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider).decimals()
         ]);
 
-        // Extract price data from slot0
+        // Extract tick from slot data
         const { tick } = slotData;
+        console.log(`Pool tick for ${getTokenSymbol(tokenAddress)}: ${tick}`);
+
+        // Determine token positions and decimals
+        const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
+        const tokenDecimals = Number(tokenDecimalsRaw);
+        const usdcDecimals = Number(usdcDecimalsRaw);
+
+        console.log(`Token positions: ${getTokenSymbol(tokenAddress)} is ${isTokenToken0 ? 'token0' : 'token1'}`);
+        console.log(`Decimals: ${getTokenSymbol(tokenAddress)}=${tokenDecimals}, USDC=${usdcDecimals}`);
+
+        // Calculate price using tick - this is GUARANTEED to be real-time from the pool
         const tickValue = Number(tick);
 
-        // Determine which token is which in the pool
-        const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
-
-        // Calculate price using tick - 1.0001^tick gives the price of token1 in terms of token0
-        let rawPrice;
+        let price;
         if (isTokenToken0) {
-            // If token is token0, price = 1/(1.0001^tick)
-            rawPrice = 1 / (Math.pow(1.0001, tickValue));
+            // If our token is token0 and USDC is token1, we invert the tick price
+            // This means 1 token0 is worth (1/1.0001^tick) token1
+            const rawPrice = 1 / Math.pow(1.0001, tickValue);
+
+            // Apply decimal adjustment
+            price = rawPrice * Math.pow(10, usdcDecimals - tokenDecimals);
         } else {
-            // If token is token1, price = 1.0001^tick
-            rawPrice = Math.pow(1.0001, tickValue);
+            // If USDC is token0 and our token is token1
+            // This means 1 token1 is worth (1.0001^tick) token0
+            const rawPrice = Math.pow(1.0001, tickValue);
+
+            // Apply decimal adjustment
+            price = rawPrice * Math.pow(10, usdcDecimals - tokenDecimals);
         }
 
-        // Apply decimal adjustment
-        const tokenDecimalsValue = Number(tokenDecimals);
-        const usdcDecimalsValue = Number(usdcDecimals);
-        const decimalAdjustment = Math.pow(10, usdcDecimalsValue - tokenDecimalsValue);
-
-        const price = rawPrice * decimalAdjustment;
-
-        console.log(`Calculated price for ${getTokenSymbol(tokenAddress)}: $${price}`);
+        console.log(`REAL-TIME price for ${getTokenSymbol(tokenAddress)}: $${price}`);
 
         // Cache the result
         priceCache[tokenAddress] = { price, timestamp: now };
         return price;
     } catch (error) {
         console.error(`Error fetching price for ${tokenAddress}:`, error);
-        // In case of error, we need some reasonable fallback or throw
         throw error;
     }
 }
