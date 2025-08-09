@@ -348,9 +348,9 @@
             }
 
             // Apply decimal adjustment - CORRECTED FORMULA
-            // For tokens with more decimals than USDC, we need to multiply by the difference
-            // For tokens with fewer decimals than USDC, we need to divide by the difference  
-            const decimalAdjustment = Math.pow(10, tokenDecimals - usdcDecimals);
+            // For tokens with more decimals than USDC, we need to divide by the difference
+            // For tokens with fewer decimals than USDC, we need to multiply by the difference  
+            const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
             price = price * decimalAdjustment;
 
             // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
