@@ -1327,8 +1327,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         }
                     }
 
-                    // Create a proper image URL for the NFT
-                    let image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+                    // Create a proper deterministic fallback image URL for the NFT
+                    const deterministic_fallback = `https://picsum.photos/seed/${listing.nftContract}${listing.tokenId}/300/300`;
+                    let image = deterministic_fallback;
                     let name = resolveCollectionName({ tokenId: listing.tokenId?.toString() || '0' });
                     let metadata = null;
                     let collectionName = null;
@@ -1464,6 +1465,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         // Use fallback metadata
                         metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
                         name = metadata.name;
+                        // Ensure we still use the deterministic fallback image even if metadata fails
+                        image = deterministic_fallback;
                     }
 
                     // Create the sanitized listing object with standardized BigInt handling

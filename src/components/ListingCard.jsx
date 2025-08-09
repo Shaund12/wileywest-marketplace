@@ -92,6 +92,7 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                     aria-describedby={nftDescription ? `description-${listing.id}` : undefined}
                     onError={(e) => {
                         debugWarn("Image failed to load:", e.target.src);
+                        e.target.onerror = null; // Prevent infinite error loops
                         e.target.src = fallbackImage;
                     }}
                 />
