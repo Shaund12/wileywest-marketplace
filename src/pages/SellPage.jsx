@@ -3,12 +3,14 @@ import { ethers } from 'ethers';
 import { useSearchParams } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
-import {
-    fetchTokenPriceInUSDC,
-    convertToUSDCValue,
+import { 
+    fetchTokenPriceInUSDC, 
+    convertToUSDCValue, 
     formatPriceWithUSDC,
     getTokenSymbol,
-    getTokenDecimals
+    getTokenDecimals,
+    USDC_POL_ADDRESS, 
+    WVTRU_ADDRESS 
 } from '../utils/tokenUtils';
 import './SellPage.css';
 
@@ -43,7 +45,6 @@ const ERC20_ABI = [
 ];
 
 // Token addresses with proper EIP-55 checksums
-const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
 const USDC_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
 
 // New ERC20 token addresses
@@ -373,23 +374,28 @@ function SellPage() {
         }
     };
 
-    // Replace the entire getUniswapPrice function with this implementation that uses tokenUtils.js
+    // Enhanced Uniswap V3 price calculation - uses proper tokenUtils implementation
     const getUniswapPrice = async (tokenAddress) => {
         try {
-            // Use the proper implementation from tokenUtils instead of reimplementing
-            const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
+            // USDC is always $1
+            if (tokenAddress === USDC_POL_ADDRESS) {
+                return { price: 1.0, source: "USD Stablecoin" };
+            }
 
-            // Get appropriate source description for display
+            // Use the centralized implementation from tokenUtils
+            const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
+            const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
+            
+            // Determine appropriate source description
             let source;
             if (tokenAddress === ethers.ZeroAddress) {
                 source = `Uniswap V3 (WVTRU/USDC pool)`;
             } else if (tokenAddress === WVTRU_ADDRESS) {
                 source = `Uniswap V3 (WVTRU/USDC pool)`;
             } else {
-                const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
                 source = `Uniswap V3 (${tokenSymbol}/USDC pool)`;
             }
-
+            
             return { price, source };
         } catch (error) {
             console.error(`[ERROR] Price calculation failed for ${tokenAddress}: ${error.message}`);
