@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { useSearchParams } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import './SellPage.css';
 
 // ERC721/ERC1155 metadata interfaces
@@ -359,151 +360,25 @@ function SellPage() {
         }
     };
 
-    // Enhanced Uniswap V3 price calculation with better error handling and fallback
+    // Enhanced Uniswap V3 price calculation using tokenUtils
     const getUniswapPrice = async (tokenAddress) => {
         try {
-            // USDC is always $1
-            if (tokenAddress === USDC_ADDRESS) {
-                return { price: 1.0, source: "USD Stablecoin" };
-            }
-
-            // For Native VTRU (zero address), use WVTRU pool for price info
-            const actualTokenAddress = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
+            // Use the centralized price function from tokenUtils
+            const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
+            
             const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
-
             console.log(`[DEBUG] Getting price for ${tokenSymbol} (${tokenAddress})`);
-
-            // Try to find pool between this token and USDC first
-            let poolResult = await getUniswapPool(actualTokenAddress, USDC_ADDRESS);
-            let priceToken = USDC_ADDRESS;
-            let priceTokenSymbol = 'USDC';
-            let priceTokenDecimals = 6;
-            let basePrice = 1.0; // USDC = $1
-
-            // If no USDC pool found, try WVTRU pool as fallback
-            if (!poolResult.poolAddress && actualTokenAddress !== WVTRU_ADDRESS) {
-                console.log(`[DEBUG] No USDC pool for ${tokenSymbol}, trying WVTRU pool...`);
-                poolResult = await getUniswapPool(actualTokenAddress, WVTRU_ADDRESS);
-                if (poolResult.poolAddress) {
-                    priceToken = WVTRU_ADDRESS;
-                    priceTokenSymbol = 'WVTRU';
-                    priceTokenDecimals = 18;
-                    // Get WVTRU price first (should be available from USDC pool)
-                    basePrice = livePrice[WVTRU_ADDRESS];
-                    if (!basePrice) {
-                        throw new Error(`WVTRU price not available for ${tokenSymbol} calculation`);
-                    }
-                }
-            }
-
-            if (!poolResult.poolAddress) {
-                throw new Error(`No liquidity pool found for ${tokenSymbol} (tried USDC and WVTRU pairs)`);
-            }
-
-            const { poolAddress, fee } = poolResult;
-            console.log(`[DEBUG] Found pool ${poolAddress} for ${tokenSymbol}/${priceTokenSymbol} with fee ${fee / 10000}%`);
-
-            const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
-
-            // Get tokens in correct order
-            const token0 = await pool.token0();
-            const token1 = await pool.token1();
-
-            console.log(`[DEBUG] Pool tokens: token0=${token0}, token1=${token1}`);
-
-            // Get the current tick value
-            const poolData = await pool.slot0();
-            const tick = poolData.tick;
-            console.log(`[DEBUG] Pool tick: ${tick}`);
-
-            // Get token decimals
-            const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
-            const priceTokenContract = new ethers.Contract(priceToken, ERC20_ABI, provider);
-
-            const tokenDecimals = Number(await tokenContract.decimals());
-            const priceTokenDecimalsActual = Number(await priceTokenContract.decimals());
-
-            console.log(`[DEBUG] Token decimals: ${tokenDecimals}, ${priceTokenSymbol} decimals: ${priceTokenDecimalsActual}`);
-
-            // Determine token position in the pool
-            const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
-
-            // Calculate price from tick with better precision handling
-            const tickNum = Number(tick);
-            let rawPrice;
-
-            // Use high-precision calculation for all tick values
-            try {
-                if (Math.abs(tickNum) > 50000) {
-                    // For very extreme tick values, use logarithmic approach
-                    const logBase = Math.log(1.0001);
-                    const logResult = tickNum * logBase;
-                    rawPrice = Math.exp(logResult);
-                    console.log(`[DEBUG] Used logarithmic calculation for extreme tick ${tickNum}`);
-                } else {
-                    // For normal ticks, direct calculation
-                    rawPrice = Math.pow(1.0001, tickNum);
-                }
-            } catch (mathError) {
-                console.warn(`[DEBUG] Math calculation failed for tick ${tickNum}, using fallback`, mathError);
-                // Fallback calculation for extreme values
-                rawPrice = Math.exp(tickNum * Math.log(1.0001));
-            }
-
-            // Apply token position adjustment
-            let price;
-            if (isTokenToken0) {
-                // If our token is token0, we need the inverse
-                price = 1 / rawPrice;
-            } else {
-                // If our token is token1, we use direct price
-                price = rawPrice;
-            }
-
-            // Apply decimal adjustment
-            const decimalAdjustment = Math.pow(10, priceTokenDecimalsActual - tokenDecimals);
-            price = price * decimalAdjustment;
-
-            // Apply base price (for USDC this is 1.0, for WVTRU it's the WVTRU/USD price)
-            price = price * basePrice;
-
-            console.log(`[DEBUG] Raw calculated price for ${tokenSymbol}: $${price}`);
-
-            // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
-            // This was essential logic that was removed and caused the price fetching to fail
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
-                tickNum < -300000) {
-                // This is valid scientific calculation, NOT a hardcoded price
-                const expectedPrice = 0.037;
-                const tolerance = 0.01; // Allow 1% deviation
-                const deviation = Math.abs((price - expectedPrice) / expectedPrice);
-
-                if (deviation > tolerance) {
-                    console.log(`[DEBUG] Price calculation verification failed for extreme tick. Using scientific formula.`);
-                    // Use scientific formula for tick to price conversion - mathematically derived
-                    price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                }
-            }
-
-            // Sanity check for unreasonable prices
-            if (price <= 0 || !isFinite(price)) {
-                throw new Error(`Invalid price calculated: ${price}`);
-            }
-
-            if (price > 1000000) {
-                console.warn(`[DEBUG] Very high price calculated (${price}), might be incorrect`);
-            }
-
             console.log(`[DEBUG] Final calculated price for ${tokenSymbol}: $${price}`);
-
-            // Source description
+            
+            // Determine source description based on token type
             let source;
             if (tokenAddress === ethers.ZeroAddress) {
-                source = `Uniswap V3 (${fee / 10000}% WVTRU/${priceTokenSymbol} pool)`;
-            } else if (priceToken === WVTRU_ADDRESS) {
-                source = `Uniswap V3 (${fee / 10000}% ${tokenSymbol}/WVTRU pool)`;
+                source = 'Uniswap V3 (1% WVTRU/USDC pool)';
+            } else if (tokenAddress === USDC_ADDRESS) {
+                source = 'USD Stablecoin';
             } else {
-                source = `Uniswap V3 (${fee / 10000}% ${tokenSymbol}/${priceTokenSymbol} pool)`;
+                // For other tokens, indicate it's from Uniswap
+                source = `Uniswap V3 (${tokenSymbol}/USDC pool)`;
             }
 
             return { price, source };
@@ -1220,7 +1095,7 @@ function SellPage() {
                                     </div>
                                 );
                             })}
-                        <div className="ticker-refresh" onClick={fetchUniswapPrices} title="Refresh Uniswap Prices">
+                        <div className="ticker-refresh" onClick={() => fetchUniswapPrices()} title="Refresh Uniswap Prices">
                             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                 <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                             </svg>
