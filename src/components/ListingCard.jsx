@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
@@ -7,6 +7,9 @@ import { resolveCollectionName, normalizeDescription, scopedClass } from '../uti
 import { debugWarn } from '../utils/debugUtils';
 import PlaceholderImage from './PlaceholderImage';
 import './ListingCard.css';
+
+// Image URL cache to persist across refreshes
+const imageUrlCache = {};
 
 function ListingCard({ listing, featured = false, showSeller = true }) {
     const { buyListing, status } = useMarketplace();
@@ -19,6 +22,13 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
         formatted: '...',
         hasUSDCRate: true
     });
+    const [resolvedImageUrl, setResolvedImageUrl] = useState(null);
+    const listingRef = useRef(null);
+
+    // Update the ref when listing changes
+    useEffect(() => {
+        listingRef.current = listing;
+    }, [listing]);
 
     const handleBuy = async () => {
         if (!wallet) {
@@ -31,8 +41,16 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
 
     const isOwner = wallet && listing.seller.toLowerCase() === wallet.toLowerCase();
 
-    // Enhanced image URL resolution with multiple fallbacks
+    // Enhanced image URL resolution with caching and improved fallbacks
     const getImageUrl = () => {
+        const cacheKey = `${listing.nftContract}-${listing.tokenId}`;
+
+        // First check if we have this image URL in cache
+        if (imageUrlCache[cacheKey]) {
+            console.log(`Using cached image URL for ${cacheKey}`);
+            return imageUrlCache[cacheKey];
+        }
+
         // Try multiple image sources in order of preference
         const sources = [
             listing.metadata?.image,
@@ -42,27 +60,38 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
             listing.metadata?.imageUrl,
             listing.metadata?.animation_url // Some NFTs use animation_url for images
         ];
-        
+
         for (const source of sources) {
             if (source && typeof source === 'string' && source.trim() !== '') {
+                let finalUrl = source.trim();
+
                 // Resolve IPFS URLs to HTTPS
-                if (source.startsWith('ipfs://')) {
-                    return source.replace('ipfs://', 'https://ipfs.io/ipfs/');
+                if (finalUrl.startsWith('ipfs://')) {
+                    finalUrl = finalUrl.replace('ipfs://', 'https://ipfs.io/ipfs/');
                 }
-                // Return other valid URLs as-is
-                return source.trim();
+
+                // Cache the resolved URL for future use
+                imageUrlCache[cacheKey] = finalUrl;
+                console.log(`Resolved and cached image URL for ${cacheKey}: ${finalUrl.substring(0, 50)}...`);
+
+                return finalUrl;
             }
         }
-        
+
         return null; // No valid image URL found
     };
-    
-    const imageUrl = getImageUrl();
+
+    // Resolve and cache image URL when listing changes
+    useEffect(() => {
+        const imageUrl = getImageUrl();
+        setResolvedImageUrl(imageUrl);
+    }, [listing]);
+
     const imageSeed = `${listing.nftContract}${listing.tokenId}`;
 
     // Use centralized collection name resolution
     const nftName = resolveCollectionName(listing);
-    
+
     // Normalize description
     const nftDescription = normalizeDescription(listing?.metadata?.description || listing.description);
 
@@ -74,12 +103,12 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
             try {
                 // Use the enhanced USDC price formatting
                 const priceInfo = await formatPriceWithUSDC(
-                    listing.pricePerUnit, 
-                    listing.paymentToken, 
+                    listing.pricePerUnit,
+                    listing.paymentToken,
                     provider,
                     false // Show only USDC value for cleaner display
                 );
-                
+
                 setPriceDisplay(priceInfo);
                 setTokenSymbol(priceInfo.tokenSymbol);
             } catch (error) {
@@ -89,7 +118,7 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                     symbol: getTokenSymbol(listing.paymentToken),
                     decimals: 18
                 }));
-                
+
                 setPriceDisplay({
                     tokenAmount: listing.pricePerUnit.toString(),
                     tokenSymbol: tokenDetails.symbol,
@@ -105,14 +134,14 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
     }, [listing, provider]);
 
     return (
-        <article 
+        <article
             className={`${scopedClass('listing-card', 'ListingCard')} ${featured ? scopedClass('featured', 'ListingCard') : ''}`}
             role="article"
             aria-label={`NFT listing: ${nftName}`}
         >
             <div className={scopedClass('listing-image', 'ListingCard')}>
                 <PlaceholderImage
-                    src={imageUrl}
+                    src={resolvedImageUrl}
                     alt={`${nftName} - NFT artwork`}
                     className={scopedClass('nft-image', 'ListingCard')}
                     seed={imageSeed}
@@ -121,6 +150,7 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                     contractAddress={listing.nftContract}
                     tokenId={listing.tokenId}
                     metadata={listing.metadata}
+                    key={`image-${listing.nftContract}-${listing.tokenId}`}
                 />
             </div>
 
@@ -132,7 +162,7 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                         {listing.nftContract.slice(0, 6)}...{listing.nftContract.slice(-4)}
                     </div>
                     {nftDescription && (
-                        <p 
+                        <p
                             id={`description-${listing.id}`}
                             className={scopedClass('listing-description', 'ListingCard')}
                         >
@@ -179,9 +209,9 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
 
                 <div className={scopedClass('listing-actions', 'ListingCard')}>
                     {isOwner ? (
-                        <button 
-                            className={scopedClass('secondary-button', 'ListingCard')} 
-                            disabled 
+                        <button
+                            className={scopedClass('secondary-button', 'ListingCard')}
+                            disabled
                             aria-label="You own this NFT"
                         >
                             You own this
@@ -199,7 +229,7 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                     )}
                 </div>
             </div>
-            
+
             {/* Hidden price description for screen readers */}
             <div id={`price-${listing.id}`} className="sr-only">
                 Price: {priceDisplay.formatted}
