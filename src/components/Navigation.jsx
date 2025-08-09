@@ -13,8 +13,8 @@ function Navigation() {
         <div className="nav-logo">
           <Link to="/">
 
-            <img src={logo} alt="WileyW€$T" />
-            <span>WileyW€$T</span>
+            <img src={logo} alt="BlockDust" />
+            <span>BlockDust</span>
 
           </Link>
         </div>
