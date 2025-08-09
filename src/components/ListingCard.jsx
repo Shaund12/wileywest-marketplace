@@ -7,11 +7,43 @@ import { resolveCollectionName, normalizeDescription, scopedClass } from '../uti
 import { debugWarn } from '../utils/debugUtils';
 import './ListingCard.css';
 
-// ---------------------------------------------
-// Robust IPFS/Arweave resolver with live gateway fallback
-// ---------------------------------------------
+/* =========================
+   Error Boundary (stops white-screen)
+   ========================= */
+class CardBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { err: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { err: error };
+    }
+    componentDidCatch(error, info) {
+        // eslint-disable-next-line no-console
+        console.error('ListingCard error:', error, info);
+    }
+    render() {
+        if (this.state.err) {
+            return (
+                <div style={{
+                    padding: '12px',
+                    border: '1px solid #d33',
+                    borderRadius: 8,
+                    background: 'rgba(255,0,0,0.08)',
+                    color: '#f44',
+                    fontSize: 14
+                }}>
+                    <strong>Card crashed:</strong> {String(this.state.err?.message || this.state.err)}
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
 
-// Fast, reliable gateways first; ipfs.io last (often rate-limited).
+/* =========================
+   Robust IPFS/Arweave resolver
+   ========================= */
 const IPFS_GATEWAYS = [
     'https://cloudflare-ipfs.com/ipfs/',
     'https://cf-ipfs.com/ipfs/',
@@ -34,42 +66,35 @@ const IPNS_GATEWAYS = [
     'https://ipfs.io/ipns/'
 ];
 
-// Image URL cache to persist across refreshes (per-contract/token)
 const imageUrlCache = {};
 
-/**
- * Normalize a potential IPFS/IPNS/HTTP/AR URL into a list of HTTPS candidates to try.
- */
+// small helpers
+const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
+const shortAddr = (a) => (a && a.length > 9 ? `${a.slice(0, 6)}...${a.slice(-4)}` : (a || '—'));
+
 function expandToCandidateUrls(raw) {
     if (!raw || typeof raw !== 'string') return [];
     const url = raw.trim();
-
-    // data URLs work as-is
     if (url.startsWith('data:')) return [url];
 
-    // arweave
     if (url.startsWith('ar://')) {
         const id = url.replace('ar://', '');
         return [`https://arweave.net/${id}`];
     }
     if (/^https?:\/\/arweave\.net\/.+/i.test(url)) return [url];
 
-    // ipfs://CID[/path]
     if (url.startsWith('ipfs://')) {
-        // handle ipfs://ipfs/<cid> and ipfs://<cid>
         let rest = url.slice('ipfs://'.length);
-        rest = rest.replace(/^ipfs\//i, ''); // strip optional "ipfs/"
+        rest = rest.replace(/^ipfs\//i, '');
         return IPFS_GATEWAYS.map((g) => g + rest);
     }
 
-    // ipns://NAME[/path]
     if (url.startsWith('ipns://')) {
         let rest = url.slice('ipns://'.length);
         rest = rest.replace(/^ipns\//i, '');
         return IPNS_GATEWAYS.map((g) => g + rest);
     }
 
-    // http(s) ipfs-style paths: .../ipfs/CID/... or .../ipns/NAME/...
     try {
         const u = new URL(url);
         const parts = u.pathname.split('/').filter(Boolean);
@@ -83,10 +108,8 @@ function expandToCandidateUrls(raw) {
             const nameAndPath = parts.slice(ipnsIdx + 1).join('/');
             return IPNS_GATEWAYS.map((g) => g + nameAndPath);
         }
-        // plain https url, just try it
         return [url];
     } catch {
-        // If it's not a valid URL, treat it as CID-like and spray gateways
         if (/^[a-z0-9]+$/i.test(url)) {
             return IPFS_GATEWAYS.map((g) => g + url);
         }
@@ -94,34 +117,22 @@ function expandToCandidateUrls(raw) {
     }
 }
 
-/**
- * Probe image loadability. Resolves the first URL that actually loads.
- * Uses <img> test to bypass CORS/HEAD issues.
- */
 function findFirstWorkingImage(candidates, timeoutMs = 7000) {
     return new Promise((resolve, reject) => {
-        if (!candidates || candidates.length === 0) {
-            reject(new Error('No candidate URLs to test'));
-            return;
-        }
+        if (!candidates?.length) return reject(new Error('No candidate URLs to test'));
+        if (typeof window === 'undefined') return reject(new Error('SSR: window unavailable'));
 
         let settled = false;
         let idx = 0;
 
         const tryNext = () => {
             if (settled) return;
-            if (idx >= candidates.length) {
-                reject(new Error('No working image gateway found'));
-                return;
-            }
+            if (idx >= candidates.length) return reject(new Error('No working image gateway found'));
 
-            const testUrl = candidates[idx++];
+            const url = candidates[idx++];
             const img = new Image();
-
             const timer = setTimeout(() => {
-                img.onload = null;
-                img.onerror = null;
-                // move on to next candidate
+                img.onload = null; img.onerror = null;
                 tryNext();
             }, timeoutMs);
 
@@ -129,62 +140,44 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
                 if (settled) return;
                 settled = true;
                 clearTimeout(timer);
-                resolve(testUrl);
+                resolve(url);
             };
             img.onerror = () => {
                 clearTimeout(timer);
                 tryNext();
             };
-            img.src = testUrl + (testUrl.includes('?') ? '&' : '?') + 'cachebust=' + Date.now();
+            img.src = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now();
         };
 
         tryNext();
     });
 }
 
-/**
- * Collect all potential image sources from listing/metadata.
- */
 function collectImageSources(listing) {
     const m = listing?.metadata || {};
     const sources = [
         m.image,
-        listing.image,
-        listing.imageUrl,
+        listing?.image,
+        listing?.imageUrl,
         m.image_url,
         m.imageUrl,
-        // sometimes "animation_url" actually points to a static image
         m.animation_url,
         m.animationUrl
     ];
-    // unique, truthy strings
     const seen = new Set();
     return sources
-        .filter((s) => typeof s === 'string' && s.trim() !== '')
+        .filter((s) => typeof s === 'string' && s.trim())
         .map((s) => s.trim())
-        .filter((s) => {
-            if (seen.has(s)) return false;
-            seen.add(s);
-            return true;
-        });
+        .filter((s) => (seen.has(s) ? false : (seen.add(s), true)));
 }
 
-/**
- * Resolve a working image URL with caching and multi-gateway fallback.
- */
 async function resolveWorkingImageUrl(listing) {
-    const cacheKey = `${listing.nftContract}-${listing.tokenId}`;
-
-    if (imageUrlCache[cacheKey]) {
-        return imageUrlCache[cacheKey];
-    }
+    const cacheKey = `${safeStr(listing?.nftContract)}-${safeStr(listing?.tokenId)}`;
+    if (imageUrlCache[cacheKey]) return imageUrlCache[cacheKey];
 
     const rawSources = collectImageSources(listing);
+    if (!rawSources.length) return null;
 
-    // If nothing provided, bail
-    if (rawSources.length === 0) return null;
-
-    // Build a flattened candidate list across all sources/gateways
     const candidates = [];
     const seen = new Set();
     for (const src of rawSources) {
@@ -196,24 +189,22 @@ async function resolveWorkingImageUrl(listing) {
         }
     }
 
-    // Try to find the first that actually loads
     try {
         const working = await findFirstWorkingImage(candidates);
         imageUrlCache[cacheKey] = working;
         return working;
     } catch (err) {
-        debugWarn('No working IPFS/Arweave image URL found for listing', err);
+        debugWarn?.('No working IPFS/Arweave image URL found for listing', err);
         return null;
     }
 }
 
-// ---------------------------------------------
-// Component
-// ---------------------------------------------
-
-function ListingCard({ listing, featured = false, showSeller = true }) {
-    const { buyListing, status } = useMarketplace();
-    const { wallet, connect, provider } = useWallet();
+/* =========================
+   Listing Card (hardened)
+   ========================= */
+function ListingCardInner({ listing, featured = false, showSeller = true }) {
+    const { buyListing, status } = useMarketplace?.() || {};
+    const { wallet, connect, provider } = useWallet?.() || {};
 
     const [tokenSymbol, setTokenSymbol] = useState('TOKEN');
     const [priceDisplay, setPriceDisplay] = useState({
@@ -226,40 +217,44 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
     const [resolvedImageUrl, setResolvedImageUrl] = useState(null);
     const listingRef = useRef(null);
 
-    useEffect(() => {
-        listingRef.current = listing;
-    }, [listing]);
+    useEffect(() => { listingRef.current = listing; }, [listing]);
 
     const handleBuy = async () => {
         if (!wallet) {
-            await connect();
+            await connect?.();
             return;
         }
+        if (!buyListing) return;
+        if (!listing?.id || !listing?.pricePerUnit || !listing?.paymentToken) return;
         buyListing(listing.id, listing.pricePerUnit, listing.paymentToken);
     };
 
-    const isOwner = wallet && listing.seller.toLowerCase() === wallet.toLowerCase();
+    const seller = safeStr(listing?.seller);
+    const isOwner = seller && wallet && safeStr(wallet).toLowerCase() === seller.toLowerCase();
 
-    // Resolve and cache image URL when listing changes
+    // Resolve image URL
     useEffect(() => {
         let cancelled = false;
         (async () => {
-            const url = await resolveWorkingImageUrl(listing);
-            if (!cancelled) setResolvedImageUrl(url);
+            try {
+                const url = await resolveWorkingImageUrl(listing || {});
+                if (!cancelled) setResolvedImageUrl(url);
+            } catch (e) {
+                debugWarn?.('resolveWorkingImageUrl failed', e);
+                if (!cancelled) setResolvedImageUrl(null);
+            }
         })();
-        return () => {
-            cancelled = true;
-        };
-    }, [listing]);
+        return () => { cancelled = true; };
+    }, [listing?.nftContract, listing?.tokenId, listing?.metadata, listing?.image, listing?.imageUrl]);
 
-    const imageSeed = `${listing.nftContract}${listing.tokenId}`;
-    const nftName = resolveCollectionName(listing);
-    const nftDescription = normalizeDescription(listing?.metadata?.description || listing.description);
+    const imageSeed = `${safeStr(listing?.nftContract)}${safeStr(listing?.tokenId)}`;
+    const nftName = resolveCollectionName?.(listing || {}) || 'Untitled NFT';
+    const nftDescription = normalizeDescription?.(safeStr(listing?.metadata?.description) || safeStr(listing?.description)) || '';
 
-    // Format price and fetch token details when component mounts or listing changes
+    // Price formatting
     useEffect(() => {
-        async function updatePriceDisplay() {
-            if (!listing.pricePerUnit || !provider) return;
+        (async () => {
+            if (!listing?.pricePerUnit || !listing?.paymentToken || !provider) return;
 
             try {
                 const priceInfo = await formatPriceWithUSDC(
@@ -268,91 +263,92 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                     provider,
                     false
                 );
-
                 setPriceDisplay(priceInfo);
-                setTokenSymbol(priceInfo.tokenSymbol);
+                setTokenSymbol(priceInfo?.tokenSymbol || 'TOKEN');
             } catch (error) {
-                debugWarn('Error formatting price with USDC:', error);
-                const tokenDetails = await fetchTokenDetails(listing.paymentToken, provider).catch(() => ({
-                    symbol: getTokenSymbol(listing.paymentToken),
-                    decimals: 18
-                }));
-
+                debugWarn?.('Error formatting price with USDC:', error);
+                let tokenDetails = { symbol: getTokenSymbol?.(listing.paymentToken) || 'TOKEN', decimals: 18 };
+                try {
+                    const fetched = await fetchTokenDetails?.(listing.paymentToken, provider);
+                    if (fetched?.symbol) tokenDetails = fetched;
+                } catch { }
                 setPriceDisplay({
-                    tokenAmount: listing.pricePerUnit.toString(),
+                    tokenAmount: String(listing.pricePerUnit),
                     tokenSymbol: tokenDetails.symbol,
                     usdcValue: '0.00',
-                    formatted: `${listing.pricePerUnit.toString()} ${tokenDetails.symbol}`,
+                    formatted: `${String(listing.pricePerUnit)} ${tokenDetails.symbol}`,
                     hasUSDCRate: false
                 });
                 setTokenSymbol(tokenDetails.symbol);
             }
-        }
+        })();
+    }, [listing?.pricePerUnit, listing?.paymentToken, provider]);
 
-        updatePriceDisplay();
-    }, [listing, provider]);
+    const buying = typeof status === 'string' && status.includes('Buying');
+    const nftContract = safeStr(listing?.nftContract);
+    const tokenId = safeStr(listing?.tokenId);
 
     return (
         <article
-            className={`${scopedClass('listing-card', 'ListingCard')} ${featured ? scopedClass('featured', 'ListingCard') : ''}`}
+            className={`${scopedClass?.('listing-card', 'ListingCard') || 'listing-card'} ${featured ? (scopedClass?.('featured', 'ListingCard') || 'featured') : ''}`}
             role="article"
             aria-label={`NFT listing: ${nftName}`}
         >
-            <div className={scopedClass('listing-image', 'ListingCard')}>
+            <div className={scopedClass?.('listing-image', 'ListingCard') || 'listing-image'}>
                 <PlaceholderImage
-                    src={resolvedImageUrl}
+                    src={resolvedImageUrl || undefined}
                     alt={`${nftName} - NFT artwork`}
-                    className={scopedClass('nft-image', 'ListingCard')}
+                    className={scopedClass?.('nft-image', 'ListingCard') || 'nft-image'}
                     seed={imageSeed}
                     width={300}
                     height={200}
-                    contractAddress={listing.nftContract}
-                    tokenId={listing.tokenId}
-                    metadata={listing.metadata}
-                    key={`image-${listing.nftContract}-${listing.tokenId}`}
+                    contractAddress={nftContract}
+                    tokenId={tokenId}
+                    metadata={listing?.metadata || {}}
+                    key={`image-${nftContract}-${tokenId}`}
                 />
             </div>
 
-            <div className={scopedClass('listing-details', 'ListingCard')}>
-                <div className={scopedClass('listing-info', 'ListingCard')}>
-                    <h3 className={scopedClass('listing-title', 'ListingCard')}>{nftName}</h3>
-                    <div className={`${scopedClass('listing-contract', 'ListingCard')} ${scopedClass('small', 'ListingCard')}`}>
-                        {listing.nftContract.slice(0, 6)}...{listing.nftContract.slice(-4)}
+            <div className={scopedClass?.('listing-details', 'ListingCard') || 'listing-details'}>
+                <div className={scopedClass?.('listing-info', 'ListingCard') || 'listing-info'}>
+                    <h3 className={scopedClass?.('listing-title', 'ListingCard') || 'listing-title'}>{nftName}</h3>
+                    <div className={`${scopedClass?.('listing-contract', 'ListingCard') || 'listing-contract'} ${scopedClass?.('small', 'ListingCard') || 'small'}`}>
+                        {shortAddr(nftContract)}
                     </div>
                     {nftDescription && (
                         <p
-                            id={`description-${listing.id}`}
-                            className={scopedClass('listing-description', 'ListingCard')}
+                            id={`description-${safeStr(listing?.id)}`}
+                            className={scopedClass?.('listing-description', 'ListingCard') || 'listing-description'}
                         >
                             {nftDescription}
                         </p>
                     )}
                 </div>
 
-                <div className={scopedClass('listing-price', 'ListingCard')} role="region" aria-label="Price information">
+                <div className={scopedClass?.('listing-price', 'ListingCard') || 'listing-price'} role="region" aria-label="Price information">
                     {priceDisplay.hasUSDCRate ? (
                         <>
-                            <div className={scopedClass('price-amount', 'ListingCard')}>
+                            <div className={scopedClass?.('price-amount', 'ListingCard') || 'price-amount'}>
                                 ${priceDisplay.usdcValue}
                             </div>
-                            <div className={scopedClass('price-currency', 'ListingCard')}>
+                            <div className={scopedClass?.('price-currency', 'ListingCard') || 'price-currency'}>
                                 USDC
                             </div>
-                            {priceDisplay.tokenSymbol !== 'USDC.pol' && (
-                                <div className={scopedClass('price-original', 'ListingCard')}>
+                            {priceDisplay.tokenSymbol && priceDisplay.tokenSymbol !== 'USDC.pol' && (
+                                <div className={scopedClass?.('price-original', 'ListingCard') || 'price-original'}>
                                     {priceDisplay.tokenAmount} {priceDisplay.tokenSymbol}
                                 </div>
                             )}
                         </>
                     ) : (
                         <>
-                            <div className={scopedClass('price-amount', 'ListingCard')}>
+                            <div className={scopedClass?.('price-amount', 'ListingCard') || 'price-amount'}>
                                 {priceDisplay.tokenAmount}
                             </div>
-                            <div className={scopedClass('price-currency', 'ListingCard')}>
+                            <div className={scopedClass?.('price-currency', 'ListingCard') || 'price-currency'}>
                                 {priceDisplay.tokenSymbol}
                             </div>
-                            <div className={scopedClass('price-note', 'ListingCard')}>
+                            <div className={scopedClass?.('price-note', 'ListingCard') || 'price-note'}>
                                 No USDC rate available
                             </div>
                         </>
@@ -360,15 +356,15 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                 </div>
 
                 {showSeller && (
-                    <div className={`${scopedClass('listing-seller', 'ListingCard')} ${scopedClass('small', 'ListingCard')}`}>
-                        Seller: {listing.seller.slice(0, 6)}...{listing.seller.slice(-4)}
+                    <div className={`${scopedClass?.('listing-seller', 'ListingCard') || 'listing-seller'} ${scopedClass?.('small', 'ListingCard') || 'small'}`}>
+                        Seller: {shortAddr(seller)}
                     </div>
                 )}
 
-                <div className={scopedClass('listing-actions', 'ListingCard')}>
+                <div className={scopedClass?.('listing-actions', 'ListingCard') || 'listing-actions'}>
                     {isOwner ? (
                         <button
-                            className={scopedClass('secondary-button', 'ListingCard')}
+                            className={scopedClass?.('secondary-button', 'ListingCard') || 'secondary-button'}
                             disabled
                             aria-label="You own this NFT"
                         >
@@ -376,23 +372,30 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                         </button>
                     ) : (
                         <button
-                            className={`${scopedClass('primary-button', 'ListingCard')} ${scopedClass('buy-button', 'ListingCard')}`}
+                            className={`${scopedClass?.('primary-button', 'ListingCard') || 'primary-button'} ${scopedClass?.('buy-button', 'ListingCard') || 'buy-button'}`}
                             onClick={handleBuy}
-                            disabled={status.includes('Buying')}
+                            disabled={buying}
                             aria-label={`Buy ${nftName} for ${priceDisplay.formatted}`}
-                            aria-describedby={`price-${listing.id}`}
+                            aria-describedby={`price-${safeStr(listing?.id)}`}
                         >
-                            {status.includes('Buying') ? 'Processing...' : 'Buy Now'}
+                            {buying ? 'Processing...' : 'Buy Now'}
                         </button>
                     )}
                 </div>
             </div>
 
-            {/* Hidden price description for screen readers */}
-            <div id={`price-${listing.id}`} className="sr-only">
+            <div id={`price-${safeStr(listing?.id)}`} className="sr-only">
                 Price: {priceDisplay.formatted}
             </div>
         </article>
+    );
+}
+
+function ListingCard(props) {
+    return (
+        <CardBoundary>
+            <ListingCardInner {...props} />
+        </CardBoundary>
     );
 }
 
