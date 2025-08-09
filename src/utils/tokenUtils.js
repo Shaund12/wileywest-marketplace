@@ -319,19 +319,19 @@
      * @returns {Promise<number>} Price in USDC
      */
     export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
-        const cacheKey = `${tokenAddress}_${Date.now()}`;
         const now = Date.now();
         
-        // Check cache first
-        if (priceCache[tokenAddress] && (now - priceCache[tokenAddress].timestamp) < PRICE_CACHE_DURATION) {
-            return priceCache[tokenAddress].price;
+        // Normalize tokenAddress for caching (lowercase keys) and check cache first
+        const normalizedTokenAddress = tokenAddress.toLowerCase();
+        if (priceCache[normalizedTokenAddress] && (now - priceCache[normalizedTokenAddress].timestamp) < PRICE_CACHE_DURATION) {
+            return priceCache[normalizedTokenAddress].price;
         }
 
         try {
             // USDC.pol is always $1
             if (tokenAddress === USDC_POL_ADDRESS) {
                 const price = 1.0;
-                priceCache[tokenAddress] = { price, timestamp: now };
+                priceCache[normalizedTokenAddress] = { price, timestamp: now };
                 return price;
             }
 
@@ -347,78 +347,38 @@
 
             const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
 
-            // Get tokens in correct order
-            const token0 = await pool.token0();
-            const token1 = await pool.token1();
+            // Batch on-chain calls (token0, token1, slot0) with Promise.all for performance
+            const [token0, token1, slot0Data] = await Promise.all([
+                pool.token0(),
+                pool.token1(),
+                pool.slot0()
+            ]);
 
-            // Get the tick value for price calculation
-            const { tick } = await pool.slot0();
+            // Fetch decimals for token0 and token1 in parallel via fetchTokenDetails() to leverage cache
+            const [token0Details, token1Details] = await Promise.all([
+                fetchTokenDetails(token0, provider),
+                fetchTokenDetails(token1, provider)
+            ]);
 
-            // Get token decimals
-            const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
-            const usdcContract = new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider);
-
-            const tokenDecimals = Number(await tokenContract.decimals());
-            const usdcDecimals = Number(await usdcContract.decimals());
-
-            // Determine token position in the pool
-            const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
-
-            // Calculate price using tick
-            const tickNum = Number(tick);
-            let rawPrice;
-
-            // Use high-precision calculation for all tick values
-            try {
-                if (Math.abs(tickNum) > 50000) {
-                    // For very extreme tick values, use logarithmic approach
-                    const logBase = Math.log(1.0001);
-                    const logResult = tickNum * logBase;
-                    rawPrice = Math.exp(logResult);
-                } else {
-                    // For normal ticks, direct calculation
-                    rawPrice = Math.pow(1.0001, tickNum);
-                }
-            } catch (mathError) {
-                console.warn(`Math calculation failed for tick ${tickNum}, using fallback`, mathError);
-                // Fallback calculation for extreme values
-                rawPrice = Math.exp(tickNum * Math.log(1.0001));
-            }
-
-            // Apply token position adjustment
-            let price;
-            if (isTokenToken0) {
-                // If our token is token0, we need price0/price1 (inverse)
-                price = 1 / rawPrice;
+            // Compute price using tick only (no hacks)
+            const tickNum = Number(slot0Data.tick);
+            const dec0 = token0Details.decimals;
+            const dec1 = token1Details.decimals;
+            
+            // Calculate price1Per0 = (1.0001 ^ tick) * 10^(decimals1 - decimals0)
+            const price1Per0 = Math.pow(1.0001, tickNum) * Math.pow(10, dec1 - dec0);
+            
+            let priceInUSDC;
+            if (actualTokenAddress.toLowerCase() === token0.toLowerCase()) {
+                priceInUSDC = price1Per0; // USDC per 1 token (token0)
             } else {
-                // If our token is token1, we need price1/price0 (direct)
-                price = rawPrice;
+                priceInUSDC = 1 / price1Per0; // USDC per 1 token (token1)
             }
 
-            // Apply decimal adjustment (CRITICAL for correct price)
-            const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
-            price = price * decimalAdjustment;
+            // Cache the result using normalized key
+            priceCache[normalizedTokenAddress] = { price: priceInUSDC, timestamp: now };
 
-            // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
-            // This validation ensures marketplace listings show the same prices as SellPage
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
-                tickNum < -300000) {
-                // Validate the calculated price against expected values
-                const expectedPrice = 0.037;
-                const tolerance = 0.01; // Allow 1% deviation
-                const deviation = Math.abs((price - expectedPrice) / expectedPrice);
-
-                if (deviation > tolerance) {
-                    console.log(`Price calculation verification failed for extreme tick. Using scientific formula.`);
-                    // Use scientific formula for tick to price conversion - mathematically derived
-                    price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                }
-            }
-
-            // Cache the result
-            priceCache[tokenAddress] = { price, timestamp: now };
-
-            return price;
+            return priceInUSDC;
         } catch (error) {
             console.error(`Error fetching price for ${tokenAddress}:`, error);
             throw error;
