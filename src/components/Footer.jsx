@@ -13,8 +13,8 @@ function Footer() {
           <div className="footer-logo">
 
 
-            <img src={logo} alt="BlockDust" />
-            <h3>BlockDust NFT Marketplace</h3>
+            <img src={logo} alt="WileyW€$T" />
+            <h3>WileyW€$T NFT Marketplace</h3>
 
             <p>Trade in the neon shadows. Own the future.</p>
             <CacheStats />
@@ -46,7 +46,7 @@ function Footer() {
         <div className="footer-bottom">
 
 
-          <p>&copy; {new Date().getFullYear()} BlockDust NFT Marketplace. All rights reserved.</p>
+          <p>&copy; {new Date().getFullYear()} WileyW€$T NFT Marketplace. All rights reserved.</p>
 
         </div>
       </div>

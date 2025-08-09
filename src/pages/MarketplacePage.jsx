@@ -1023,7 +1023,7 @@ function MarketplacePage() {
                     </div>
                 </div>
                 <div className="cta-image">
-                    <img src="src/assets/blockdust-logo.png" alt="BlockDust NFT Marketplace" />
+                    <img src="src/assets/blockdust-logo.png" alt="WileyW€$T NFT Marketplace" />
                 </div>
             </section>
         </div>

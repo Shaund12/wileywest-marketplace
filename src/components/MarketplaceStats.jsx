@@ -87,7 +87,7 @@ function MarketplaceStats() {
     return (
         <div className={scopedClass('container', 'MarketplaceStats')}>
             <div className={scopedClass('header', 'MarketplaceStats')}>
-                <h2 className={scopedClass('title', 'MarketplaceStats')}>BlockDust Marketplace Statistics</h2>
+                <h2 className={scopedClass('title', 'MarketplaceStats')}>WileyW€$T Marketplace Statistics</h2>
                 <button
                     className={`${scopedClass('refresh-button', 'MarketplaceStats')} ${isRefreshing ? scopedClass('refreshing', 'MarketplaceStats') : ''}`}
                     onClick={handleRefresh}

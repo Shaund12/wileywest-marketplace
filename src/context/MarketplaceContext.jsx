@@ -1012,12 +1012,15 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         setStatus('Loading listings...');
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
+        let cachedListings = [];
+        let shouldCheckBlockchain = true; // Default to check blockchain
+        
         try {
 
             // Step 1: Try to load from cache first (unless force refresh)
             if (!forceRefresh && supabaseConnected && getCachedListings) {
                 debugLog("Checking cache for listings...");
-                const cachedListings = await getCachedListings();
+                cachedListings = await getCachedListings();
                 
                 if (cachedListings && cachedListings.length > 0) {
                     // Validate cache using content signature if available
@@ -1035,13 +1038,19 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         const cacheAge = Date.now() - (cachedListings[0]?.timestamp || 0);
                         if (cacheAge > 60 * 60 * 1000) {
                             setStatusWithType('Loaded from cache (data may be stale)', 'warning', true);
+                            shouldCheckBlockchain = true; // Check blockchain if cache is stale
                         } else {
                             setStatusWithType('Loaded from cache', 'success');
+                            shouldCheckBlockchain = false; // Don't need to check blockchain if cache is fresh
                         }
                         
                         // Clear non-persistent status after delay
                         setTimeout(() => clearStatus(), 2000);
-                        return;
+                        
+                        // If cache is fresh, don't check blockchain unless forced
+                        if (!shouldCheckBlockchain && !forceRefresh) {
+                            return;
+                        }
                     } else {
                         debugLog("Cache signature mismatch, fetching fresh data");
                     }
