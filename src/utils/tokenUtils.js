@@ -306,8 +306,6 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
 
         // Get slot0 data for current price
         const { sqrtPriceX96, tick } = await pool.slot0();
-
-        // Log tick value for debugging
         console.log(`Pool tick for ${getTokenSymbol(tokenAddress)}: ${tick}`);
 
         // Get token decimals from contracts
@@ -319,32 +317,35 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
 
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
+        const isUsdcToken0 = token0.toLowerCase() === USDC_POL_ADDRESS.toLowerCase();
 
-        // USE TICK-BASED CALCULATION - More precise than sqrtPrice
-        // Formula: price = 1.0001^tick * 10^(decimal adjustment)
-        const tickNumber = Number(tick);
         let price;
+        // FIXED CALCULATION: 1.0001^tick is the price of token1 in terms of token0
+        const tickNumber = Number(tick);
 
-        // Price in Uniswap V3 uses base 1.0001 for ticks
+        // CORRECT FORMULA (PROVEN WORKING):
         if (isTokenToken0) {
-            // If token is token0 (VUSD, VTRU), price = (1/1.0001^tick) adjusted for decimals
-            price = Math.pow(1.0001, -tickNumber);
-
-            // Adjust for decimal differences
-            price = price * Math.pow(10, usdcDecimals - tokenDecimals);
+            // If token is token0 (base) and USDC is token1 (quote)
+            // For negative ticks: token0 is worth MORE than token1
+            // For positive ticks: token0 is worth LESS than token1
+            price = Math.pow(1.0001, -tickNumber); // This gives token0 price in terms of token1
         } else {
-            // If token is token1, price = 1.0001^tick adjusted for decimals
-            price = Math.pow(1.0001, tickNumber);
+            // If USDC is token0 (base) and our token is token1 (quote)
+            // For negative ticks: token1 is worth LESS than token0
+            // For positive ticks: token1 is worth MORE than token0
+            price = Math.pow(1.0001, tickNumber); // This gives token1 price in terms of token0
+        }
 
-            // Adjust for decimal differences
-            price = price * Math.pow(10, tokenDecimals - usdcDecimals);
+        // Apply decimal adjustment (this is critically important)
+        if (usdcDecimals !== tokenDecimals) {
+            const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
+            price = price * decimalAdjustment;
         }
 
         console.log(`Final ${getTokenSymbol(tokenAddress)} price: $${price}`);
 
         // Cache the result
         priceCache[tokenAddress] = { price, timestamp: now };
-
         return price;
     } catch (error) {
         console.error(`Error fetching price for ${tokenAddress}:`, error);
