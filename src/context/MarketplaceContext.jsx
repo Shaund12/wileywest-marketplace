@@ -1017,7 +1017,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
         try {
-
             // Step 1: Try to load from cache first (unless force refresh)
             if (!forceRefresh && supabaseConnected && getCachedListings) {
                 debugLog("Checking cache for listings...");
