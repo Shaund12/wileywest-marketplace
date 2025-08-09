@@ -305,7 +305,10 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         const token1 = await pool.token1();
 
         // Get slot0 data for current price
-        const { sqrtPriceX96 } = await pool.slot0();
+        const { sqrtPriceX96, tick } = await pool.slot0();
+
+        // Log tick value for debugging
+        console.log(`Pool tick for ${getTokenSymbol(tokenAddress)}: ${tick}`);
 
         // Get token decimals from contracts
         const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
@@ -317,24 +320,24 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-        // Calculate raw price from sqrtPriceX96
-        const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
-        const Q96 = BigInt(2) ** BigInt(96);
-
-        // Convert to decimal for math operations
-        const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
-        const rawPrice = sqrtPrice * sqrtPrice;
-
-        // CORRECTED FORMULA - THE EXACT OPPOSITE OF WHAT WE HAD BEFORE
+        // USE TICK-BASED CALCULATION - More precise than sqrtPrice
+        // Formula: price = 1.0001^tick * 10^(decimal adjustment)
+        const tickNumber = Number(tick);
         let price;
+
+        // Price in Uniswap V3 uses base 1.0001 for ticks
         if (isTokenToken0) {
-            // Token is token0, USDC is token1
-            // price = rawPrice * (10 ** (usdcDecimals - tokenDecimals))
-            price = rawPrice * Math.pow(10, usdcDecimals - tokenDecimals);
+            // If token is token0 (VUSD, VTRU), price = (1/1.0001^tick) adjusted for decimals
+            price = Math.pow(1.0001, -tickNumber);
+
+            // Adjust for decimal differences
+            price = price * Math.pow(10, usdcDecimals - tokenDecimals);
         } else {
-            // Token is token1, USDC is token0
-            // price = (1/rawPrice) * (10 ** (tokenDecimals - usdcDecimals))
-            price = (1.0 / rawPrice) * Math.pow(10, tokenDecimals - usdcDecimals);
+            // If token is token1, price = 1.0001^tick adjusted for decimals
+            price = Math.pow(1.0001, tickNumber);
+
+            // Adjust for decimal differences
+            price = price * Math.pow(10, tokenDecimals - usdcDecimals);
         }
 
         console.log(`Final ${getTokenSymbol(tokenAddress)} price: $${price}`);
