@@ -265,7 +265,7 @@ async function getUniswapPool(tokenA, tokenB, provider) {
 }
 
 /**
- * Fetch token price in USDC from Uniswap V3
+ * Fetch token price in USDC from Uniswap V3 using pure pool math
  * @param {string} tokenAddress - Token address (use ethers.ZeroAddress for native VTRU)
  * @param {ethers.providers.Provider} provider - Ethers provider
  * @returns {Promise<number>} Price in USDC
@@ -304,80 +304,55 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         const token0 = await pool.token0();
         const token1 = await pool.token1();
 
-        console.log(`Pool tokens: token0=${token0}, token1=${token1}`);
+        // Get slot0 data for current price
+        const { sqrtPriceX96 } = await pool.slot0();
 
-        // Get both sqrtPriceX96 and tick for accurate price calculation
-        const { sqrtPriceX96, tick } = await pool.slot0();
+        // Get token decimals from actual contracts for accuracy
+        const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
+        const usdcContract = new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider);
 
-        // Get token decimals
-        const tokenDecimals = getTokenDecimals(actualTokenAddress);
-        const usdcDecimals = getTokenDecimals(USDC_POL_ADDRESS);
-
-        console.log(`Pool tick: ${tick}, sqrtPriceX96: ${sqrtPriceX96}`);
-        console.log(`Token decimals: ${tokenDecimals}, USDC decimals: ${usdcDecimals}`);
+        const tokenDecimals = Number(await tokenContract.decimals());
+        const usdcDecimals = Number(await usdcContract.decimals());
 
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-        // Calculate price from sqrtPriceX96 (more accurate than tick-based calculation)
-        const sqrtPriceBigNum = BigInt(sqrtPriceX96.toString());
+        // Calculate the price using sqrtPriceX96
+        // Convert to BigInt for precise computation, then to number
+        const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
         const Q96 = BigInt(2) ** BigInt(96);
 
-        // For numerical operations, convert to float with proper precision
-        const sqrtPriceFloat = Number(sqrtPriceBigNum) / Number(Q96);
-        let rawPrice = sqrtPriceFloat * sqrtPriceFloat;
-
-        console.log(`Raw price from sqrtPriceX96: ${rawPrice}`);
-
-        // Calculate price based on token position and decimal adjustment
+        // Calculate price from sqrt price
+        // P = (sqrtP/2^96)^2 with proper ordering
         let price;
         if (isTokenToken0) {
-            // If token is token0, price = 1/rawPrice
-            price = 1 / rawPrice;
+            // If our token is token0, price = 1 / (sqrtPrice^2)
+            // token0/token1 price in Uniswap terms
+            const sqrtP = Number(sqrtPriceBigInt) / Number(Q96);
+            price = 1 / (sqrtP * sqrtP);
         } else {
-            // If token is token1, use rawPrice directly
-            price = rawPrice;
+            // If our token is token1, price = sqrtPrice^2
+            // token1/token0 price in Uniswap terms
+            const sqrtP = Number(sqrtPriceBigInt) / Number(Q96);
+            price = sqrtP * sqrtP;
         }
 
-        // Apply decimal adjustment (THIS IS THE CORRECT FORMULA)
-        const decimalFactor = Math.pow(10, tokenDecimals - usdcDecimals);
-        price = price / decimalFactor;
+        // Apply decimal adjustment based on token decimals
+        // Price needs to be adjusted by 10^(tokenDecimals - usdcDecimals)
+        price = price * Math.pow(10, usdcDecimals - tokenDecimals);
 
-        console.log(`Price after decimal adjustment: ${price}`);
+        // Log the calculated price
+        console.log(`Raw calculated price: ${price}`);
+        console.log(`Final price for ${getTokenSymbol(tokenAddress)}: $${price}`);
 
-        // Validate the price is reasonable
+        // Validate the price is reasonable (no zeros or infinity)
         if (price <= 0 || !isFinite(price) || isNaN(price)) {
             throw new Error(`Invalid price calculated: ${price}`);
         }
 
-        // For extreme cases, double-check against tick calculation
-        if (price > 1000000 || price < 0.0000001) {
-            // Recalculate using tick for verification
-            const tickPrice = Math.pow(1.0001, Number(tick));
-            let altPrice;
-
-            if (isTokenToken0) {
-                altPrice = 1 / tickPrice / decimalFactor;
-            } else {
-                altPrice = tickPrice / decimalFactor;
-            }
-
-            console.log(`Alternative tick-based price: ${altPrice}`);
-
-            // If the prices are vastly different, use the more reasonable value
-            const priceDiffRatio = Math.max(price / altPrice, altPrice / price);
-            if (priceDiffRatio > 100) {
-                console.log(`Using tick-based price due to large discrepancy (${priceDiffRatio}x)`);
-                price = altPrice;
-            }
-        }
-
-        console.log(`Final price for ${getTokenSymbol(tokenAddress)}: $${price}`);
-
         // Cache the result
         priceCache[tokenAddress] = { price, timestamp: now };
         return price;
-
     } catch (error) {
         console.error(`Error fetching price for ${tokenAddress}:`, error);
         throw error;
