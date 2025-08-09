@@ -9,6 +9,15 @@ import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
 
 // Icons for the marketplace UI
+// Refresh Icon component
+const RefreshIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <polyline points="1 20 1 14 7 14"></polyline>
+        <path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+    </svg>
+);
+
 const SearchIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="11" cy="11" r="8"></circle>
@@ -160,12 +169,56 @@ function MarketplacePage() {
                     for (const listing of activeListings) {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
+                            // Enhanced collection name resolution with multiple fallbacks and validation
+                            let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
+                            let collectionDescription = '';
+                            let collectionImage = listing.image || listing.imageUrl;
+                            let collectionWebsite = '';
+                            
+                            // Priority order for collection name with validation:
+                            // 1. Direct collectionName property (from contract name())
+                            // 2. metadata.collection.name 
+                            // 3. metadata.name (if it doesn't look like a token name)
+                            // 4. Enhanced fallback to better formatted address
+                            if (listing.collectionName && listing.collectionName.trim() !== '' && 
+                                !listing.collectionName.includes('Collection 0x')) {
+                                collectionName = listing.collectionName.trim();
+                                console.log(`✅ Using direct collection name: ${collectionName}`);
+                            } else if (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') {
+                                collectionName = listing.metadata.collection.name.trim();
+                                console.log(`📋 Using metadata collection name: ${collectionName}`);
+                            } else if (listing.metadata?.name && 
+                                       listing.metadata.name.trim() !== '' &&
+                                       !listing.metadata.name.includes('#') && 
+                                       !listing.metadata.name.toLowerCase().includes('token') &&
+                                       !listing.metadata.name.toLowerCase().includes('nft')) {
+                                collectionName = listing.metadata.name.trim();
+                                console.log(`📝 Using NFT name as collection: ${collectionName}`);
+                            } else {
+                                console.log(`⚠️ Using fallback address for collection: ${collectionName}`);
+                            }
+
+                            // Extract additional collection information
+                            if (listing.metadata?.collection) {
+                                collectionDescription = listing.metadata.collection.description || '';
+                                collectionImage = listing.metadata.collection.image || collectionImage;
+                                collectionWebsite = listing.metadata.collection.external_link || listing.metadata.collection.external_url || '';
+                            }
+
                             collectionMap[collectionAddress] = {
                                 address: collectionAddress,
-                                name: listing.metadata?.collection?.name || `Collection ${collectionAddress.slice(0, 6)}...`,
+                                name: collectionName,
+                                description: collectionDescription,
+                                image: collectionImage,
+                                website: collectionWebsite,
                                 items: [],
                                 floorPrice: Infinity,
-                                totalVolume: 0
+                                totalVolume: 0,
+                                // Enhanced collection stats
+                                avgPrice: 0,
+                                highestPrice: 0,
+                                lowestPrice: Infinity,
+                                createdAt: Date.now() // Track when we first saw this collection
                             };
                         }
 
@@ -195,12 +248,31 @@ function MarketplacePage() {
                         if (hasRate) {
                             collectionMap[collectionAddress].totalVolume += usdcPrice;
                             
+                            // Enhanced collection price tracking
                             if (usdcPrice < collectionMap[collectionAddress].floorPrice) {
                                 collectionMap[collectionAddress].floorPrice = usdcPrice;
+                                collectionMap[collectionAddress].lowestPrice = usdcPrice;
+                            }
+                            
+                            if (usdcPrice > collectionMap[collectionAddress].highestPrice) {
+                                collectionMap[collectionAddress].highestPrice = usdcPrice;
                             }
 
                             currentListingVolumeUSDC += usdcPrice;
                             if (usdcPrice < lowestPriceUSDC) lowestPriceUSDC = usdcPrice;
+                        }
+                    });
+
+                    // Calculate enhanced collection statistics
+                    Object.values(collectionMap).forEach(collection => {
+                        if (collection.items.length > 0) {
+                            collection.avgPrice = collection.totalVolume / collection.items.length;
+                            
+                            // Fix infinite floor price display
+                            if (collection.floorPrice === Infinity) {
+                                collection.floorPrice = 0;
+                                collection.lowestPrice = 0;
+                            }
                         }
                     });
 
@@ -248,12 +320,33 @@ function MarketplacePage() {
                     activeListings.forEach(listing => {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
+                            // Use the same enhanced collection name resolution in fallback
+                            let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
+                            if (listing.collectionName && listing.collectionName.trim() !== '' && 
+                                !listing.collectionName.includes('Collection 0x')) {
+                                collectionName = listing.collectionName.trim();
+                            } else if (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') {
+                                collectionName = listing.metadata.collection.name.trim();
+                            } else if (listing.metadata?.name && 
+                                       listing.metadata.name.trim() !== '' &&
+                                       !listing.metadata.name.includes('#') && 
+                                       !listing.metadata.name.toLowerCase().includes('token') &&
+                                       !listing.metadata.name.toLowerCase().includes('nft')) {
+                                collectionName = listing.metadata.name.trim();
+                            }
+
                             collectionMap[collectionAddress] = {
                                 address: collectionAddress,
-                                name: listing.metadata?.collection?.name || `Collection ${collectionAddress.slice(0, 6)}...`,
+                                name: collectionName,
+                                description: listing.metadata?.collection?.description || '',
+                                image: listing.metadata?.collection?.image || listing.image || listing.imageUrl,
+                                website: listing.metadata?.collection?.external_link || '',
                                 items: [],
                                 floorPrice: Infinity,
-                                totalVolume: 0
+                                totalVolume: 0,
+                                avgPrice: 0,
+                                highestPrice: 0,
+                                lowestPrice: Infinity
                             };
                         }
 
@@ -478,8 +571,20 @@ function MarketplacePage() {
                             <div className="featured-details">
                                 <h3>{featuredNFT.name || featuredNFT.metadata?.name || `NFT #${featuredNFT.tokenId}`}</h3>
                                 <p className="featured-collection">
-                                    {featuredNFT.metadata?.collection?.name || `Collection ${featuredNFT.nftContract.slice(0, 6)}...`}
+                                    {(featuredNFT.collectionName && featuredNFT.collectionName.trim() !== '' && !featuredNFT.collectionName.includes('Collection 0x')) ? 
+                                     featuredNFT.collectionName.trim() :
+                                     (featuredNFT.metadata?.collection?.name && featuredNFT.metadata.collection.name.trim() !== '') ?
+                                     featuredNFT.metadata.collection.name.trim() :
+                                     (featuredNFT.metadata?.name && featuredNFT.metadata.name.trim() !== '' && !featuredNFT.metadata.name.includes('#') && !featuredNFT.metadata.name.toLowerCase().includes('token') && !featuredNFT.metadata.name.toLowerCase().includes('nft')) ?
+                                     featuredNFT.metadata.name.trim() :
+                                     `${featuredNFT.nftContract.slice(0, 8)}...${featuredNFT.nftContract.slice(-6)}`}
                                 </p>
+                                {featuredNFT.metadata?.collection?.description && (
+                                    <p className="featured-description">
+                                        {featuredNFT.metadata.collection.description.slice(0, 80)}
+                                        {featuredNFT.metadata.collection.description.length > 80 ? '...' : ''}
+                                    </p>
+                                )}
                                 <div className="featured-price">
                                     <span className="price-label">Price:</span>
                                     <span className="price-value">
@@ -529,7 +634,16 @@ function MarketplacePage() {
 
                 <div className="collections-carousel">
                     {collections.slice(0, 5).map((collection, index) => (
-                        <div className="collection-card" key={index}>
+                        <div className="collection-card enhanced" key={index}>
+                            <div className="collection-header">
+                                <div className="collection-avatar">
+                                    <img
+                                        src={collection.image || collection.items[0]?.image || collection.items[0]?.imageUrl || '/placeholders/nft-placeholder.jpg'}
+                                        alt={collection.name}
+                                    />
+                                </div>
+                                <div className="collection-rank">#{index + 1}</div>
+                            </div>
                             <div className="collection-preview">
                                 {collection.items.slice(0, 4).map((item, i) => (
                                     <div className="preview-item" key={i}>
@@ -539,19 +653,44 @@ function MarketplacePage() {
                                         />
                                     </div>
                                 ))}
+                                {collection.items.length > 4 && (
+                                    <div className="preview-item more-items">
+                                        <span>+{collection.items.length - 4}</span>
+                                    </div>
+                                )}
                             </div>
                             <div className="collection-info">
-                                <h3>{collection.name}</h3>
+                                <h3 title={collection.name}>{collection.name}</h3>
+                                {collection.description && (
+                                    <p className="collection-description" title={collection.description}>
+                                        {collection.description.slice(0, 60)}{collection.description.length > 60 ? '...' : ''}
+                                    </p>
+                                )}
                                 <div className="collection-stats">
                                     <div className="stat">
                                         <span className="value">{collection.items.length}</span>
                                         <span className="label">items</span>
                                     </div>
                                     <div className="stat">
-                                        <span className="value">${collection.floorPrice.toFixed(2)}</span>
-                                        <span className="label">floor (USDC)</span>
+                                        <span className="value">${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}</span>
+                                        <span className="label">floor</span>
+                                    </div>
+                                    <div className="stat">
+                                        <span className="value">${collection.totalVolume.toFixed(2)}</span>
+                                        <span className="label">volume</span>
+                                    </div>
+                                    <div className="stat">
+                                        <span className="value">${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}</span>
+                                        <span className="label">avg price</span>
                                     </div>
                                 </div>
+                                {collection.website && (
+                                    <div className="collection-links">
+                                        <a href={collection.website} target="_blank" rel="noopener noreferrer" className="website-link">
+                                            🌐 Website
+                                        </a>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}
@@ -561,11 +700,94 @@ function MarketplacePage() {
             {/* Detailed Marketplace Statistics */}
             <MarketplaceStats />
 
+            {/* Trending Collections Detailed View */}
+            {collections.length > 0 && (
+                <section className="trending-collections">
+                    <div className="section-header">
+                        <h2>Trending Collections</h2>
+                        <div className="trend-filters">
+                            <button className="trend-filter active">📈 Volume</button>
+                            <button className="trend-filter">🔥 Hot</button>
+                            <button className="trend-filter">⭐ New</button>
+                        </div>
+                    </div>
+                    
+                    <div className="trending-collections-grid">
+                        {collections.slice(0, 6).map((collection, index) => (
+                            <div className="trending-collection-card" key={collection.address}>
+                                <div className="trending-rank">#{index + 1}</div>
+                                <div className="trending-collection-header">
+                                    <div className="trending-avatar">
+                                        <img
+                                            src={collection.image || collection.items[0]?.image || '/placeholders/nft-placeholder.jpg'}
+                                            alt={collection.name}
+                                        />
+                                    </div>
+                                    <div className="trending-info">
+                                        <h4>{collection.name}</h4>
+                                        <p>{collection.items.length} items</p>
+                                    </div>
+                                    <div className="trending-change">
+                                        <span className="change-percentage">+12.5%</span>
+                                        <span className="change-label">24h</span>
+                                    </div>
+                                </div>
+                                
+                                <div className="trending-metrics">
+                                    <div className="metric">
+                                        <span className="metric-label">Floor Price</span>
+                                        <span className="metric-value">${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}</span>
+                                    </div>
+                                    <div className="metric">
+                                        <span className="metric-label">Volume</span>
+                                        <span className="metric-value">${collection.totalVolume.toFixed(2)}</span>
+                                    </div>
+                                    <div className="metric">
+                                        <span className="metric-label">Avg Price</span>
+                                        <span className="metric-value">${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}</span>
+                                    </div>
+                                    <div className="metric">
+                                        <span className="metric-label">Items</span>
+                                        <span className="metric-value">{collection.items.length}</span>
+                                    </div>
+                                </div>
+                                
+                                <div className="trending-preview-small">
+                                    {collection.items.slice(0, 3).map((item, i) => (
+                                        <img
+                                            key={i}
+                                            src={item.image || item.imageUrl || '/placeholders/nft-placeholder.jpg'}
+                                            alt={`${collection.name} item ${i+1}`}
+                                        />
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </section>
+            )}
+
             {/* Main Marketplace Section */}
             <div className="main-marketplace">
                 <div className="marketplace-header">
-                    <h2>Browse NFTs</h2>
+                    <div className="header-content">
+                        <h2>Browse NFTs</h2>
+                        {status && (
+                            <div className="cache-status">
+                                <span className="status-indicator">{status}</span>
+                            </div>
+                        )}
+                    </div>
                     <div className="marketplace-actions">
+                        <button
+                            className="refresh-button"
+                            onClick={() => fetchListings(true)}
+                            disabled={isLoading}
+                            title="Refresh listings from blockchain"
+                        >
+                            <RefreshIcon /> 
+                            {isLoading ? 'Loading...' : 'Refresh'}
+                        </button>
                         <button
                             className={`filter-button ${isFiltersOpen ? 'active' : ''}`}
                             onClick={() => setIsFiltersOpen(!isFiltersOpen)}
@@ -634,14 +856,26 @@ function MarketplacePage() {
                                 <h3>Collections</h3>
                                 <div className="filter-options scrollable">
                                     {collections.slice(0, 10).map(collection => (
-                                        <label key={collection.address} className="filter-option">
+                                        <label key={collection.address} className="filter-option collection-filter">
                                             <input
                                                 type="checkbox"
                                                 checked={selectedCollections.includes(collection.address.toLowerCase())}
                                                 onChange={() => toggleCollection(collection.address.toLowerCase())}
                                             />
-                                            <span>{collection.name}</span>
-                                            <span className="item-count">({collection.items.length})</span>
+                                            <div className="collection-filter-info">
+                                                <div className="collection-filter-avatar">
+                                                    <img 
+                                                        src={collection.image || collection.items[0]?.image || '/placeholders/nft-placeholder.jpg'} 
+                                                        alt={collection.name}
+                                                    />
+                                                </div>
+                                                <div className="collection-filter-details">
+                                                    <span className="collection-name">{collection.name}</span>
+                                                    <span className="collection-stats">
+                                                        {collection.items.length} items • Floor: ${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}
+                                                    </span>
+                                                </div>
+                                            </div>
                                         </label>
                                     ))}
                                 </div>
