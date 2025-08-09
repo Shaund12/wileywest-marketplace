@@ -365,8 +365,8 @@
             const dec0 = token0Details.decimals;
             const dec1 = token1Details.decimals;
             
-            // Calculate price1Per0 = (1.0001 ^ tick) * 10^(decimals1 - decimals0)
-            const price1Per0 = Math.pow(1.0001, tickNum) * Math.pow(10, dec1 - dec0);
+            // Calculate price1Per0 = (1.0001 ^ tick) * 10^(decimals0 - decimals1)
+            const price1Per0 = Math.pow(1.0001, tickNum) * Math.pow(10, dec0 - dec1);
             
             let priceInUSDC;
             if (actualTokenAddress.toLowerCase() === token0.toLowerCase()) {
