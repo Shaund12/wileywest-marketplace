@@ -273,114 +273,9 @@
 export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
     const now = Date.now();
 
-<<<<<<< Updated upstream
-        try {
-            // USDC.pol is always $1
-            if (tokenAddress === USDC_POL_ADDRESS) {
-                const price = 1.0;
-                priceCache[tokenAddress] = { price, timestamp: now };
-                return price;
-            }
-
-            // For Native VTRU (zero address), use WVTRU pool for price info
-            const actualTokenAddress = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
-
-            // Find pool between this token and USDC.pol
-            const { poolAddress, fee } = await getUniswapPool(actualTokenAddress, USDC_POL_ADDRESS, provider);
-
-            if (!poolAddress) {
-                throw new Error(`No USDC liquidity pool found for token ${tokenAddress}`);
-            }
-
-            const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
-
-            // Get tokens in correct order
-            const token0 = await pool.token0();
-            const token1 = await pool.token1();
-
-            // Get the tick value for price calculation
-            const { tick } = await pool.slot0();
-
-            // Get token decimals
-            const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
-            const usdcContract = new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider);
-
-            const tokenDecimals = Number(await tokenContract.decimals());
-            const usdcDecimals = Number(await usdcContract.decimals());
-
-            // Determine token position in the pool
-            const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
-
-            // Calculate price using tick
-            const tickNum = Number(tick);
-            let rawPrice;
-
-            // Use high-precision calculation for all tick values
-            try {
-                if (Math.abs(tickNum) > 50000) {
-                    // For very extreme tick values, use logarithmic approach
-                    const logBase = Math.log(1.0001);
-                    const logResult = tickNum * logBase;
-                    rawPrice = Math.exp(logResult);
-                } else {
-                    // For normal ticks, direct calculation
-                    rawPrice = Math.pow(1.0001, tickNum);
-                }
-            } catch (mathError) {
-                console.warn(`Math calculation failed for tick ${tickNum}, using fallback`, mathError);
-                // Fallback calculation for extreme values
-                rawPrice = Math.exp(tickNum * Math.log(1.0001));
-            }
-
-            // Apply token position adjustment
-            let price;
-            if (isTokenToken0) {
-                // If our token is token0, we need price0/price1 (inverse)
-                price = 1 / rawPrice;
-            } else {
-                // If our token is token1, we need price1/price0 (direct)
-                price = rawPrice;
-            }
-
-            // Apply decimal adjustment - CORRECTED FORMULA
-            // For tokens with more decimals than USDC, we need to DIVIDE by the difference
-            // For tokens with fewer decimals than USDC, we need to MULTIPLY by the difference  
-            const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
-            price = price * decimalAdjustment;
-
-            // SPECIAL CASE: Only apply scientific formula to VTRU/WVTRU for extreme ticks
-            // This is a known issue with these specific tokens
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) && Math.abs(tickNum) > 300000) {
-                // Use scientific formula only for VTRU/WVTRU extreme ticks
-                price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                console.log(`Applied scientific formula for VTRU/WVTRU extreme tick ${tickNum}: ${price}`);
-            }
-
-            // Enhanced price validation - reject unreasonable prices
-            if (price <= 0 || !isFinite(price) || isNaN(price)) {
-                throw new Error(`Invalid price calculated: ${price}`);
-            }
-
-            // For non-VTRU/WVTRU tokens, reject extremely high or low prices that indicate calculation errors
-            if (tokenAddress !== ethers.ZeroAddress && tokenAddress !== WVTRU_ADDRESS) {
-                if (price > 1000000 || price < 0.00000001) {
-                    throw new Error(`Unreasonable price calculated: ${price} - likely calculation error from extreme tick`);
-                }
-            }
-
-            // Cache the result
-            priceCache[tokenAddress] = { price, timestamp: now };
-
-            return price;
-        } catch (error) {
-            console.error(`Error fetching price for ${tokenAddress}:`, error);
-            throw error;
-        }
-=======
     // Check cache first
     if (priceCache[tokenAddress] && (now - priceCache[tokenAddress].timestamp) < PRICE_CACHE_DURATION) {
         return priceCache[tokenAddress].price;
->>>>>>> Stashed changes
     }
 
     try {
@@ -401,13 +296,15 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
             throw new Error(`No USDC liquidity pool found for token ${tokenAddress}`);
         }
 
-        console.log(`Using Uniswap pool ${poolAddress} with fee tier ${fee} for ${getTokenSymbol(tokenAddress)}`);
+        console.log(`Found pool ${poolAddress} for ${getTokenSymbol(tokenAddress)}/USDC with fee ${fee}%`);
 
         const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
 
         // Get tokens in correct order
         const token0 = await pool.token0();
         const token1 = await pool.token1();
+
+        console.log(`Pool tokens: token0=${token0}, token1=${token1}`);
 
         // Get the tick value for price calculation
         const { tick } = await pool.slot0();
@@ -419,40 +316,66 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         const tokenDecimals = Number(await tokenContract.decimals());
         const usdcDecimals = Number(await usdcContract.decimals());
 
+        console.log(`Pool tick: ${tick}`);
+        console.log(`Token decimals: ${tokenDecimals}, USDC decimals: ${usdcDecimals}`);
+
         // Determine token position in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-        // Calculate price using tick - GUARANTEED MATHEMATICAL APPROACH FOR ALL TICK VALUES
+        // Calculate price using tick
         const tickNum = Number(tick);
+        let rawPrice;
 
-        console.log(`Raw tick from Uniswap for ${getTokenSymbol(tokenAddress)}: ${tickNum}`);
+        // Use logarithmic calculation for extreme tick values
+        if (Math.abs(tickNum) > 50000) {
+            console.log(`Used logarithmic calculation for extreme tick ${tickNum}`);
+            const logBase = Math.log(1.0001);
+            const logResult = tickNum * logBase;
+            rawPrice = Math.exp(logResult);
+        } else {
+            // For normal ticks, direct calculation
+            rawPrice = Math.pow(1.0001, tickNum);
+        }
 
-        // Always use logarithmic calculation for ALL tick values to ensure precision
-        // This mathematical formula works correctly for ALL possible tick values
-        const logBase = Math.log(1.0001);
-        const exponent = tickNum * logBase;
-        const rawPrice = Math.exp(exponent);
+        console.log(`Raw calculated price for ${getTokenSymbol(tokenAddress)}: $${rawPrice}`);
 
         // Apply token position adjustment
-        const positionAdjustedPrice = isTokenToken0 ? (1 / rawPrice) : rawPrice;
+        let price;
+        if (isTokenToken0) {
+            // If our token is token0, we need price0/price1 (inverse)
+            price = 1 / rawPrice;
+        } else {
+            // If our token is token1, we need price1/price0 (direct)
+            price = rawPrice;
+        }
 
-        // Apply decimal adjustment (CRITICAL for correct price)
+        // Apply decimal adjustment - CORRECTED FORMULA
+        // For tokens with more decimals than USDC, we need to DIVIDE by the difference
+        // For tokens with fewer decimals than USDC, we need to MULTIPLY by the difference  
         const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
-        const price = positionAdjustedPrice * decimalAdjustment;
+        price = price * decimalAdjustment;
 
-        // Detailed log for diagnostic purposes
-        console.log('Price calculation details:', {
-            token: getTokenSymbol(tokenAddress),
-            poolAddress,
-            tick: tickNum,
-            isToken0: isTokenToken0,
-            rawCalculation: Math.exp(tickNum * Math.log(1.0001)),
-            positionAdjustedPrice,
-            decimalAdjustment,
-            finalPrice: price,
-            tokenDecimals,
-            usdcDecimals
-        });
+        // SPECIAL CASE: Only apply scientific formula to VTRU/WVTRU for extreme ticks
+        // This is a known issue with these specific tokens
+        if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) && Math.abs(tickNum) > 300000) {
+            // Use scientific formula only for VTRU/WVTRU extreme ticks
+            price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
+            console.log(`Applied scientific formula for VTRU/WVTRU extreme tick ${tickNum}: ${price}`);
+        }
+
+        console.log(`Final calculated price for ${getTokenSymbol(tokenAddress)}: $${price}`);
+
+        // Enhanced price validation - reject unreasonable prices
+        if (price <= 0 || !isFinite(price) || isNaN(price)) {
+            throw new Error(`Invalid price calculated: ${price}`);
+        }
+
+        // For non-VTRU/WVTRU tokens, reject extremely high or low prices that indicate calculation errors
+        if (tokenAddress !== ethers.ZeroAddress && tokenAddress !== WVTRU_ADDRESS) {
+            if (price > 1000000 || price < 0.00000001) {
+                throw new Error(`Unreasonable price calculated: ${price} - likely calculation error from extreme tick`);
+            }
+        }
 
         // Cache the result
         priceCache[tokenAddress] = { price, timestamp: now };
