@@ -1476,6 +1476,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             debugLog(`Auto-caching DISABLED to prevent mass data collection to Supabase`);
             debugLog(`Found ${res.length} listings - caching disabled to prevent database overload`);
 
+            // Auto-caching disabled to prevent mass data collection
+            const shouldCache = false;
             
             if (shouldCache && supabaseConnected && res.length > 0 && cacheListings) {
                 try {
