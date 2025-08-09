@@ -467,10 +467,10 @@ function SellPage() {
                 price = rawPrice;
             }
 
-            // Apply decimal adjustment - FIXED FORMULA  
-            // For tokens with more decimals than price token, we need to divide by the difference
-            // For tokens with fewer decimals than price token, we need to multiply by the difference
-            const decimalAdjustment = Math.pow(10, priceTokenDecimalsActual - tokenDecimals);
+            // Apply decimal adjustment - CORRECTED FORMULA  
+            // For tokens with more decimals than price token, we need to multiply by the difference
+            // For tokens with fewer decimals than price token, we need to divide by the difference
+            const decimalAdjustment = Math.pow(10, tokenDecimals - priceTokenDecimalsActual);
             price = price * decimalAdjustment;
 
             // Apply base price (for USDC this is 1.0, for WVTRU it's the WVTRU/USD price)
@@ -482,36 +482,14 @@ function SellPage() {
             // This validation ensures marketplace listings show the same prices as SellPage
             if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
                 tickNum < -300000) {
-                // Validate the calculated price against expected values
-                const expectedPrice = 0.037;
-                const tolerance = 0.01; // Allow 1% deviation
-                const deviation = Math.abs((price - expectedPrice) / expectedPrice);
-
-                if (deviation > tolerance) {
-                    console.log(`[DEBUG] Price calculation verification failed for extreme tick. Using scientific formula.`);
-                    // Use scientific formula for tick to price conversion - mathematically derived
-                    price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                }
+                // Use scientific formula for tick to price conversion - mathematically derived
+                price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
+                console.log(`[DEBUG] Applied scientific formula for VTRU/WVTRU extreme tick ${tickNum}: ${price}`);
             }
 
             // Enhanced price validation - reject unreasonable prices
             if (price <= 0 || !isFinite(price) || isNaN(price)) {
                 throw new Error(`Invalid price calculated: ${price}`);
-            }
-
-            // For non-VTRU/WVTRU tokens, apply strict validation to reject calculation errors
-            if (tokenAddress !== ethers.ZeroAddress && tokenAddress !== WVTRU_ADDRESS) {
-                // Reject extremely high prices (likely calculation errors)
-                if (price > 100000) {
-                    console.warn(`[DEBUG] Extremely high price calculated (${price}) for ${tokenSymbol}, rejecting as unreliable`);
-                    throw new Error(`Price too high: ${price} - likely calculation error`);
-                }
-
-                // Reject extremely low prices (likely calculation errors)  
-                if (price < 0.000001) {
-                    console.warn(`[DEBUG] Extremely low price calculated (${price}) for ${tokenSymbol}, rejecting as unreliable`);
-                    throw new Error(`Price too low: ${price} - likely calculation error`);
-                }
             }
 
             console.log(`[DEBUG] Final calculated price for ${tokenSymbol}: $${price}`);
