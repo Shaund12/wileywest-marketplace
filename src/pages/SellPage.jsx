@@ -1361,40 +1361,60 @@ function SellPage() {
                                                 <p>Loading token information from Uniswap...</p>
                                             </div>
                                         ) : (
-                                            <div className="token-selector">
-                                                {paymentOptions.map(option => (
-                                                    <div
-                                                        className={`token-option ${formData.paymentToken === option.address ? 'selected' : ''} ${option.error ? 'has-error' : ''}`}
-                                                        key={option.address}
+                                            <div className="token-dropdown-container">
+                                                <div className="token-dropdown-wrapper">
+                                                    <select
+                                                        className="token-dropdown"
+                                                        value={formData.paymentToken}
+                                                        onChange={handlePaymentTokenChange}
                                                     >
-                                                        <input
-                                                            type="radio"
-                                                            id={`token-${option.address}`}
-                                                            name="paymentToken"
-                                                            value={option.address}
-                                                            checked={formData.paymentToken === option.address}
-                                                            onChange={handlePaymentTokenChange}
-                                                        />
-                                                        <label htmlFor={`token-${option.address}`} className="token-label">
-                                                            <div className="token-info">
-                                                                <div className="token-name">{option.name}</div>
-                                                                <div className="token-full-name">{option.fullName}</div>
-                                                            </div>
-                                                            <div className="token-price-info">
-                                                                {option.price !== null ? (
-                                                                    <div className="token-price">
-                                                                        ${option.price < 0.01 ? option.price.toFixed(6) : option.price.toFixed(2)} USD
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="token-price-unknown">No price data</div>
-                                                                )}
-                                                                <div className={`price-source ${option.error ? 'error' : ''}`} title={option.error}>
-                                                                    {option.error ? '⚠️ ' + option.error : option.priceSource}
-                                                                </div>
-                                                            </div>
-                                                        </label>
+                                                        <option value="" disabled>Select payment token</option>
+                                                        {paymentOptions.map(option => (
+                                                            <option key={option.address} value={option.address}>
+                                                                {option.name} - ${option.price !== null ? 
+                                                                    (option.price < 0.01 ? option.price.toFixed(6) : option.price.toFixed(2)) 
+                                                                    : 'No price'} USD
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <div className="dropdown-icon">
+                                                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                                            <path d="M7 10l5 5 5-5z"/>
+                                                        </svg>
                                                     </div>
-                                                ))}
+                                                </div>
+
+                                                {formData.paymentToken && paymentOptions.length > 0 && (
+                                                    <div className="selected-token-details">
+                                                        {(() => {
+                                                            const selectedOption = paymentOptions.find(option => option.address === formData.paymentToken);
+                                                            if (!selectedOption) return null;
+                                                            
+                                                            return (
+                                                                <div className={`token-details-card ${selectedOption.error ? 'has-error' : ''}`}>
+                                                                    <div className="token-details-header">
+                                                                        <div className="token-details-info">
+                                                                            <div className="token-details-name">{selectedOption.name}</div>
+                                                                            <div className="token-details-full-name">{selectedOption.fullName}</div>
+                                                                        </div>
+                                                                        <div className="token-details-price-info">
+                                                                            {selectedOption.price !== null ? (
+                                                                                <div className="token-details-price">
+                                                                                    ${selectedOption.price < 0.01 ? selectedOption.price.toFixed(6) : selectedOption.price.toFixed(2)} USD
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="token-details-price-unknown">No price data</div>
+                                                                            )}
+                                                                            <div className={`token-details-source ${selectedOption.error ? 'error' : ''}`} title={selectedOption.error}>
+                                                                                {selectedOption.error ? '⚠️ ' + selectedOption.error : selectedOption.priceSource}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+                                                )}
 
                                                 {paymentOptions.length === 0 && (
                                                     <div className="no-tokens-message">
