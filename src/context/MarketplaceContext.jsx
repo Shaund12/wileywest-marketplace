@@ -1012,10 +1012,11 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         setStatus('Loading listings...');
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
+        // Initialize variables at function scope to ensure proper scoping
+        let cachedListings = [];
+        let shouldCheckBlockchain = true; // Default to checking blockchain
+        
         try {
-            // Initialize variables for proper scoping
-            let cachedListings = [];
-            let shouldCheckBlockchain = true; // Default to checking blockchain
 
             // Step 1: Try to load from cache first (unless force refresh)
             if (!forceRefresh && supabaseConnected && getCachedListings) {
@@ -1470,6 +1471,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             debugLog(`Auto-caching DISABLED to prevent mass data collection to Supabase`);
             debugLog(`Found ${res.length} listings - caching disabled to prevent database overload`);
 
+            // Disable caching to prevent mass data collection
+            const shouldCache = false;
             
             if (shouldCache && supabaseConnected && res.length > 0 && cacheListings) {
                 try {
