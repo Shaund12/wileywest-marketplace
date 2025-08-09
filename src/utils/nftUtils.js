@@ -26,12 +26,14 @@ export const MARKETPLACE_CONFIG = {
     MAX_CONCURRENT_METADATA_FETCHES: 3,
     MAX_CONCURRENT_CONTRACT_CALLS: 2,
     
-    // Fallback settings
-    DEFAULT_NFT_PLACEHOLDER: '/placeholders/nft-placeholder.jpg',
+    // Fallback settings - Updated with more CORS-friendly gateways  
+    DEFAULT_NFT_PLACEHOLDER: 'https://picsum.photos/seed/default/300/300',
     IPFS_GATEWAYS: [
-        'https://cloudflare-ipfs.com/ipfs/',
-        'https://ipfs.io/ipfs/',
-        'https://gateway.pinata.cloud/ipfs/'
+        'https://cloudflare-ipfs.com/ipfs/',  // Most reliable for CORS
+        'https://ipfs.io/ipfs/',              // Official gateway
+        'https://dweb.link/ipfs/',            // Protocol Labs gateway
+        'https://gateway.pinata.cloud/ipfs/', // Pinata gateway
+        'https://ipfs.fleek.co/ipfs/'         // Fleek gateway
     ]
 };
 
