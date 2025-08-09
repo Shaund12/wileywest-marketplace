@@ -1361,21 +1361,100 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
                         debugLog(`Token URI for listing ${i}: ${tokenURI}`);
 
-                        // Resolve IPFS URI
-                        const resolvedURI = tokenURI.startsWith('ipfs://')
-                            ? tokenURI.replace('ipfs://', 'https://ipfs.io/ipfs/')
-                            : tokenURI;
+                        // Enhanced metadata fetching with multiple IPFS gateway fallbacks
+                        const ipfsGateways = [
+                            'https://ipfs.io/ipfs/',
+                            'https://cloudflare-ipfs.com/ipfs/',
+                            'https://gateway.pinata.cloud/ipfs/',
+                            'https://ipfs.fleek.co/ipfs/',
+                            'https://dweb.link/ipfs/'
+                        ];
 
-                        // Fetch metadata
-                        const response = await fetch(resolvedURI);
-                        const metadataJson = await response.json();
+                        // Resolve IPFS URI with gateway fallbacks
+                        let resolvedURI;
+                        if (tokenURI.startsWith('ipfs://')) {
+                            resolvedURI = tokenURI.replace('ipfs://', ipfsGateways[0]);
+                        } else {
+                            resolvedURI = tokenURI;
+                        }
+
+                        // Fetch metadata with retries and gateway fallbacks
+                        let metadata = null;
+                        let fetchSuccess = false;
                         
-                        // Normalize metadata using utility function
-                        metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
+                        // Try primary URL first
+                        try {
+                            const response = await fetch(resolvedURI, { 
+                                method: 'GET',
+                                headers: {
+                                    'Accept': 'application/json, text/plain, */*',
+                                    'Cache-Control': 'no-cache'
+                                },
+                                timeout: 10000 // 10 second timeout
+                            });
+                            
+                            if (response.ok) {
+                                const metadataJson = await response.json();
+                                metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
+                                fetchSuccess = true;
+                                debugLog(`Successfully fetched metadata from primary source for listing ${i}`);
+                            }
+                        } catch (primaryError) {
+                            debugWarn(`Primary metadata fetch failed for listing ${i}:`, primaryError.message);
+                        }
+
+                        // Try IPFS gateway fallbacks if primary failed and this is an IPFS URL
+                        if (!fetchSuccess && tokenURI.startsWith('ipfs://')) {
+                            const ipfsHash = tokenURI.replace('ipfs://', '');
+                            
+                            for (let gatewayIndex = 1; gatewayIndex < ipfsGateways.length; gatewayIndex++) {
+                                try {
+                                    const fallbackURL = `${ipfsGateways[gatewayIndex]}${ipfsHash}`;
+                                    debugLog(`Trying IPFS gateway fallback ${gatewayIndex}: ${fallbackURL}`);
+                                    
+                                    const response = await fetch(fallbackURL, {
+                                        method: 'GET',
+                                        headers: {
+                                            'Accept': 'application/json, text/plain, */*',
+                                            'Cache-Control': 'no-cache'
+                                        },
+                                        timeout: 8000 // Shorter timeout for fallbacks
+                                    });
+                                    
+                                    if (response.ok) {
+                                        const metadataJson = await response.json();
+                                        metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
+                                        fetchSuccess = true;
+                                        debugLog(`Successfully fetched metadata from IPFS gateway ${gatewayIndex} for listing ${i}`);
+                                        break;
+                                    }
+                                } catch (fallbackError) {
+                                    debugWarn(`IPFS gateway ${gatewayIndex} failed for listing ${i}:`, fallbackError.message);
+                                }
+                            }
+                        }
+
+                        // If all metadata fetch attempts failed, create fallback metadata
+                        if (!fetchSuccess) {
+                            debugWarn(`All metadata fetch attempts failed for listing ${i}, using fallback`);
+                            metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
+                        }
 
                         debugLog(`Metadata for listing ${i}:`, metadata);
 
                         if (metadata.name) name = metadata.name;
+
+                        // Enhanced image resolution with IPFS gateway support
+                        if (metadata.image) {
+                            image = metadata.image;
+                            
+                            // If metadata image is also IPFS, ensure it uses a working gateway
+                            if (image.startsWith('ipfs://')) {
+                                image = image.replace('ipfs://', ipfsGateways[0]);
+                            }
+                            
+                            debugLog(`Image URL for listing ${i}: ${image}`);
+                        }
 
                         // Enhanced collection name resolution with multiple fallbacks
                         if (!collectionName || collectionName.includes('Collection 0x')) {
@@ -1407,11 +1486,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                                     console.log(`🔤 Using first words of description: ${collectionName}`);
                                 }
                             }
-                        }
-
-                        if (metadata.image) {
-                            image = metadata.image;
-                            debugLog(`Image URL for listing ${i}: ${image}`);
                         }
                     } catch (error) {
                         debugWarn(`Failed to fetch metadata for listing ${i}:`, error);

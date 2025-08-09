@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './PlaceholderImage.css';
 
 function PlaceholderImage({ 
@@ -7,18 +7,78 @@ function PlaceholderImage({
     className = '', 
     seed = 'default',
     width = 300,
-    height = 300 
+    height = 300,
+    // New props for better NFT handling
+    contractAddress = null,
+    tokenId = null,
+    metadata = null
 }) {
     const [imageError, setImageError] = useState(false);
     const [imageLoading, setImageLoading] = useState(true);
+    const [currentSrc, setCurrentSrc] = useState(src);
+    const [fallbackAttempts, setFallbackAttempts] = useState(0);
+
+    // Enhanced image source resolution with metadata fallbacks
+    const getImageSources = () => {
+        const sources = [];
+        
+        // Primary source
+        if (src && typeof src === 'string' && src.trim() !== '') {
+            sources.push(src.trim());
+        }
+        
+        // Metadata-based fallbacks
+        if (metadata) {
+            if (metadata.image) sources.push(metadata.image);
+            if (metadata.image_url) sources.push(metadata.image_url);
+            if (metadata.imageUrl) sources.push(metadata.imageUrl);
+            if (metadata.animation_url) sources.push(metadata.animation_url);
+        }
+        
+        // Remove duplicates and process IPFS URLs
+        const uniqueSources = [...new Set(sources)].map(source => {
+            if (source.startsWith('ipfs://')) {
+                return source.replace('ipfs://', 'https://ipfs.io/ipfs/');
+            }
+            return source;
+        });
+        
+        return uniqueSources;
+    };
+
+    const imageSources = getImageSources();
+
+    // Reset states when src changes
+    useEffect(() => {
+        setImageError(false);
+        setImageLoading(true);
+        setFallbackAttempts(0);
+        setCurrentSrc(src);
+    }, [src]);
 
     const handleImageError = () => {
+        console.log(`Image load failed for: ${currentSrc}`);
+        
+        // Try next fallback source
+        if (fallbackAttempts < imageSources.length - 1) {
+            const nextAttempt = fallbackAttempts + 1;
+            const nextSrc = imageSources[nextAttempt];
+            console.log(`Trying fallback ${nextAttempt}: ${nextSrc}`);
+            setFallbackAttempts(nextAttempt);
+            setCurrentSrc(nextSrc);
+            setImageLoading(true);
+            return;
+        }
+        
+        // All sources failed
         setImageError(true);
         setImageLoading(false);
     };
 
     const handleImageLoad = () => {
+        console.log(`Image loaded successfully: ${currentSrc}`);
         setImageLoading(false);
+        setImageError(false);
     };
 
     // Generate a deterministic color based on seed
@@ -52,7 +112,8 @@ function PlaceholderImage({
         height: height
     };
 
-    if (imageError || !src) {
+    // Show placeholder if no image sources available or all failed
+    if ((imageSources.length === 0) || (imageError && fallbackAttempts >= imageSources.length - 1)) {
         return (
             <div 
                 className={`placeholder-image ${className}`}
@@ -80,12 +141,13 @@ function PlaceholderImage({
                 </div>
             )}
             <img
-                src={src}
+                src={currentSrc}
                 alt={alt}
                 className={`nft-image ${imageLoading ? 'loading' : ''}`}
                 onError={handleImageError}
                 onLoad={handleImageLoad}
                 style={{ display: imageLoading ? 'none' : 'block' }}
+                key={`${currentSrc}-${fallbackAttempts}`} // Force re-render on source change
             />
         </div>
     );

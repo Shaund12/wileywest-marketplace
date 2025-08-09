@@ -31,8 +31,33 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
 
     const isOwner = wallet && listing.seller.toLowerCase() === wallet.toLowerCase();
 
-    // Use the actual NFT image from metadata if available
-    const imageUrl = listing.metadata?.image || listing.image || listing.imageUrl;
+    // Enhanced image URL resolution with multiple fallbacks
+    const getImageUrl = () => {
+        // Try multiple image sources in order of preference
+        const sources = [
+            listing.metadata?.image,
+            listing.image,
+            listing.imageUrl,
+            listing.metadata?.image_url,
+            listing.metadata?.imageUrl,
+            listing.metadata?.animation_url // Some NFTs use animation_url for images
+        ];
+        
+        for (const source of sources) {
+            if (source && typeof source === 'string' && source.trim() !== '') {
+                // Resolve IPFS URLs to HTTPS
+                if (source.startsWith('ipfs://')) {
+                    return source.replace('ipfs://', 'https://ipfs.io/ipfs/');
+                }
+                // Return other valid URLs as-is
+                return source.trim();
+            }
+        }
+        
+        return null; // No valid image URL found
+    };
+    
+    const imageUrl = getImageUrl();
     const imageSeed = `${listing.nftContract}${listing.tokenId}`;
 
     // Use centralized collection name resolution
@@ -93,6 +118,9 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
                     seed={imageSeed}
                     width={300}
                     height={200}
+                    contractAddress={listing.nftContract}
+                    tokenId={listing.tokenId}
+                    metadata={listing.metadata}
                 />
             </div>
 
