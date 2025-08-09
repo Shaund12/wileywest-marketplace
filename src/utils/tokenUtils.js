@@ -343,22 +343,29 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
             }
 
             // Apply decimal adjustment - CORRECTED FORMULA
-            // For tokens with more decimals than USDC, we need to multiply by the difference
-            // For tokens with fewer decimals than USDC, we need to divide by the difference  
-            const decimalAdjustment = Math.pow(10, tokenDecimals - usdcDecimals);
+            // For tokens with more decimals than USDC, we need to DIVIDE by the difference
+            // For tokens with fewer decimals than USDC, we need to MULTIPLY by the difference  
+            const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
             price = price * decimalAdjustment;
 
-            // CRITICAL: Handle ALL tokens with extreme ticks using scientific formula
-            // This prevents calculation overflow and provides consistent pricing
-            if (Math.abs(tickNum) > 300000) {
-                // Use scientific formula for all extreme ticks to prevent overflow
+            // SPECIAL CASE: Only apply scientific formula to VTRU/WVTRU for extreme ticks
+            // This is a known issue with these specific tokens
+            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) && Math.abs(tickNum) > 300000) {
+                // Use scientific formula only for VTRU/WVTRU extreme ticks
                 price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                console.log(`Applied scientific formula for extreme tick ${tickNum}: ${price}`);
+                console.log(`Applied scientific formula for VTRU/WVTRU extreme tick ${tickNum}: ${price}`);
             }
 
             // Enhanced price validation - reject unreasonable prices
             if (price <= 0 || !isFinite(price) || isNaN(price)) {
                 throw new Error(`Invalid price calculated: ${price}`);
+            }
+
+            // For non-VTRU/WVTRU tokens, reject extremely high or low prices that indicate calculation errors
+            if (tokenAddress !== ethers.ZeroAddress && tokenAddress !== WVTRU_ADDRESS) {
+                if (price > 1000000 || price < 0.00000001) {
+                    throw new Error(`Unreasonable price calculated: ${price} - likely calculation error from extreme tick`);
+                }
             }
 
             // Cache the result
