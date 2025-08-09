@@ -265,7 +265,7 @@ async function getUniswapPool(tokenA, tokenB, provider) {
 }
 
 /**
- * Fetch token price in USDC from Uniswap V3
+ * Fetch token price in USDC from BlockScout API with proper Uniswap V3 fallback
  * @param {string} tokenAddress - Token address (use ethers.ZeroAddress for native VTRU)
  * @param {ethers.providers.Provider} provider - Ethers provider
  * @returns {Promise<number>} Price in USDC
@@ -286,10 +286,34 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
             return price;
         }
 
-        // For Native VTRU (zero address), use WVTRU pool for price info
+        // For Native VTRU (zero address), use WVTRU for price info
         const actualTokenAddress = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
 
-        // Find pool between this token and USDC.pol
+        // Try BlockScout API first - ALWAYS prefer API data over direct contract calls
+        try {
+            // BlockScout API endpoint for token info
+            const response = await fetch(`https://explorer-new.vitruveo.xyz/api/v2/tokens/${actualTokenAddress}`);
+
+            if (response.ok) {
+                const data = await response.json();
+
+                // Check if API returned price data
+                if (data && data.exchange_rate && data.exchange_rate !== "0") {
+                    const price = parseFloat(data.exchange_rate);
+                    console.log(`API price for ${getTokenSymbol(tokenAddress)}: $${price}`);
+
+                    // Cache the result
+                    priceCache[tokenAddress] = { price, timestamp: now };
+                    return price;
+                }
+            }
+
+            console.log(`No price data from API for ${getTokenSymbol(tokenAddress)}, falling back to Uniswap math`);
+        } catch (apiError) {
+            console.warn(`API price fetch failed for ${tokenAddress}, falling back to Uniswap calculations`, apiError);
+        }
+
+        // If API fails, use proper Uniswap V3 math
         const { poolAddress, fee } = await getUniswapPool(actualTokenAddress, USDC_POL_ADDRESS, provider);
 
         if (!poolAddress) {
@@ -300,49 +324,45 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
 
         const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
 
-        // Get tokens in correct order
-        const token0 = await pool.token0();
-        const token1 = await pool.token1();
+        // Get tokens in correct order and slot0 data
+        const [token0, token1, slot0Data] = await Promise.all([
+            pool.token0(),
+            pool.token1(),
+            pool.slot0()
+        ]);
 
-        // Get slot0 data for current price
-        const { sqrtPriceX96, tick } = await pool.slot0();
-        console.log(`Pool tick for ${getTokenSymbol(tokenAddress)}: ${tick}`);
+        const { sqrtPriceX96 } = slot0Data;
 
-        // Get token decimals from contracts
-        const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
-        const usdcContract = new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider);
+        // Get token decimals
+        const [tokenDecimals, usdcDecimals] = await Promise.all([
+            (await new ethers.Contract(actualTokenAddress, ERC20_ABI, provider).decimals()).toString(),
+            (await new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider).decimals()).toString()
+        ]);
 
-        const tokenDecimals = Number(await tokenContract.decimals());
-        const usdcDecimals = Number(await usdcContract.decimals());
-
-        // Determine which token is which in the pool
+        // Determine token positions
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
-        const isUsdcToken0 = token0.toLowerCase() === USDC_POL_ADDRESS.toLowerCase();
 
+        // Calculate price using sqrtPriceX96 - THE CORRECT WAY
+        const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
+        const Q96 = BigInt(2) ** BigInt(96);
+
+        // Convert to decimal for math operations
+        const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
+        const priceRatio = sqrtPrice * sqrtPrice;
+
+        // Apply correct formula based on token position
         let price;
-        // FIXED CALCULATION: 1.0001^tick is the price of token1 in terms of token0
-        const tickNumber = Number(tick);
+        const decimalFactor = 10 ** (Number(usdcDecimals) - Number(tokenDecimals));
 
-        // CORRECT FORMULA (PROVEN WORKING):
         if (isTokenToken0) {
-            // If token is token0 (base) and USDC is token1 (quote)
-            // For negative ticks: token0 is worth MORE than token1
-            // For positive ticks: token0 is worth LESS than token1
-            price = Math.pow(1.0001, -tickNumber); // This gives token0 price in terms of token1
+            // If token is token0 and USDC is token1
+            price = priceRatio * decimalFactor;
         } else {
-            // If USDC is token0 (base) and our token is token1 (quote)
-            // For negative ticks: token1 is worth LESS than token0
-            // For positive ticks: token1 is worth MORE than token0
-            price = Math.pow(1.0001, tickNumber); // This gives token1 price in terms of token0
+            // If token is token1 and USDC is token0
+            price = (1 / priceRatio) * decimalFactor;
         }
 
-        // Apply decimal adjustment (this is critically important)
-        if (usdcDecimals !== tokenDecimals) {
-            const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
-            price = price * decimalAdjustment;
-        }
-
-        console.log(`Final ${getTokenSymbol(tokenAddress)} price: $${price}`);
+        console.log(`Calculated price for ${getTokenSymbol(tokenAddress)}: $${price}`);
 
         // Cache the result
         priceCache[tokenAddress] = { price, timestamp: now };
