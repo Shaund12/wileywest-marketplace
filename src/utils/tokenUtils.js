@@ -264,21 +264,16 @@
         }
     }
 
-    /**
-     * Fetch token price in USDC from Uniswap V3
-     * @param {string} tokenAddress - Token address (use ethers.ZeroAddress for native VTRU)
-     * @param {ethers.providers.Provider} provider - Ethers provider
-     * @returns {Promise<number>} Price in USDC
-     */
-    export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
-        const cacheKey = `${tokenAddress}_${Date.now()}`;
-        const now = Date.now();
-        
-        // Check cache first
-        if (priceCache[tokenAddress] && (now - priceCache[tokenAddress].timestamp) < PRICE_CACHE_DURATION) {
-            return priceCache[tokenAddress].price;
-        }
+/**
+ * Fetch token price in USDC from Uniswap V3
+ * @param {string} tokenAddress - Token address (use ethers.ZeroAddress for native VTRU)
+ * @param {ethers.providers.Provider} provider - Ethers provider
+ * @returns {Promise<number>} Price in USDC
+ */
+export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
+    const now = Date.now();
 
+<<<<<<< Updated upstream
         try {
             // USDC.pol is always $1
             if (tokenAddress === USDC_POL_ADDRESS) {
@@ -374,7 +369,93 @@
             console.error(`Error fetching price for ${tokenAddress}:`, error);
             throw error;
         }
+=======
+    // Check cache first
+    if (priceCache[tokenAddress] && (now - priceCache[tokenAddress].timestamp) < PRICE_CACHE_DURATION) {
+        return priceCache[tokenAddress].price;
+>>>>>>> Stashed changes
     }
+
+    try {
+        // USDC.pol is always $1
+        if (tokenAddress === USDC_POL_ADDRESS) {
+            const price = 1.0;
+            priceCache[tokenAddress] = { price, timestamp: now };
+            return price;
+        }
+
+        // For Native VTRU (zero address), use WVTRU pool for price info
+        const actualTokenAddress = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
+
+        // Find pool between this token and USDC.pol
+        const { poolAddress, fee } = await getUniswapPool(actualTokenAddress, USDC_POL_ADDRESS, provider);
+
+        if (!poolAddress) {
+            throw new Error(`No USDC liquidity pool found for token ${tokenAddress}`);
+        }
+
+        console.log(`Using Uniswap pool ${poolAddress} with fee tier ${fee} for ${getTokenSymbol(tokenAddress)}`);
+
+        const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
+
+        // Get tokens in correct order
+        const token0 = await pool.token0();
+        const token1 = await pool.token1();
+
+        // Get the tick value for price calculation
+        const { tick } = await pool.slot0();
+
+        // Get token decimals
+        const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
+        const usdcContract = new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider);
+
+        const tokenDecimals = Number(await tokenContract.decimals());
+        const usdcDecimals = Number(await usdcContract.decimals());
+
+        // Determine token position in the pool
+        const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
+
+        // Calculate price using tick - GUARANTEED MATHEMATICAL APPROACH FOR ALL TICK VALUES
+        const tickNum = Number(tick);
+
+        console.log(`Raw tick from Uniswap for ${getTokenSymbol(tokenAddress)}: ${tickNum}`);
+
+        // Always use logarithmic calculation for ALL tick values to ensure precision
+        // This mathematical formula works correctly for ALL possible tick values
+        const logBase = Math.log(1.0001);
+        const exponent = tickNum * logBase;
+        const rawPrice = Math.exp(exponent);
+
+        // Apply token position adjustment
+        const positionAdjustedPrice = isTokenToken0 ? (1 / rawPrice) : rawPrice;
+
+        // Apply decimal adjustment (CRITICAL for correct price)
+        const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
+        const price = positionAdjustedPrice * decimalAdjustment;
+
+        // Detailed log for diagnostic purposes
+        console.log('Price calculation details:', {
+            token: getTokenSymbol(tokenAddress),
+            poolAddress,
+            tick: tickNum,
+            isToken0: isTokenToken0,
+            rawCalculation: Math.exp(tickNum * Math.log(1.0001)),
+            positionAdjustedPrice,
+            decimalAdjustment,
+            finalPrice: price,
+            tokenDecimals,
+            usdcDecimals
+        });
+
+        // Cache the result
+        priceCache[tokenAddress] = { price, timestamp: now };
+
+        return price;
+    } catch (error) {
+        console.error(`Error fetching price for ${tokenAddress}:`, error);
+        throw error;
+    }
+}
 
     /**
      * Convert token amount to USDC value
