@@ -22,6 +22,13 @@
     // Token addresses - Updated to use USDC.pol
     export const USDC_POL_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
     export const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
+    
+    // New ERC20 payment tokens
+    export const VUSD_ADDRESS = '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA';
+    export const SEVO_ADDRESS = '0x2A34059DF3D60B1864f10F10492746bd26d3D24a';
+    export const WSEVO_ADDRESS = '0x43a36604B6Ad9A4cf8EF600241E90b3DD97E145d';
+    export const VITEX_ADDRESS = '0x4Ed92A1d95d2092973007197794542A5D51FF5a6';
+    export const VTRO_ADDRESS = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
 
     // Uniswap V3 contract addresses
     export const UNISWAP_V3_FACTORY_ADDRESS = '0x6196a7a6108B15a2cc24DdaB41C8CC3098C06351';
@@ -101,6 +108,21 @@
       if (addressLower === WVTRU_ADDRESS.toLowerCase()) {
           return 'WVTRU';
       }
+      if (addressLower === VUSD_ADDRESS.toLowerCase()) {
+          return 'VUSD';
+      }
+      if (addressLower === SEVO_ADDRESS.toLowerCase()) {
+          return 'SEVO';
+      }
+      if (addressLower === WSEVO_ADDRESS.toLowerCase()) {
+          return 'WSEVO';
+      }
+      if (addressLower === VITEX_ADDRESS.toLowerCase()) {
+          return 'VITEX';
+      }
+      if (addressLower === VTRO_ADDRESS.toLowerCase()) {
+          return 'VTRO';
+      }
   
       // Check cache first
       if (tokenDetailsCache[addressLower]?.symbol) {
@@ -135,6 +157,21 @@
         }
         if (addressLower === WVTRU_ADDRESS.toLowerCase()) {
             return 18;
+        }
+        if (addressLower === VUSD_ADDRESS.toLowerCase()) {
+            return 18; // Assume 18 decimals for VUSD
+        }
+        if (addressLower === SEVO_ADDRESS.toLowerCase()) {
+            return 18; // Assume 18 decimals for SEVO
+        }
+        if (addressLower === WSEVO_ADDRESS.toLowerCase()) {
+            return 18; // Assume 18 decimals for WSEVO
+        }
+        if (addressLower === VITEX_ADDRESS.toLowerCase()) {
+            return 18; // Assume 18 decimals for VITEX
+        }
+        if (addressLower === VTRO_ADDRESS.toLowerCase()) {
+            return 18; // Assume 18 decimals for VTRO
         }
     
         // Check cache first

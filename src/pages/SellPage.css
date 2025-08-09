@@ -224,21 +224,30 @@
               0 0 30px rgba(85, 51, 255, 0.3);
 }
 
-/* Form sections */
+/* Enhanced form sections with better spacing */
 .form-section {
-  margin-bottom: 30px;
-  padding-bottom: 30px;
+  margin-bottom: 40px;
+  padding-bottom: 35px;
   border-bottom: 1px solid var(--sell-border);
   animation: fadeIn 0.6s ease-out;
+  position: relative;
+}
+
+.form-section:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
 }
 
 .form-section h3 {
   font-family: 'Orbitron', sans-serif;
-  font-size: 1.3rem;
-  margin-bottom: 20px;
+  font-size: 1.4rem;
+  margin-bottom: 25px;
   color: #ffffff;
   position: relative;
-  padding-left: 15px;
+  padding-left: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 10px rgba(85, 51, 255, 0.3);
 }
 
 .form-section h3::before {
@@ -247,22 +256,25 @@
   left: 0;
   top: 0;
   bottom: 0;
-  width: 4px;
+  width: 5px;
   background: var(--sell-gradient);
-  border-radius: 2px;
+  border-radius: 3px;
+  box-shadow: 0 0 10px rgba(85, 51, 255, 0.5);
 }
 
-/* Enhanced form elements */
+/* Enhanced form elements with better spacing */
 .form-group {
-  margin-bottom: 22px;
+  margin-bottom: 28px;
 }
 
 .form-group label {
   display: block;
-  margin-bottom: 10px;
-  font-size: 0.95rem;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: 'Inter', sans-serif;
+  letter-spacing: 0.01em;
 }
 
 .input {
@@ -339,122 +351,251 @@
   color: rgba(255, 255, 255, 0.5);
 }
 
-/* Enhanced token selector */
+/* ULTRA ENHANCED TOKEN DROPDOWN - SPACE-EFFICIENT PAYMENT SELECTION */
 .payment-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 15px;
+  margin-bottom: 25px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid rgba(85, 51, 255, 0.2);
+}
+
+.payment-header label {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: 'Orbitron', sans-serif;
 }
 
 .add-token-button {
-  background: none;
-  border: none;
+  background: linear-gradient(135deg, rgba(85, 51, 255, 0.2), rgba(255, 51, 102, 0.2));
+  border: 1px solid rgba(85, 51, 255, 0.3);
   color: var(--sell-primary);
   font-size: 0.9rem;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
   font-weight: 500;
+  padding: 8px 16px;
+  border-radius: 20px;
+  backdrop-filter: blur(5px);
+  position: relative;
+  overflow: hidden;
+}
+
+.add-token-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
+  transition: all 0.6s ease;
+}
+
+.add-token-button:hover::before {
+  left: 100%;
 }
 
 .add-token-button:hover {
-  color: var(--sell-secondary);
-  text-shadow: 0 0 10px rgba(85, 51, 255, 0.5);
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, rgba(85, 51, 255, 0.3), rgba(255, 51, 102, 0.3));
+  box-shadow: 0 8px 20px rgba(85, 51, 255, 0.4);
+  color: #ffffff;
 }
 
-.token-selector {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-height: 300px;
-  overflow-y: auto;
-  padding-right: 5px;
-  margin-top: 10px;
+/* Token Dropdown Container */
+.token-dropdown-container {
+  margin-top: 20px;
 }
 
-.token-option {
-  background: rgba(26, 28, 37, 0.8);
-  border: 1px solid var(--sell-border);
+.token-dropdown-wrapper {
+  position: relative;
+  margin-bottom: 20px;
+}
+
+.token-dropdown {
+  width: 100%;
+  padding: 16px 20px;
+  padding-right: 50px;
   border-radius: 12px;
-  overflow: hidden;
+  background: linear-gradient(135deg, rgba(26, 28, 37, 0.9), rgba(15, 17, 26, 0.9));
+  border: 1px solid var(--sell-border);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 1rem;
+  font-weight: 500;
+  font-family: 'Inter', sans-serif;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  appearance: none;
+  cursor: pointer;
+}
+
+.token-dropdown:focus {
+  outline: none;
+  border-color: var(--sell-primary);
+  background: linear-gradient(135deg, rgba(26, 28, 37, 0.95), rgba(15, 17, 26, 0.95));
+  box-shadow: 0 0 0 3px rgba(85, 51, 255, 0.25),
+              0 8px 20px rgba(0, 0, 0, 0.3);
+}
+
+.token-dropdown:hover {
+  background: linear-gradient(135deg, rgba(26, 28, 37, 0.95), rgba(15, 17, 26, 0.95));
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3),
+              0 0 15px rgba(85, 51, 255, 0.2);
+}
+
+.token-dropdown option {
+  background: rgba(15, 17, 26, 0.95);
+  color: rgba(255, 255, 255, 0.9);
+  padding: 12px;
+  border: none;
+}
+
+.dropdown-icon {
+  position: absolute;
+  right: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
   transition: all 0.3s ease;
 }
 
-.token-option.selected {
-  border-color: var(--sell-primary);
-  box-shadow: 0 0 15px rgba(85, 51, 255, 0.3);
+.token-dropdown:focus + .dropdown-icon {
+  color: var(--sell-primary);
+  transform: translateY(-50%) rotate(180deg);
 }
 
-.token-option:hover {
-  background: rgba(26, 28, 37, 0.95);
-  transform: translateY(-2px);
+/* Selected Token Details Card */
+.selected-token-details {
+  animation: fadeIn 0.4s ease-out;
 }
 
-.token-option input[type="radio"] {
-  display: none;
+.token-details-card {
+  background: linear-gradient(135deg, rgba(26, 28, 37, 0.9), rgba(15, 17, 26, 0.9));
+  border: 1px solid var(--sell-border);
+  border-radius: 16px;
+  padding: 20px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3),
+              0 0 20px rgba(85, 51, 255, 0.15);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
 }
 
-.token-label {
+.token-details-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, rgba(85, 51, 255, 0.03), rgba(255, 51, 102, 0.03));
+  pointer-events: none;
+}
+
+.token-details-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4),
+              0 0 25px rgba(85, 51, 255, 0.2);
+}
+
+.token-details-card.has-error {
+  border-color: rgba(255, 51, 102, 0.4);
+  background: linear-gradient(135deg, rgba(26, 28, 37, 0.9), rgba(25, 15, 15, 0.9));
+}
+
+.token-details-card.has-error::before {
+  background: linear-gradient(135deg, rgba(255, 51, 102, 0.05), rgba(255, 51, 102, 0.02));
+}
+
+.token-details-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px;
-  cursor: pointer;
-  width: 100%;
+  position: relative;
+  z-index: 1;
 }
 
-.token-info {
+.token-details-info {
   display: flex;
   flex-direction: column;
+  gap: 6px;
 }
 
-.token-name {
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 1rem;
-  margin-bottom: 2px;
+.token-details-name {
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 1.2rem;
+  margin-bottom: 4px;
+  font-family: 'Orbitron', sans-serif;
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
 }
 
-.token-full-name {
-  font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.5);
+.token-details-full-name {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-weight: 400;
+  line-height: 1.2;
 }
 
-.token-price-info {
+.token-details-price-info {
   text-align: right;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.token-price {
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 0.95rem;
-  margin-bottom: 2px;
+.token-details-price {
+  font-weight: 600;
+  color: var(--sell-success);
+  font-size: 1.1rem;
+  margin-bottom: 4px;
+  text-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+  font-family: 'Inter', sans-serif;
 }
 
-.token-price-unknown {
+.token-details-price-unknown {
   font-style: italic;
   color: rgba(255, 255, 255, 0.5);
-  font-size: 0.9rem;
+  font-size: 1rem;
+  font-weight: 500;
 }
 
-.price-source {
-  font-size: 0.75rem;
+.token-details-source {
+  font-size: 0.8rem;
   color: rgba(255, 255, 255, 0.5);
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 12px;
+  white-space: nowrap;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
-.price-source.error {
+.token-details-source.error {
   color: var(--sell-error);
-}
-
-.token-option.has-error {
-  border-color: rgba(255, 51, 102, 0.3);
+  background: rgba(255, 51, 102, 0.1);
+  border: 1px solid rgba(255, 51, 102, 0.2);
 }
 
 .no-tokens-message {
-  padding: 20px;
+  padding: 40px 20px;
   text-align: center;
   color: rgba(255, 255, 255, 0.5);
   font-style: italic;
+  background: rgba(26, 28, 37, 0.8);
+  border: 1px dashed var(--sell-border);
+  border-radius: 16px;
+  backdrop-filter: blur(10px);
+  animation: fadeIn 0.4s ease-out;
 }
 
 /* Custom token form */
@@ -1025,7 +1166,7 @@ button:disabled {
   100% { background-position: 100% 50%; }
 }
 
-/* Responsive Design */
+/* Responsive Design - Enhanced for amazing user experience */
 @media (max-width: 1100px) {
   .sell-layout {
     grid-template-columns: 1fr;
@@ -1039,6 +1180,17 @@ button:disabled {
   
   .premium-image-container {
     height: 350px;
+  }
+
+  .token-details-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+
+  .token-details-price-info {
+    text-align: left;
+    width: 100%;
   }
 }
 
@@ -1063,6 +1215,37 @@ button:disabled {
   .form-row {
     grid-template-columns: 1fr;
   }
+
+  .token-dropdown {
+    padding: 14px 18px;
+    padding-right: 45px;
+    font-size: 0.95rem;
+  }
+
+  .dropdown-icon {
+    right: 12px;
+  }
+
+  .token-details-card {
+    padding: 16px;
+  }
+
+  .token-details-name {
+    font-size: 1.1rem;
+  }
+
+  .token-details-full-name {
+    font-size: 0.85rem;
+  }
+
+  .token-details-price {
+    font-size: 1rem;
+  }
+
+  .form-section h3 {
+    font-size: 1.2rem;
+    margin-bottom: 20px;
+  }
 }
 
 @media (max-width: 480px) {
@@ -1077,6 +1260,48 @@ button:disabled {
   .preview-tabs button {
     padding: 12px 10px;
     font-size: 0.9rem;
+  }
+
+  .token-dropdown {
+    padding: 12px 16px;
+    padding-right: 40px;
+    font-size: 0.9rem;
+  }
+
+  .dropdown-icon {
+    right: 10px;
+  }
+
+  .dropdown-icon svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .token-details-header {
+    gap: 12px;
+  }
+
+  .token-details-name {
+    font-size: 1rem;
+  }
+
+  .token-details-full-name {
+    font-size: 0.8rem;
+  }
+
+  .token-details-price {
+    font-size: 0.95rem;
+  }
+
+  .token-details-source {
+    font-size: 0.75rem;
+    padding: 3px 8px;
+  }
+
+  .payment-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
   }
 }
 
