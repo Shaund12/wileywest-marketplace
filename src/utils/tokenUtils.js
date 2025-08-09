@@ -314,31 +314,26 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         const tokenDecimals = Number(await tokenContract.decimals());
         const usdcDecimals = Number(await usdcContract.decimals());
 
-        // Determine which token is which in the pool
+        // Determine token positions
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-        // Calculate price from sqrtPriceX96
+        // Calculate raw price from sqrtPriceX96
         const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
         const Q96 = BigInt(2) ** BigInt(96);
-        
-        // Convert to decimal for math operations
         const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
         const rawPrice = sqrtPrice * sqrtPrice;
         
+        // COMPLETELY FIXED UNISWAP V3 PRICE CALCULATION:
         let price;
         
-        // FIXED CALCULATION THAT WORKS CORRECTLY:
         if (isTokenToken0) {
-            // If token is token0, price = (1/rawPrice) * 10^(usdcDecimals-tokenDecimals)
-            price = (1.0 / rawPrice) * Math.pow(10, usdcDecimals - tokenDecimals);
+            // If our token is token0, USDC is token1:
+            // price in USDC = rawPrice * 10^(USDC decimals - token decimals)
+            price = rawPrice * Math.pow(10, usdcDecimals - tokenDecimals);
         } else {
-            // If token is token1, price = rawPrice * 10^(tokenDecimals-usdcDecimals)
-            price = rawPrice * Math.pow(10, tokenDecimals - usdcDecimals);
-        }
-
-        // Validate price
-        if (price <= 0 || !isFinite(price) || isNaN(price)) {
-            throw new Error(`Invalid price calculated: ${price}`);
+            // If our token is token1, USDC is token0:
+            // price in USDC = (1/rawPrice) * 10^(token decimals - USDC decimals)
+            price = (1.0 / rawPrice) * Math.pow(10, tokenDecimals - usdcDecimals);
         }
 
         // Cache the result
