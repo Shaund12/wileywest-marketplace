@@ -305,7 +305,7 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         const token1 = await pool.token1();
 
         // Get slot0 data for current price
-        const { sqrtPriceX96, tick } = await pool.slot0();
+        const { sqrtPriceX96 } = await pool.slot0();
 
         // Get token decimals from contracts
         const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
@@ -317,20 +317,27 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-        // CORRECT UNISWAP V3 PRICE CALCULATION FROM TICK
-        // This is the most accurate way to get prices from Uniswap V3
-        const tickPrice = Math.pow(1.0001, tick);
-        console.log(`Pool tick: ${tick}, calculated tick price: ${tickPrice}`);
-
+        // Calculate raw price from sqrtPriceX96
+        const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
+        const Q96 = BigInt(2) ** BigInt(96);
+        
+        // Convert to decimal for math operations
+        const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
+        const rawPrice = sqrtPrice * sqrtPrice;
+        
+        // Calculate the decimal adjustment using normal numbers, not BigInt
+        const decimalAdjustment = 10 ** (isTokenToken0 ? 
+            (usdcDecimals - tokenDecimals) : 
+            (tokenDecimals - usdcDecimals));
+        
+        // Apply token position and decimal adjustment
         let price;
         if (isTokenToken0) {
-            // If our token is token0 (base), USDC is token1 (quote)
-            // Price = 1/tickPrice adjusted for decimals
-            price = (1 / tickPrice) * Math.pow(10, tokenDecimals - usdcDecimals);
+            // If our token is token0, USDC is token1:
+            price = rawPrice * decimalAdjustment;
         } else {
-            // If our token is token1 (quote), USDC is token0 (base) 
-            // Price = tickPrice adjusted for decimals
-            price = tickPrice * Math.pow(10, usdcDecimals - tokenDecimals);
+            // If our token is token1, USDC is token0:
+            price = (1.0 / rawPrice) * decimalAdjustment;
         }
 
         // Cache the result
