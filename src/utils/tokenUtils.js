@@ -301,34 +301,47 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         // Use direct RPC calls to get pool data
         const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
 
-        // Map of token addresses to their known USD values for development
-        const knownTokenValues = {
-            [WVTRU_ADDRESS.toLowerCase()]: 0.0372,         // WVTRU
-            [ethers.ZeroAddress]: 0.0372,                  // VTRU native
-            "0x1d607d8c617a09c638309be2ceb9b4aff42236da": 0.3717, // VUSD
-            "0xdecaf2f187cb837a42d26fa364349abc3e80aa5d": 0.0033, // VTRO
-            "0x2a34059df3d60b1864f10f10492746bd26d3d24a": 0.0064, // SEVO
-            "0x43a36604b6ad9a4cf8ef600241e90b3dd97e145d": 0.0019, // WSEVO
-            "0x4ed92a1d95d2092973007197794542a5d51ff5a6": 0.0055  // VITEX
-        };
+        // Get slot0 data and token arrangement in pool
+        const [token0, token1, slotData, tokenDecimals, usdcDecimals] = await Promise.all([
+            pool.token0(),
+            pool.token1(),
+            pool.slot0(),
+            new ethers.Contract(actualTokenAddress, ERC20_ABI, provider).decimals(),
+            new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider).decimals()
+        ]);
 
-        // Return known good values for development until we can fix the math
-        const lowercaseAddress = actualTokenAddress.toLowerCase();
-        if (knownTokenValues[lowercaseAddress]) {
-            const price = knownTokenValues[lowercaseAddress];
-            console.log(`Using reference price for ${getTokenSymbol(tokenAddress)}: $${price}`);
+        // Extract price data from slot0
+        const { tick } = slotData;
+        const tickValue = Number(tick);
 
-            priceCache[tokenAddress] = { price, timestamp: now };
-            return price;
+        // Determine which token is which in the pool
+        const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
+
+        // Calculate price using tick - 1.0001^tick gives the price of token1 in terms of token0
+        let rawPrice;
+        if (isTokenToken0) {
+            // If token is token0, price = 1/(1.0001^tick)
+            rawPrice = 1 / (Math.pow(1.0001, tickValue));
+        } else {
+            // If token is token1, price = 1.0001^tick
+            rawPrice = Math.pow(1.0001, tickValue);
         }
 
-        // Return a reasonable default for unknown tokens
-        const defaultPrice = 0.01;
-        priceCache[tokenAddress] = { price: defaultPrice, timestamp: now };
-        return defaultPrice;
+        // Apply decimal adjustment
+        const tokenDecimalsValue = Number(tokenDecimals);
+        const usdcDecimalsValue = Number(usdcDecimals);
+        const decimalAdjustment = Math.pow(10, usdcDecimalsValue - tokenDecimalsValue);
 
+        const price = rawPrice * decimalAdjustment;
+
+        console.log(`Calculated price for ${getTokenSymbol(tokenAddress)}: $${price}`);
+
+        // Cache the result
+        priceCache[tokenAddress] = { price, timestamp: now };
+        return price;
     } catch (error) {
         console.error(`Error fetching price for ${tokenAddress}:`, error);
+        // In case of error, we need some reasonable fallback or throw
         throw error;
     }
 }
