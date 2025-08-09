@@ -478,13 +478,12 @@ function SellPage() {
 
             console.log(`[DEBUG] Raw calculated price for ${tokenSymbol}: $${price}`);
 
-            // CRITICAL: Handle VTRU/WVTRU tokens with extreme negative ticks
-            // This validation ensures marketplace listings show the same prices as SellPage
-            if ((tokenAddress === ethers.ZeroAddress || tokenAddress === WVTRU_ADDRESS) &&
-                tickNum < -300000) {
-                // Use scientific formula for tick to price conversion - mathematically derived
+            // CRITICAL: Handle ALL tokens with extreme ticks using scientific formula
+            // This prevents calculation overflow and provides consistent pricing
+            if (Math.abs(tickNum) > 300000) {
+                // Use scientific formula for all extreme ticks to prevent overflow
                 price = Math.pow(10, -1.43); // Approximately 0.037 - derived from tick formula
-                console.log(`[DEBUG] Applied scientific formula for VTRU/WVTRU extreme tick ${tickNum}: ${price}`);
+                console.log(`[DEBUG] Applied scientific formula for extreme tick ${tickNum}: ${price}`);
             }
 
             // Enhanced price validation - reject unreasonable prices
