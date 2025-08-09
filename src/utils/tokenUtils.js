@@ -300,49 +300,51 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
 
         const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
 
-        // Get tokens in correct order
-        const token0 = await pool.token0();
-        const token1 = await pool.token1();
+        // Get tokens in correct order and slot0 data
+        const [token0, token1, slot0Data] = await Promise.all([
+            pool.token0(),
+            pool.token1(),
+            pool.slot0()
+        ]);
 
-        // Get slot0 data for current price
-        const { sqrtPriceX96 } = await pool.slot0();
+        const { tick } = slot0Data;
+        
+        console.log(`Pool tick for ${getTokenSymbol(tokenAddress)}: ${tick}`);
 
-        // Get token decimals from contracts
+        // Get token decimals
         const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
         const usdcContract = new ethers.Contract(USDC_POL_ADDRESS, ERC20_ABI, provider);
         
         const tokenDecimals = Number(await tokenContract.decimals());
         const usdcDecimals = Number(await usdcContract.decimals());
-
+        
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-        // Calculate raw price from sqrtPriceX96
-        const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
-        const Q96 = BigInt(2) ** BigInt(96);
-        
-        // Convert to decimal for math operations
-        const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
-        const rawPrice = sqrtPrice * sqrtPrice;
-        
-        // Calculate the decimal adjustment using normal numbers, not BigInt
-        const decimalAdjustment = 10 ** (isTokenToken0 ? 
-            (usdcDecimals - tokenDecimals) : 
-            (tokenDecimals - usdcDecimals));
-        
-        // Apply token position and decimal adjustment
+        // FIXED UNISWAP V3 PRICE CALCULATION:
+        // Base price from tick = 1.0001^tick
         let price;
+        
+        // Calculate the price from tick (standard Uniswap V3 formula)
         if (isTokenToken0) {
-            // If our token is token0, USDC is token1:
-            price = rawPrice * decimalAdjustment;
+            // If token is token0, USDC is token1
+            // Convert tick to price (1.0001^(-tick))
+            price = Math.pow(1.0001, -Number(tick));
         } else {
-            // If our token is token1, USDC is token0:
-            price = (1.0 / rawPrice) * decimalAdjustment;
+            // If token is token1, USDC is token0
+            // Convert tick to price (1.0001^tick)
+            price = Math.pow(1.0001, Number(tick));
         }
+        
+        // Adjust for decimal differences
+        const decimalAdjustment = Math.pow(10, usdcDecimals - tokenDecimals);
+        price = price * decimalAdjustment;
+
+        console.log(`Calculated price for ${getTokenSymbol(tokenAddress)}: $${price}`);
 
         // Cache the result
         priceCache[tokenAddress] = { price, timestamp: now };
-
+        
         return price;
     } catch (error) {
         console.error(`Error fetching price for ${tokenAddress}:`, error);
