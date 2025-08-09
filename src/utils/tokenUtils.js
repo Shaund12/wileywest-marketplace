@@ -317,45 +317,44 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
 
-        // Calculate the price using sqrtPriceX96
-        // Convert to BigInt for precise computation, then to number
+        // Calculate price using sqrtPriceX96
         const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
         const Q96 = BigInt(2) ** BigInt(96);
 
-        // Calculate price from sqrt price
-        // P = (sqrtP/2^96)^2 with proper ordering
+        // Convert to floating point for math operations
+        const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
+        const rawPrice = sqrtPrice * sqrtPrice;
+
+        console.log(`Raw Uniswap price: ${rawPrice}`);
+
         let price;
+
         if (isTokenToken0) {
-            // If our token is token0, price = 1 / (sqrtPrice^2)
-            // token0/token1 price in Uniswap terms
-            const sqrtP = Number(sqrtPriceBigInt) / Number(Q96);
-            price = 1 / (sqrtP * sqrtP);
+            // If our token is token0, price = 1/rawPrice
+            price = 1.0 / rawPrice;
         } else {
-            // If our token is token1, price = sqrtPrice^2
-            // token1/token0 price in Uniswap terms
-            const sqrtP = Number(sqrtPriceBigInt) / Number(Q96);
-            price = sqrtP * sqrtP;
+            // If our token is token1, price = rawPrice
+            price = rawPrice;
         }
 
         // Apply decimal adjustment based on token decimals
-        // Price needs to be adjusted by 10^(tokenDecimals - usdcDecimals)
-        price = price * Math.pow(10, usdcDecimals - tokenDecimals);
+        const decimalAdjustment = Math.pow(10, tokenDecimals - usdcDecimals);
+        price = price / decimalAdjustment;
 
-        // Log the calculated price
-        console.log(`Raw calculated price: ${price}`);
-        console.log(`Final price for ${getTokenSymbol(tokenAddress)}: $${price}`);
+        console.log(`Price after decimal adjustment: ${price}`);
 
-        // Validate the price is reasonable (no zeros or infinity)
+        // Validate price is a valid number
         if (price <= 0 || !isFinite(price) || isNaN(price)) {
             throw new Error(`Invalid price calculated: ${price}`);
         }
 
         // Cache the result
         priceCache[tokenAddress] = { price, timestamp: now };
+
         return price;
     } catch (error) {
         console.error(`Error fetching price for ${tokenAddress}:`, error);
-        throw error;
+        throw error; // Propagate the error - NO FALLBACKS
     }
 }
 
