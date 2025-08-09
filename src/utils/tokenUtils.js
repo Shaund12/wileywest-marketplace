@@ -316,34 +316,35 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
 
         // Determine which token is which in the pool
         const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
+        const isUsdcToken0 = token0.toLowerCase() === USDC_POL_ADDRESS.toLowerCase();
 
-        // PURE UNISWAP V3 MATH - NO HARDCODED VALUES OR SPECIAL CASES
-        // Calculate price directly from sqrtPriceX96
+        // CORRECTED UNISWAP V3 PRICE CALCULATION
         const sqrtPriceBigInt = BigInt(sqrtPriceX96.toString());
         const Q96 = BigInt(2) ** BigInt(96);
-
-        // Get price with maximum precision
+        
+        // Price = (sqrtPrice/2^96)^2
         const sqrtPrice = Number(sqrtPriceBigInt) / Number(Q96);
         const rawPrice = sqrtPrice * sqrtPrice;
-
-        // Apply token position adjustment
+        
+        // The decimal adjustment depends on token position AND decimals
         let price;
         if (isTokenToken0) {
-            // If our token is token0, price = 1/rawPrice
-            price = 1.0 / rawPrice;
+            // If our token is token0 and USDC is token1: price = 1/rawPrice * 10^(tokenDecimals - usdcDecimals)
+            price = (1.0 / rawPrice) * Math.pow(10, tokenDecimals - usdcDecimals);
         } else {
-            // If our token is token1, price = rawPrice
-            price = rawPrice;
+            // If USDC is token0 and our token is token1: price = rawPrice * 10^(usdcDecimals - tokenDecimals)
+            price = rawPrice * Math.pow(10, usdcDecimals - tokenDecimals);
         }
-
-        // Apply decimal adjustment for different token decimals
-        // This is the CORRECT formula for Uniswap V3 price calculation
-        const decimalAdjustment = Math.pow(10, tokenDecimals - usdcDecimals);
-        price = price / decimalAdjustment;
 
         // Validate price is a valid number
         if (price <= 0 || !isFinite(price) || isNaN(price)) {
             throw new Error(`Invalid price calculated: ${price}`);
+        }
+
+        // Hard safety limits to catch calculation errors - real prices should be in reasonable ranges
+        // Anything outside these ranges indicates a math error
+        if (price > 100000 || price < 0.00000001) {
+            throw new Error(`Price outside reasonable range: ${price}`);
         }
 
         // Cache the result
