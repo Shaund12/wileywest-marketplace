@@ -13,6 +13,13 @@ import {
     isCacheValid,
     scopedClass
 } from '../utils/nftUtils';
+import { 
+    fetchJSON,
+    resolveIPFSWithFallbacks,
+    isCORSError,
+    isNetworkError,
+    retryWithBackoff
+} from '../utils/networkUtils';
 
 const MarketplaceContext = createContext();
 
@@ -1370,73 +1377,38 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             'https://dweb.link/ipfs/'
                         ];
 
-                        // Resolve IPFS URI with gateway fallbacks
-                        let resolvedURI;
-                        if (tokenURI.startsWith('ipfs://')) {
-                            resolvedURI = tokenURI.replace('ipfs://', ipfsGateways[0]);
-                        } else {
-                            resolvedURI = tokenURI;
+                        // Enhanced metadata fetching with CORS-safe requests and better error handling
+                        const { primaryUrl, fallbacks } = resolveIPFSWithFallbacks(tokenURI);
+                        
+                        debugLog(`Fetching metadata for listing ${i} from: ${primaryUrl}`);
+                        if (fallbacks.length > 0) {
+                            debugLog(`Available fallbacks: ${fallbacks.length} IPFS gateways`);
                         }
 
-                        // Fetch metadata with retries and gateway fallbacks
+                        // Fetch metadata with CORS-safe requests and automatic fallbacks
                         let metadata = null;
                         let fetchSuccess = false;
                         
-                        // Try primary URL first
                         try {
-                            const response = await fetch(resolvedURI, { 
-                                method: 'GET',
-                                headers: {
-                                    'Accept': 'application/json, text/plain, */*',
-                                    'Cache-Control': 'no-cache'
-                                },
-                                timeout: 10000 // 10 second timeout
-                            });
+                            const metadataJson = await fetchJSON(primaryUrl, {
+                                timeout: 10000
+                            }, fallbacks);
                             
-                            if (response.ok) {
-                                const metadataJson = await response.json();
-                                metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
-                                fetchSuccess = true;
-                                debugLog(`Successfully fetched metadata from primary source for listing ${i}`);
-                            }
-                        } catch (primaryError) {
-                            debugWarn(`Primary metadata fetch failed for listing ${i}:`, primaryError.message);
-                        }
-
-                        // Try IPFS gateway fallbacks if primary failed and this is an IPFS URL
-                        if (!fetchSuccess && tokenURI.startsWith('ipfs://')) {
-                            const ipfsHash = tokenURI.replace('ipfs://', '');
+                            metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
+                            fetchSuccess = true;
+                            debugLog(`Successfully fetched metadata for listing ${i}`);
                             
-                            for (let gatewayIndex = 1; gatewayIndex < ipfsGateways.length; gatewayIndex++) {
-                                try {
-                                    const fallbackURL = `${ipfsGateways[gatewayIndex]}${ipfsHash}`;
-                                    debugLog(`Trying IPFS gateway fallback ${gatewayIndex}: ${fallbackURL}`);
-                                    
-                                    const response = await fetch(fallbackURL, {
-                                        method: 'GET',
-                                        headers: {
-                                            'Accept': 'application/json, text/plain, */*',
-                                            'Cache-Control': 'no-cache'
-                                        },
-                                        timeout: 8000 // Shorter timeout for fallbacks
-                                    });
-                                    
-                                    if (response.ok) {
-                                        const metadataJson = await response.json();
-                                        metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
-                                        fetchSuccess = true;
-                                        debugLog(`Successfully fetched metadata from IPFS gateway ${gatewayIndex} for listing ${i}`);
-                                        break;
-                                    }
-                                } catch (fallbackError) {
-                                    debugWarn(`IPFS gateway ${gatewayIndex} failed for listing ${i}:`, fallbackError.message);
-                                }
+                        } catch (fetchError) {
+                            debugWarn(`All metadata fetch attempts failed for listing ${i}:`, fetchError.message);
+                            
+                            // Provide specific error feedback for debugging
+                            if (isCORSError(fetchError)) {
+                                debugLog(`CORS issue detected - this is often due to restrictive server policies`);
+                            } else if (isNetworkError(fetchError)) {
+                                debugLog(`Network connectivity issue - may be temporary`);
                             }
-                        }
-
-                        // If all metadata fetch attempts failed, create fallback metadata
-                        if (!fetchSuccess) {
-                            debugWarn(`All metadata fetch attempts failed for listing ${i}, using fallback`);
+                            
+                            // Use fallback metadata
                             metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
                         }
 
