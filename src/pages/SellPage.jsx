@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { useSearchParams } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import './SellPage.css';
 
 // ERC721/ERC1155 metadata interfaces
@@ -359,114 +360,25 @@ function SellPage() {
         }
     };
 
-    // Enhanced Uniswap V3 price calculation with better error handling and fallback
+    // Enhanced Uniswap V3 price calculation using tokenUtils
     const getUniswapPrice = async (tokenAddress) => {
         try {
-            // USDC is always $1
-            if (tokenAddress === USDC_ADDRESS) {
-                return { price: 1.0, source: "USD Stablecoin" };
-            }
-
-            // For Native VTRU (zero address), use WVTRU pool for price info
-            const actualTokenAddress = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
+            // Use the centralized price function from tokenUtils
+            const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
+            
             const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
-
             console.log(`[DEBUG] Getting price for ${tokenSymbol} (${tokenAddress})`);
-
-            // Try to find pool between this token and USDC first
-            let poolResult = await getUniswapPool(actualTokenAddress, USDC_ADDRESS);
-            let priceToken = USDC_ADDRESS;
-            let priceTokenSymbol = 'USDC';
-            let priceTokenDecimals = 6;
-            let basePrice = 1.0; // USDC = $1
-
-            // If no USDC pool found, try WVTRU pool as fallback
-            if (!poolResult.poolAddress && actualTokenAddress !== WVTRU_ADDRESS) {
-                console.log(`[DEBUG] No USDC pool for ${tokenSymbol}, trying WVTRU pool...`);
-                poolResult = await getUniswapPool(actualTokenAddress, WVTRU_ADDRESS);
-                if (poolResult.poolAddress) {
-                    priceToken = WVTRU_ADDRESS;
-                    priceTokenSymbol = 'WVTRU';
-                    priceTokenDecimals = 18;
-                    // Get WVTRU price first (should be available from USDC pool)
-                    basePrice = livePrice[WVTRU_ADDRESS];
-                    if (!basePrice) {
-                        throw new Error(`WVTRU price not available for ${tokenSymbol} calculation`);
-                    }
-                }
-            }
-
-            if (!poolResult.poolAddress) {
-                throw new Error(`No liquidity pool found for ${tokenSymbol} (tried USDC and WVTRU pairs)`);
-            }
-
-            const { poolAddress, fee } = poolResult;
-            console.log(`[DEBUG] Found pool ${poolAddress} for ${tokenSymbol}/${priceTokenSymbol} with fee ${fee / 10000}%`);
-
-            const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
-
-            // Get tokens in correct order
-            const token0 = await pool.token0();
-            const token1 = await pool.token1();
-
-            console.log(`[DEBUG] Pool tokens: token0=${token0}, token1=${token1}`);
-
-            // Get the current tick value
-            const poolData = await pool.slot0();
-            const tick = poolData.tick;
-            console.log(`[DEBUG] Pool tick: ${tick}`);
-
-            // Get token decimals
-            const tokenContract = new ethers.Contract(actualTokenAddress, ERC20_ABI, provider);
-            const priceTokenContract = new ethers.Contract(priceToken, ERC20_ABI, provider);
-
-            const tokenDecimals = Number(await tokenContract.decimals());
-            const priceTokenDecimalsActual = Number(await priceTokenContract.decimals());
-
-            console.log(`[DEBUG] Token decimals: ${tokenDecimals}, ${priceTokenSymbol} decimals: ${priceTokenDecimalsActual}`);
-
-            // Determine token position in the pool
-            const isTokenToken0 = token0.toLowerCase() === actualTokenAddress.toLowerCase();
-
-            // Calculate price using correct Uniswap V3 tick-based formula
-            const tickNum = Number(tick);
-            
-            // Calculate price1Per0 = (1.0001 ^ tick) * 10^(decimals1 - decimals0)
-            const price1Per0 = Math.pow(1.0001, tickNum) * Math.pow(10, priceTokenDecimalsActual - tokenDecimals);
-            
-            let price;
-            if (isTokenToken0) {
-                // If our token is token0, price = price1Per0 (price token per 1 our token)
-                price = price1Per0;
-            } else {
-                // If our token is token1, price = 1 / price1Per0 (price token per 1 our token)
-                price = 1 / price1Per0;
-            }
-
-            // Apply base price (for USDC this is 1.0, for WVTRU it's the WVTRU/USD price)
-            price = price * basePrice;
-
-            console.log(`[DEBUG] Raw calculated price for ${tokenSymbol}: $${price}`);
-
-            // Sanity check for unreasonable prices
-            if (price <= 0 || !isFinite(price)) {
-                throw new Error(`Invalid price calculated: ${price}`);
-            }
-
-            if (price > 1000000) {
-                console.warn(`[DEBUG] Very high price calculated (${price}), might be incorrect`);
-            }
-
             console.log(`[DEBUG] Final calculated price for ${tokenSymbol}: $${price}`);
-
-            // Source description
+            
+            // Determine source description based on token type
             let source;
             if (tokenAddress === ethers.ZeroAddress) {
-                source = `Uniswap V3 (${fee / 10000}% WVTRU/${priceTokenSymbol} pool)`;
-            } else if (priceToken === WVTRU_ADDRESS) {
-                source = `Uniswap V3 (${fee / 10000}% ${tokenSymbol}/WVTRU pool)`;
+                source = 'Uniswap V3 (1% WVTRU/USDC pool)';
+            } else if (tokenAddress === USDC_ADDRESS) {
+                source = 'USD Stablecoin';
             } else {
-                source = `Uniswap V3 (${fee / 10000}% ${tokenSymbol}/${priceTokenSymbol} pool)`;
+                // For other tokens, indicate it's from Uniswap
+                source = `Uniswap V3 (${tokenSymbol}/USDC pool)`;
             }
 
             return { price, source };
