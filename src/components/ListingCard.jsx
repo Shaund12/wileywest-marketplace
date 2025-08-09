@@ -5,7 +5,6 @@ import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
 import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
 import { debugWarn } from '../utils/debugUtils';
-import PlaceholderImage from './PlaceholderImage';
 import './ListingCard.css';
 
 function ListingCard({ listing, featured = false, showSeller = true }) {
@@ -31,34 +30,9 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
 
     const isOwner = wallet && listing.seller.toLowerCase() === wallet.toLowerCase();
 
-    // Enhanced image URL resolution with multiple fallbacks
-    const getImageUrl = () => {
-        // Try multiple image sources in order of preference
-        const sources = [
-            listing.metadata?.image,
-            listing.image,
-            listing.imageUrl,
-            listing.metadata?.image_url,
-            listing.metadata?.imageUrl,
-            listing.metadata?.animation_url // Some NFTs use animation_url for images
-        ];
-        
-        for (const source of sources) {
-            if (source && typeof source === 'string' && source.trim() !== '') {
-                // Resolve IPFS URLs to HTTPS
-                if (source.startsWith('ipfs://')) {
-                    return source.replace('ipfs://', 'https://ipfs.io/ipfs/');
-                }
-                // Return other valid URLs as-is
-                return source.trim();
-            }
-        }
-        
-        return null; // No valid image URL found
-    };
-    
-    const imageUrl = getImageUrl();
-    const imageSeed = `${listing.nftContract}${listing.tokenId}`;
+    // Use the actual NFT image from metadata if available, fallback to placeholder
+    const fallbackImage = `https://picsum.photos/seed/${listing.nftContract}${listing.tokenId}/300/300`;
+    const imageUrl = listing.metadata?.image || listing.image || listing.imageUrl || fallbackImage;
 
     // Use centralized collection name resolution
     const nftName = resolveCollectionName(listing);
@@ -111,16 +85,15 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
             aria-label={`NFT listing: ${nftName}`}
         >
             <div className={scopedClass('listing-image', 'ListingCard')}>
-                <PlaceholderImage
+                <img
                     src={imageUrl}
                     alt={`${nftName} - NFT artwork`}
-                    className={scopedClass('nft-image', 'ListingCard')}
-                    seed={imageSeed}
-                    width={300}
-                    height={200}
-                    contractAddress={listing.nftContract}
-                    tokenId={listing.tokenId}
-                    metadata={listing.metadata}
+                    role="img"
+                    aria-describedby={nftDescription ? `description-${listing.id}` : undefined}
+                    onError={(e) => {
+                        debugWarn("Image failed to load:", e.target.src);
+                        e.target.src = fallbackImage;
+                    }}
                 />
             </div>
 
