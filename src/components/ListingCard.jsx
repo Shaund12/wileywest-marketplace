@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ethers } from 'ethers';
+// NOTE: removed unused ethers import
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
@@ -8,7 +8,7 @@ import { debugWarn } from '../utils/debugUtils';
 import './ListingCard.css';
 
 /* =========================
-   Error Boundary (stops white-screen)
+   Error Boundary (prevents white-screen)
    ========================= */
 class CardBoundary extends React.Component {
     constructor(props) {
@@ -42,6 +42,102 @@ class CardBoundary extends React.Component {
 }
 
 /* =========================
+   Deterministic SVG fallback
+   ========================= */
+function hashString(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+        h = (h << 5) - h + str.charCodeAt(i);
+        h |= 0;
+    }
+    return Math.abs(h);
+}
+
+function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '' }) {
+    const h = hashString(seed);
+    const hue = h % 360;
+    const hue2 = (hue + 180) % 360;
+    const gradId = `g${(h % 1e9).toString(36)}`;
+    const block = (h % 7) + 3;
+
+    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
+
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  <defs>
+    <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="hsl(${hue},70%,18%)"/>
+      <stop offset="100%" stop-color="hsl(${hue2},70%,16%)"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#${gradId})"/>
+  ${Array.from({ length: block }).map((_, i) => {
+        const a = (h + i * 97) % 360;
+        const r = 14 + ((h >> i) % 40);
+        const cx = (width / (block + 1)) * (i + 1);
+        const cy = (height / (block + 1)) * ((i % 3) + 1);
+        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
+    }).join('')}
+  <text x="50%" y="${height - 14}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">
+    ${label}
+  </text>
+</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+/* =========================
+   Inline PlaceholderImage
+   - Uses provided src
+   - Falls back to pretty SVG if load fails or no src
+   ========================= */
+function PlaceholderImage({
+    src,
+    alt = '',
+    className,
+    seed = 'nft',
+    width = 300,
+    height = 200,
+    metadata = {}
+}) {
+    const [finalSrc, setFinalSrc] = useState(
+        src || svgFallbackDataUrl({ seed, width, height, title: metadata?.name || '' })
+    );
+    const [failed, setFailed] = useState(!src);
+
+    useEffect(() => {
+        // when src changes, try it; if absent, fallback immediately
+        if (src) {
+            setFailed(false);
+            setFinalSrc(src);
+        } else {
+            setFailed(true);
+            setFinalSrc(svgFallbackDataUrl({ seed, width, height, title: metadata?.name || '' }));
+        }
+    }, [src, seed, width, height, metadata?.name]);
+
+    const handleError = () => {
+        if (!failed) {
+            setFailed(true);
+            setFinalSrc(svgFallbackDataUrl({ seed, width, height, title: metadata?.name || '' }));
+        }
+    };
+
+    return (
+        <img
+            src={finalSrc}
+            alt={alt}
+            className={className}
+            width={width}
+            height={height}
+            loading="lazy"
+            onError={handleError}
+            crossOrigin="anonymous"
+            style={{ objectFit: 'cover', display: 'block', borderRadius: 8 }}
+        />
+    );
+}
+
+/* =========================
    Robust IPFS/Arweave resolver
    ========================= */
 const IPFS_GATEWAYS = [
@@ -68,7 +164,6 @@ const IPNS_GATEWAYS = [
 
 const imageUrlCache = {};
 
-// small helpers
 const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
 const shortAddr = (a) => (a && a.length > 9 ? `${a.slice(0, 6)}...${a.slice(-4)}` : (a || '—'));
 
@@ -302,8 +397,6 @@ function ListingCardInner({ listing, featured = false, showSeller = true }) {
                     seed={imageSeed}
                     width={300}
                     height={200}
-                    contractAddress={nftContract}
-                    tokenId={tokenId}
                     metadata={listing?.metadata || {}}
                     key={`image-${nftContract}-${tokenId}`}
                 />
