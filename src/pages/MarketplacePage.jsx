@@ -3,6 +3,8 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import ListingCard from '../components/ListingCard';
 import MarketplaceStats from '../components/MarketplaceStats';
+import EmptyState from '../components/EmptyState';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
@@ -920,15 +922,18 @@ function MarketplacePage() {
                     {/* NFT Listings */}
                     <div className={`listings-container ${viewMode}`}>
                         {!isInitialized ? (
-                            <div className="loading-container">
-                                <div className="loading-spinner"></div>
-                                <p>Initializing marketplace...</p>
-                            </div>
+                            <EmptyState
+                                icon="⚙️"
+                                title="Initializing Marketplace"
+                                description="Setting up the marketplace and connecting to the blockchain..."
+                                className="loading"
+                            />
                         ) : isLoading ? (
-                            <div className="loading-container">
-                                <div className="loading-spinner"></div>
-                                <p>Loading NFTs...</p>
-                            </div>
+                            <LoadingSkeleton 
+                                type="card" 
+                                count={6} 
+                                className="grid"
+                            />
                         ) : currentItems.length > 0 ? (
                             <>
                                 <div className={`listings-${viewMode}`}>
@@ -981,25 +986,38 @@ function MarketplacePage() {
                                 )}
                             </>
                         ) : (
-                            <div className="no-listings-found">
-                                <div className="empty-icon">🔍</div>
-                                <h3>No NFTs Found</h3>
-                                {searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                    priceRange.min !== '' || priceRange.max !== '' ? (
-                                    <p>Try adjusting your filters or search criteria</p>
-                                ) : (
-                                    <p>There are currently no active listings in the marketplace</p>
-                                )}
-                                <button className="primary-button" onClick={() => {
+                            <EmptyState
+                                icon={searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                    priceRange.min !== '' || priceRange.max !== '' ? "🔍" : "🛍️"}
+                                title={searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                    priceRange.min !== '' || priceRange.max !== '' ? "No Results Found" : "No NFTs Available"}
+                                description={searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                    priceRange.min !== '' || priceRange.max !== '' ? 
+                                    "Try adjusting your filters or search criteria to find what you're looking for." :
+                                    "There are currently no active listings in the marketplace. Check back soon or be the first to list your NFT!"}
+                                actionText="Refresh Marketplace"
+                                onAction={() => {
                                     setSearchTerm('');
                                     setSelectedCategories([]);
                                     setSelectedCollections([]);
                                     setPriceRange({ min: '', max: '' });
                                     fetchListings();
-                                }}>
-                                    Refresh Marketplace
-                                </button>
-                            </div>
+                                }}
+                                secondaryActionText={!(searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                    priceRange.min !== '' || priceRange.max !== '') ? "List Your NFT" : "Clear Filters"}
+                                onSecondaryAction={() => {
+                                    if (searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== '') {
+                                        setSearchTerm('');
+                                        setSelectedCategories([]);
+                                        setSelectedCollections([]);
+                                        setPriceRange({ min: '', max: '' });
+                                    } else {
+                                        window.location.href = '/sell';
+                                    }
+                                }}
+                                className="marketplace"
+                            />
                         )}
                     </div>
                 </div>

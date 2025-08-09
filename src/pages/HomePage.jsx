@@ -2,10 +2,46 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import ListingCard from '../components/ListingCard';
+import LoadingSkeleton from '../components/LoadingSkeleton';
+import EmptyState from '../components/EmptyState';
 import CacheStats from '../components/CacheStats';
 
 function HomePage() {
-    const { hotListings } = useMarketplace();
+    const { hotListings, status, isInitialized } = useMarketplace();
+
+    const renderFeaturedListings = () => {
+        if (!isInitialized) {
+            return (
+                <LoadingSkeleton 
+                    type="card" 
+                    count={3} 
+                    className="grid"
+                />
+            );
+        }
+
+        if (hotListings.length === 0) {
+            return (
+                <EmptyState
+                    icon="✨"
+                    title="No Featured Listings Yet"
+                    description="Check back soon for exciting new NFT drops and featured collections!"
+                    actionText="Explore Marketplace"
+                    onAction={() => window.location.href = '/marketplace'}
+                    secondaryActionText="List Your NFT"
+                    onSecondaryAction={() => window.location.href = '/sell'}
+                />
+            );
+        }
+
+        return (
+            <div className="listings-preview">
+                {hotListings.slice(0, 3).map(listing => (
+                    <ListingCard key={listing.id} listing={listing} featured={true} />
+                ))}
+            </div>
+        );
+    };
 
     return (
         <div className="home-container">
@@ -25,9 +61,7 @@ function HomePage() {
                 </div>
 
                 <div className="listings-preview">
-                    {hotListings.slice(0, 3).map(listing => (
-                        <ListingCard key={listing.id} listing={listing} featured={true} />
-                    ))}
+                    {renderFeaturedListings()}
                 </div>
             </div>
 

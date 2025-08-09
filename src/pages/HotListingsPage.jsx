@@ -2,6 +2,8 @@
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import ListingCard from '../components/ListingCard';
+import LoadingSkeleton from '../components/LoadingSkeleton';
+import EmptyState from '../components/EmptyState';
 import './HotListingsPage.css';
 import { ethers } from 'ethers';
 
@@ -326,24 +328,25 @@ function HotListingsPage() {
             {/* Collections view */}
             <div className="collections-container" ref={cardsContainer}>
                 {collectionsLoading ? (
-                    <div className="loading-collections">
-                        <div className="loading-spinner"></div>
-                        <p>Loading collection information...</p>
-                    </div>
+                    <LoadingSkeleton 
+                        type="card" 
+                        count={6} 
+                        className="grid"
+                    />
                 ) : collectionOrder.length > 0 ? (
                     collectionOrder.map(addr =>
                         renderCollectionSection(addr, groupedListings[addr])
                     )
                 ) : (
-                    <div className="no-listings">
-                        <p>No premium listings available right now</p>
-                        <button
-                            className="primary-button"
-                            onClick={() => fetchListings()}
-                        >
-                            Discover NFTs
-                        </button>
-                    </div>
+                    <EmptyState
+                        icon="🔥"
+                        title="No Premium Listings Yet"
+                        description="Premium collections will appear here when they become available. Be the first to discover exclusive NFT drops!"
+                        actionText="Explore Marketplace"
+                        onAction={() => window.location.href = '/marketplace'}
+                        secondaryActionText="List Your NFT"
+                        onSecondaryAction={() => window.location.href = '/sell'}
+                    />
                 )}
             </div>
         </div>

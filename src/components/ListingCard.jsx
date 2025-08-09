@@ -5,6 +5,7 @@ import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
 import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
 import { debugWarn } from '../utils/debugUtils';
+import PlaceholderImage from './PlaceholderImage';
 import './ListingCard.css';
 
 function ListingCard({ listing, featured = false, showSeller = true }) {
@@ -30,9 +31,9 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
 
     const isOwner = wallet && listing.seller.toLowerCase() === wallet.toLowerCase();
 
-    // Use the actual NFT image from metadata if available, fallback to placeholder
-    const fallbackImage = `https://picsum.photos/seed/${listing.nftContract}${listing.tokenId}/300/300`;
-    const imageUrl = listing.metadata?.image || listing.image || listing.imageUrl || fallbackImage;
+    // Use the actual NFT image from metadata if available
+    const imageUrl = listing.metadata?.image || listing.image || listing.imageUrl;
+    const imageSeed = `${listing.nftContract}${listing.tokenId}`;
 
     // Use centralized collection name resolution
     const nftName = resolveCollectionName(listing);
@@ -85,15 +86,13 @@ function ListingCard({ listing, featured = false, showSeller = true }) {
             aria-label={`NFT listing: ${nftName}`}
         >
             <div className={scopedClass('listing-image', 'ListingCard')}>
-                <img
+                <PlaceholderImage
                     src={imageUrl}
                     alt={`${nftName} - NFT artwork`}
-                    role="img"
-                    aria-describedby={nftDescription ? `description-${listing.id}` : undefined}
-                    onError={(e) => {
-                        debugWarn("Image failed to load:", e.target.src);
-                        e.target.src = fallbackImage;
-                    }}
+                    className={scopedClass('nft-image', 'ListingCard')}
+                    seed={imageSeed}
+                    width={300}
+                    height={200}
                 />
             </div>
 
