@@ -1012,7 +1012,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         setStatus('Loading listings...');
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
-        // Initialize variables at function scope to ensure proper scoping
+        // Initialize variables at function scope to ensure proper scoping across all code paths
         let cachedListings = [];
         let shouldCheckBlockchain = true; // Default to checking blockchain
         
