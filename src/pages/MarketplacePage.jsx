@@ -1234,7 +1234,7 @@ function MarketplacePage() {
                 </div>
                 <div className="cta-image">
                     {/* Put blockdust-logo.png in /public root */}
-                    <img src="/blockdust-logo.png" alt="BlockDust NFT Marketplace" />
+                    <img src="src//blockdust-logo.png" alt="BlockDust NFT Marketplace" />
                 </div>
             </section>
         </div>
