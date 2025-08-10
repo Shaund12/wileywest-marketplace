@@ -6,65 +6,326 @@ import { useWallet } from '../context/WalletContext';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import './SellPage.css';
 
-// ERC721/ERC1155 metadata interfaces
+/* =========================================================
+   IPFS/IPNS/Arweave + SmartMedia (self-contained utilities)
+   ========================================================= */
+const IPFS_GATEWAYS = [
+    'https://cloudflare-ipfs.com/ipfs/',
+    'https://cf-ipfs.com/ipfs/',
+    'https://dweb.link/ipfs/',
+    'https://gateway.pinata.cloud/ipfs/',
+    'https://infura-ipfs.io/ipfs/',
+    'https://w3s.link/ipfs/',
+    'https://nftstorage.link/ipfs/',
+    'https://ipfs.io/ipfs/',
+];
+
+const IPNS_GATEWAYS = [
+    'https://cloudflare-ipfs.com/ipns/',
+    'https://cf-ipfs.com/ipns/',
+    'https://dweb.link/ipns/',
+    'https://gateway.pinata.cloud/ipns/',
+    'https://infura-ipfs.io/ipns/',
+    'https://w3s.link/ipns/',
+    'https://nftstorage.link/ipns/',
+    'https://ipfs.io/ipns/',
+];
+
+const isString = (v) => typeof v === 'string' && v.trim().length > 0;
+const uniq = (arr) => Array.from(new Set(arr));
+const flatten = (arrs) => arrs.reduce((a, b) => a.concat(b), []);
+const isVideoUrl = (u) => isString(u) && /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(u);
+
+function erc1155HexId(tokenId) {
+    try {
+        return BigInt(tokenId).toString(16).toLowerCase().padStart(64, '0');
+    } catch {
+        return String(tokenId).replace(/^0x/i, '').toLowerCase().padStart(64, '0');
+    }
+}
+
+function expandToCandidateUrls(raw) {
+    if (!isString(raw)) return [];
+    const url = raw.trim();
+    if (url.startsWith('data:')) return [url];
+
+    // Arweave
+    if (url.startsWith('ar://')) return [`https://arweave.net/${url.slice(5)}`];
+    if (/^https?:\/\/arweave\.net\//i.test(url)) return [url];
+
+    // ipfs://CID/... → try multiple gateways
+    if (url.startsWith('ipfs://')) {
+        const rest = url.slice(7).replace(/^ipfs\//i, '');
+        return IPFS_GATEWAYS.map((g) => g + rest);
+    }
+    // ipns://name → try multiple gateways
+    if (url.startsWith('ipns://')) {
+        const rest = url.slice(7).replace(/^ipns\//i, '');
+        return IPNS_GATEWAYS.map((g) => g + rest);
+    }
+
+    // http(s) with /ipfs/ or /ipns/
+    try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        const ipfsIdx = parts.indexOf('ipfs');
+        const ipnsIdx = parts.indexOf('ipns');
+        if (ipfsIdx !== -1 && parts[ipfsIdx + 1]) {
+            const rest = parts.slice(ipfsIdx + 1).join('/');
+            return IPFS_GATEWAYS.map((g) => g + rest);
+        }
+        if (ipnsIdx !== -1 && parts[ipnsIdx + 1]) {
+            const rest = parts.slice(ipnsIdx + 1).join('/');
+            return IPNS_GATEWAYS.map((g) => g + rest);
+        }
+        return [url];
+    } catch {
+        // bare CID
+        if (/^[a-z0-9]+$/i.test(url)) return IPFS_GATEWAYS.map((g) => g + url);
+        return [url];
+    }
+}
+
+function metadataCandidatesFromUri(uri, tokenId, is1155 = false) {
+    if (!isString(uri)) return [];
+    const base = expandToCandidateUrls(uri);
+    if (is1155 && uri.includes('{id}')) {
+        const id64 = erc1155HexId(tokenId);
+        return base.map((u) => u.replace('{id}', id64));
+    }
+    return base;
+}
+
+async function fetchJsonFromCandidates(candidates, timeoutMs = 9000) {
+    for (const url of candidates) {
+        try {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), timeoutMs);
+            const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+            clearTimeout(t);
+            if (!res.ok) continue;
+
+            // Some gateways lie on content-type; be tolerant
+            const text = await res.text();
+            try {
+                const json = JSON.parse(text);
+                return { json, usedUrl: url };
+            } catch {
+                // not json, try next
+            }
+        } catch {
+            // try next
+        }
+    }
+    throw new Error('No working metadata URL found');
+}
+
+function findFirstWorkingImage(candidates, timeoutMs = 7000) {
+    return new Promise((resolve, reject) => {
+        if (!candidates?.length) return reject(new Error('No candidates'));
+        if (typeof window === 'undefined') return reject(new Error('No window'));
+
+        let i = 0;
+        const tryNext = () => {
+            if (i >= candidates.length) return reject(new Error('No working image'));
+            const test = candidates[i++];
+            const img = new Image();
+            const timer = setTimeout(() => {
+                img.onload = img.onerror = null;
+                tryNext();
+            }, timeoutMs);
+            img.onload = () => {
+                clearTimeout(timer);
+                resolve(test);
+            };
+            img.onerror = () => {
+                clearTimeout(timer);
+                tryNext();
+            };
+            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+        };
+        tryNext();
+    });
+}
+
+function hashString(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+        h = (h << 5) - h + str.charCodeAt(i);
+        h |= 0;
+    }
+    return Math.abs(h);
+}
+
+function svgFallbackDataUrl({ seed = 'media', width = 640, height = 460, title = 'NFT Preview' }) {
+    const h = hashString(seed);
+    const hue = h % 360;
+    const hue2 = (hue + 180) % 360;
+    const gid = `g${(h % 1e9).toString(36)}`;
+    const blobs = (h % 7) + 3;
+    const label = (title || '').slice(0, 28) || 'NFT Preview';
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  <defs>
+    <linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="hsl(${hue},70%,18%)"/>
+      <stop offset="100%" stop-color="hsl(${hue2},70%,16%)"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#${gid})"/>
+  ${Array.from({ length: blobs }).map((_, i) => {
+        const a = (h + i * 97) % 360;
+        const r = 18 + ((h >> i) % 42);
+        const cx = (width / (blobs + 1)) * (i + 1);
+        const cy = (height / (blobs + 1)) * ((i % 3) + 1);
+        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
+    }).join('')}
+  <text x="50%" y="${height - 18}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="16" fill="rgba(255,255,255,0.9)" text-anchor="middle">${label}</text>
+</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+const smartUrlCache = new Map();
+/** SmartMedia: pick working video (mp4/webm/…) or image; otherwise nice SVG fallback */
+function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 'media', title = '', className = '' }) {
+    const [finalUrl, setFinalUrl] = useState(null);
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        const raws = srcList.filter(isString);
+        const key = raws.join('|');
+        if (!raws.length) {
+            setFinalUrl(null);
+            setFailed(true);
+            return;
+        }
+
+        if (smartUrlCache.has(key)) {
+            setFinalUrl(smartUrlCache.get(key));
+            setFailed(false);
+            return;
+        }
+
+        const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
+        // Prefer video if the URL clearly indicates one
+        const videoCandidate = candidates.find(isVideoUrl);
+        if (videoCandidate) {
+            smartUrlCache.set(key, videoCandidate);
+            if (!cancelled) {
+                setFinalUrl(videoCandidate);
+                setFailed(false);
+            }
+            return;
+        }
+
+        findFirstWorkingImage(candidates)
+            .then((u) => {
+                if (cancelled) return;
+                smartUrlCache.set(key, u);
+                setFinalUrl(u);
+                setFailed(false);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setFinalUrl(null);
+                    setFailed(true);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [JSON.stringify(srcList)]);
+
+    const fallback = svgFallbackDataUrl({ seed, width, height, title });
+    const url = failed || !finalUrl ? fallback : finalUrl;
+
+    if (isVideoUrl(url)) {
+        return (
+            <video
+                src={url}
+                controls
+                className={className}
+                width={width}
+                height={height}
+                style={{ display: 'block', borderRadius: 12, background: '#111', maxWidth: '100%', objectFit: 'cover' }}
+            />
+        );
+    }
+    return (
+        <img
+            src={url}
+            alt={alt}
+            className={className}
+            width={width}
+            height={height}
+            loading="lazy"
+            onError={() => setFailed(true)}
+            style={{ display: 'block', borderRadius: 12, maxWidth: '100%', objectFit: 'cover' }}
+        />
+    );
+}
+
+/* =========================================================
+   ABIs / Token addresses / Uniswap config
+   ========================================================= */
 const ERC721_ABI = [
     'function tokenURI(uint256 tokenId) view returns (string)',
-    'function ownerOf(uint256 tokenId) view returns (address)'
+    'function ownerOf(uint256 tokenId) view returns (address)',
 ];
 
 const ERC1155_ABI = [
     'function uri(uint256 id) view returns (string)',
-    'function balanceOf(address account, uint256 id) view returns (uint256)'
+    'function balanceOf(address account, uint256 id) view returns (uint256)',
 ];
 
-// Uniswap V3 interfaces
 const UNISWAP_V3_FACTORY_ABI = [
-    'function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool)'
+    'function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool)',
 ];
 
 const UNISWAP_V3_POOL_ABI = [
     'function token0() external view returns (address)',
     'function token1() external view returns (address)',
     'function fee() external view returns (uint24)',
-    'function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)'
+    'function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)',
 ];
 
 const ERC20_ABI = [
     'function name() view returns (string)',
     'function symbol() view returns (string)',
     'function decimals() view returns (uint8)',
-    'function balanceOf(address owner) view returns (uint256)'
+    'function balanceOf(address owner) view returns (uint256)',
 ];
 
-// Token addresses with proper EIP-55 checksums
+// Token addresses (Vitruveo chain)
 const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
 const USDC_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
-
-// New ERC20 payment tokens
 const VUSD_ADDRESS = '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA';
 const SEVO_ADDRESS = '0x2A34059DF3D60B1864f10F10492746bd26d3D24a';
 const WSEVO_ADDRESS = '0x43a36604B6Ad9A4cf8EF600241E90b3DD97E145d';
 const VITEX_ADDRESS = '0x4Ed92A1d95d2092973007197794542A5D51FF5a6';
 const VTRO_ADDRESS = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
 
-// Uniswap V3 contract addresses
+// Uniswap V3 (Vitruveo)
 const UNISWAP_V3_FACTORY_ADDRESS = '0x6196a7a6108B15a2cc24DdaB41C8CC3098C06351';
-
-// Fee tiers: 0.05%, 0.3%, and 1%
 const FEE_TIERS = [500, 3000, 10000];
 
 const ERC721_APPROVAL_ABI = [
     'function setApprovalForAll(address operator, bool approved) returns ()',
     'function isApprovedForAll(address owner, address operator) view returns (bool)',
     'function approve(address to, uint256 tokenId) returns ()',
-    'function getApproved(uint256 tokenId) view returns (address)'
+    'function getApproved(uint256 tokenId) view returns (address)',
 ];
 
 const ERC1155_APPROVAL_ABI = [
     'function setApprovalForAll(address operator, bool approved) returns ()',
-    'function isApprovedForAll(address owner, address operator) view returns (bool)'
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
 ];
 
+/* =========================================================
+   Component
+   ========================================================= */
 function SellPage() {
     const { createListing, status, setStatus, marketplaceAddress } = useMarketplace();
     const { wallet, connect, provider, signer } = useWallet();
@@ -76,7 +337,7 @@ function SellPage() {
         tokenId: searchParams.get('tokenId') || '',
         quantity: '1',
         price: '',
-        paymentToken: ethers.ZeroAddress
+        paymentToken: ethers.ZeroAddress,
     });
 
     const [metadata, setMetadata] = useState(null);
@@ -86,47 +347,34 @@ function SellPage() {
     const [balance, setBalance] = useState('0');
     const [loading, setLoading] = useState(false);
     const [ownershipVerified, setOwnershipVerified] = useState(false);
+
     const [displayPrice, setDisplayPrice] = useState({ wei: '', eth: '', usd: '' });
     const [tokenList, setTokenList] = useState({});
     const [paymentOptions, setPaymentOptions] = useState([]);
     const [loadingPrices, setLoadingPrices] = useState(false);
     const [showAddTokenForm, setShowAddTokenForm] = useState(false);
-    const [customTokenData, setCustomTokenData] = useState({
-        address: '',
-        symbol: '',
-        name: '',
-        decimals: '18',
-        price: ''
-    });
+    const [customTokenData, setCustomTokenData] = useState({ address: '', symbol: '', name: '', decimals: '18', price: '' });
     const [customTokenError, setCustomTokenError] = useState('');
+
     const [livePrice, setLivePrice] = useState({});
     const [priceChange, setPriceChange] = useState({});
     const [lastUpdateTime, setLastUpdateTime] = useState(null);
     const [priceSources, setPriceSources] = useState({});
     const [priceErrors, setPriceErrors] = useState({});
+
     const [activePreviewTab, setActivePreviewTab] = useState('details');
-    const [fees, setFees] = useState({
-        marketplaceFee: 2.5,
-        creatorRoyalty: 5.0,
-        networkFee: 0.001
-    });
+    const [fees] = useState({ marketplaceFee: 2.5, creatorRoyalty: 5.0, networkFee: 0.001 });
 
-    // Helper function to format time
-    const formatTime = (date) => {
-        if (!date) return '';
-        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    };
+    const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
 
-    // Cleanup interval on component unmount
+    // Cleanup
     useEffect(() => {
         return () => {
-            if (priceIntervalRef.current) {
-                clearInterval(priceIntervalRef.current);
-            }
+            if (priceIntervalRef.current) clearInterval(priceIntervalRef.current);
         };
     }, []);
 
-    // Handle form field changes with human-readable price support
+    // Field change (price has special handling)
     const handleChange = (e) => {
         const { id, value } = e.target;
 
@@ -137,43 +385,31 @@ function SellPage() {
                 const token = tokenList[formData.paymentToken];
                 if (token) {
                     try {
-                        // Calculate USD value based on human-readable input
                         let usdValue = 'Unknown';
                         const currentPrice = livePrice[formData.paymentToken];
                         if (currentPrice) {
-                            // For USDC, the USD value is the same as the input (1:1)
-                            if (formData.paymentToken === USDC_ADDRESS) {
-                                usdValue = parseFloat(value).toFixed(2);
-                            } else {
-                                usdValue = (parseFloat(value) * currentPrice).toFixed(2);
-                            }
+                            usdValue = (formData.paymentToken === USDC_ADDRESS)
+                                ? parseFloat(value).toFixed(2)
+                                : (parseFloat(value) * currentPrice).toFixed(2);
                         }
-
-                        // Store both human-readable and wei values
                         setDisplayPrice({
                             wei: ethers.parseUnits(value, token.decimals || 18).toString(),
                             eth: value,
-                            usd: usdValue
+                            usd: usdValue,
                         });
-                    } catch (err) {
-                        console.warn("Error in price conversion:", err);
-                        setDisplayPrice({
-                            wei: '0',
-                            eth: value,
-                            usd: 'Unknown'
-                        });
+                    } catch {
+                        setDisplayPrice({ wei: '0', eth: value, usd: 'Unknown' });
                     }
                 }
             } else {
                 setDisplayPrice({ wei: '0', eth: value || '0', usd: '0.00' });
             }
         } else {
-            // For non-price fields, handle normally
             setFormData({ ...formData, [id]: value });
         }
     };
 
-    // Handle form submission
+    // Submit -> approval then create listing
     const handleSubmit = async (e) => {
         e.preventDefault();
 
@@ -181,39 +417,25 @@ function SellPage() {
             await connect();
             return;
         }
-
         if (!ownershipVerified) {
             setStatus('Error: Ownership not verified. You must own this NFT to list it.');
             return;
         }
 
         try {
-            // First check if the marketplace has approval
-            const marketplaceAddress = await getMarketplaceAddress();
-            if (!marketplaceAddress) {
-                throw new Error("Couldn't determine marketplace address");
-            }
-            
-            // Check NFT type and handle approval
+            const mktAddr = await getMarketplaceAddress();
+            if (!mktAddr) throw new Error("Couldn't determine marketplace address");
+
             if (nftType === 'ERC721') {
                 setStatus('Checking NFT approval status...');
-                const nftContract = new ethers.Contract(
-                    formData.nftContract,
-                    ERC721_APPROVAL_ABI,
-                    signer
-                );
-                
-                // Check if approved for all
-                const isApprovedForAll = await nftContract.isApprovedForAll(wallet, marketplaceAddress);
-                if (!isApprovedForAll) {
-                    // Check specific token approval
-                    const approved = await nftContract.getApproved(formData.tokenId);
-                    const isApproved = approved.toLowerCase() === marketplaceAddress.toLowerCase();
-                    
-                    if (!isApproved) {
+                const nft = new ethers.Contract(formData.nftContract, ERC721_APPROVAL_ABI, signer);
+                const isAll = await nft.isApprovedForAll(wallet, mktAddr);
+                if (!isAll) {
+                    const approved = await nft.getApproved(formData.tokenId);
+                    const ok = approved && approved.toLowerCase?.() === mktAddr.toLowerCase?.();
+                    if (!ok) {
                         setStatus('Requesting approval to sell your NFT...');
-                        // Request approval for all tokens (more convenient for user)
-                        const tx = await nftContract.setApprovalForAll(marketplaceAddress, true);
+                        const tx = await nft.setApprovalForAll(mktAddr, true);
                         setStatus('Confirming approval transaction...');
                         await tx.wait();
                         setStatus('Approval confirmed! Creating listing...');
@@ -221,37 +443,25 @@ function SellPage() {
                 }
             } else if (nftType === 'ERC1155') {
                 setStatus('Checking NFT approval status...');
-                const nftContract = new ethers.Contract(
-                    formData.nftContract,
-                    ERC1155_APPROVAL_ABI,
-                    signer
-                );
-                
-                // Check if approved for all (ERC1155 only has approveForAll)
-                const isApproved = await nftContract.isApprovedForAll(wallet, marketplaceAddress);
-                if (!isApproved) {
+                const nft = new ethers.Contract(formData.nftContract, ERC1155_APPROVAL_ABI, signer);
+                const isAll = await nft.isApprovedForAll(wallet, mktAddr);
+                if (!isAll) {
                     setStatus('Requesting approval to sell your NFT...');
-                    const tx = await nftContract.setApprovalForAll(marketplaceAddress, true);
+                    const tx = await nft.setApprovalForAll(mktAddr, true);
                     setStatus('Confirming approval transaction...');
                     await tx.wait();
                     setStatus('Approval confirmed! Creating listing...');
                 }
             }
-            
-            // Now proceed with creating the listing
-            setStatus('Creating listing...');
 
-            // Convert human-readable price to wei for blockchain
+            setStatus('Creating listing...');
             const token = tokenList[formData.paymentToken];
             const decimals = token ? token.decimals : 18;
 
             let priceInWei;
             try {
-                console.log(`Converting price ${formData.price} with ${decimals} decimals for ${token?.symbol}`);
                 priceInWei = ethers.parseUnits(formData.price, decimals).toString();
-                console.log(`Price in wei: ${priceInWei}`);
-            } catch (err) {
-                console.error("Price conversion error:", err);
+            } catch {
                 setStatus('Error: Invalid price format');
                 return;
             }
@@ -264,152 +474,85 @@ function SellPage() {
                 formData.paymentToken
             );
         } catch (error) {
-            console.error("Error creating listing:", error);
             setStatus(`Error: ${error.message || 'Could not create listing'}`);
         }
     };
 
-    // Helper function to get marketplace address
+    // Marketplace address
     const getMarketplaceAddress = async () => {
-        // Use the marketplace context to get the address
-        if (marketplaceAddress) {
-            return marketplaceAddress;
-        }
-        
-        // Fallback option - this is not ideal but can work as a temporary solution
-        // You might want to properly expose marketplaceAddress in your context
-        throw new Error("Marketplace address not available");
+        if (marketplaceAddress) return marketplaceAddress;
+        throw new Error('Marketplace address not available');
     };
 
-    // Handle payment token selection with human-readable price handling
+    // Change payment token => recompute display USD
     const handlePaymentTokenChange = (e) => {
         const tokenAddress = e.target.value;
         setFormData({ ...formData, paymentToken: tokenAddress });
 
-        // Update price display for new token
         if (formData.price && !isNaN(parseFloat(formData.price))) {
             const token = tokenList[tokenAddress];
             if (token) {
                 try {
-                    // Calculate USD value for current human-readable price
                     let usdValue = 'Unknown';
                     const currentPrice = livePrice[tokenAddress];
-                    if (currentPrice) {
-                        usdValue = (parseFloat(formData.price) * currentPrice).toFixed(2);
-                    }
-
-                    // Store both human-readable and wei values for new token
+                    if (currentPrice) usdValue = (parseFloat(formData.price) * currentPrice).toFixed(2);
                     setDisplayPrice({
                         wei: ethers.parseUnits(formData.price, token.decimals || 18).toString(),
                         eth: formData.price,
-                        usd: usdValue
+                        usd: usdValue,
                     });
-                } catch (err) {
-                    console.warn("Error in token change price conversion:", err);
-                    setDisplayPrice({
-                        wei: '0',
-                        eth: formData.price,
-                        usd: 'Unknown'
-                    });
+                } catch {
+                    setDisplayPrice({ wei: '0', eth: formData.price, usd: 'Unknown' });
                 }
             }
         }
     };
 
-    // Initialize tokens when provider is available
+    /* =========================
+       Token init + price fetching
+       ========================= */
     useEffect(() => {
-        if (provider) {
-            const initialize = async () => {
-                console.log("[DEBUG] Starting token initialization...");
-                const initializedTokens = await initializeTokens();
-                console.log("[DEBUG] Token initialization complete, starting price fetch...");
-                // Pass the token list directly to avoid race condition
-                await fetchUniswapPrices(0, initializedTokens);
-                console.log("[DEBUG] Initialization and price fetch complete");
-            };
-
-            initialize().catch(error => {
-                console.error("Error during initialization:", error);
-                setStatus("Error initializing tokens. Please refresh the page.");
-            });
-        }
+        if (!provider) return;
+        const init = async () => {
+            const initialized = await initializeTokens();
+            await fetchUniswapPrices(0, initialized);
+        };
+        init().catch((err) => {
+            console.error(err);
+            setStatus('Error initializing tokens. Please refresh the page.');
+        });
     }, [provider]);
 
-    // Get Uniswap V3 pool address with improved error handling
     const getUniswapPool = async (tokenA, tokenB) => {
         try {
-            console.log(`[DEBUG] Looking for pool between ${tokenA} and ${tokenB}`);
-            const factory = new ethers.Contract(
-                UNISWAP_V3_FACTORY_ADDRESS,
-                UNISWAP_V3_FACTORY_ABI,
-                provider
-            );
-
+            const factory = new ethers.Contract(UNISWAP_V3_FACTORY_ADDRESS, UNISWAP_V3_FACTORY_ABI, provider);
             for (const fee of FEE_TIERS) {
                 try {
                     const poolAddress = await factory.getPool(tokenA, tokenB, fee);
-                    if (poolAddress && poolAddress !== ethers.ZeroAddress) {
-                        console.log(`[DEBUG] Found pool at ${poolAddress} with ${fee / 10000}% fee`);
-                        return { poolAddress, fee };
-                    } else {
-                        console.log(`[DEBUG] No pool found for ${fee / 10000}% fee`);
-                    }
-                } catch (e) {
-                    console.warn(`[DEBUG] Error checking pool for fee ${fee}:`, e.message);
-                }
+                    if (poolAddress && poolAddress !== ethers.ZeroAddress) return { poolAddress, fee };
+                } catch { }
             }
-
-            console.log(`[DEBUG] No pool found for ${tokenA}/${tokenB} pair`);
             return { poolAddress: null, fee: null };
-        } catch (error) {
-            console.error(`[DEBUG] Error getting pool address for ${tokenA}/${tokenB}:`, error);
+        } catch {
             return { poolAddress: null, fee: null };
         }
     };
 
-    // Enhanced Uniswap V3 price calculation using tokenUtils
     const getUniswapPrice = async (tokenAddress) => {
-        try {
-            // Use the centralized price function from tokenUtils
-            const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
-            
-            const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
-            console.log(`[DEBUG] Getting price for ${tokenSymbol} (${tokenAddress})`);
-            console.log(`[DEBUG] Final calculated price for ${tokenSymbol}: $${price}`);
-            
-            // Determine source description based on token type
-            let source;
-            if (tokenAddress === ethers.ZeroAddress) {
-                source = 'Uniswap V3 (1% WVTRU/USDC pool)';
-            } else if (tokenAddress === USDC_ADDRESS) {
-                source = 'USD Stablecoin';
-            } else {
-                // For other tokens, indicate it's from Uniswap
-                source = `Uniswap V3 (${tokenSymbol}/USDC pool)`;
-            }
-
-            return { price, source };
-        } catch (error) {
-            console.error(`[ERROR] Price calculation failed for ${tokenAddress}: ${error.message}`);
-            throw error;
-        }
+        const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
+        const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
+        let source;
+        if (tokenAddress === ethers.ZeroAddress) source = 'Uniswap V3 (WVTRU proxy)';
+        else if (tokenAddress === USDC_ADDRESS) source = 'USD Stablecoin';
+        else source = `Uniswap V3 (${tokenSymbol}/USDC)`;
+        return { price, source };
     };
 
-    // Fetch all token prices from Uniswap with retry logic and better error handling
     const fetchUniswapPrices = async (retryCount = 0, providedTokenList = null) => {
         const MAX_RETRIES = 3;
-        const RETRY_DELAY = 2000; // 2 seconds
-
-        console.log(`[DEBUG] Fetching prices for all tokens (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
-        
-        // Use provided token list or fall back to state
+        const RETRY_DELAY = 2000;
         const activeTokenList = providedTokenList || tokenList;
-        
-        // Check if token list is populated
-        if (!activeTokenList || Object.keys(activeTokenList).length === 0) {
-            console.warn("[DEBUG] Token list is empty, cannot fetch prices");
-            return;
-        }
+        if (!activeTokenList || Object.keys(activeTokenList).length === 0) return;
 
         try {
             const previousPrices = { ...livePrice };
@@ -418,307 +561,149 @@ function SellPage() {
             const newSources = { ...priceSources };
             const errors = {};
 
-            // First, ensure USDC price is set (it's always $1)
             newPrices[USDC_ADDRESS] = 1.0;
             newSources[USDC_ADDRESS] = 'USD Stablecoin';
             changes[USDC_ADDRESS] = 0;
 
-            // Fetch WVTRU price first (needed for fallback calculations)
-            const tokenEntries = Object.entries(activeTokenList);
-            const wvtruEntry = tokenEntries.find(([address]) => address === WVTRU_ADDRESS);
-            
-            if (wvtruEntry) {
-                const [address, token] = wvtruEntry;
-                console.log(`[DEBUG] Getting WVTRU price first for fallback calculations`);
+            const entries = Object.entries(activeTokenList);
+
+            // WVTRU first
+            const wv = entries.find(([a]) => a === WVTRU_ADDRESS);
+            if (wv) {
+                const [address] = wv;
                 try {
                     const { price, source } = await getUniswapPrice(address);
-
                     if (price && price > 0) {
                         newPrices[address] = price;
                         newSources[address] = source;
-
-                        if (previousPrices[address]) {
-                            const changePercent = ((price - previousPrices[address]) / previousPrices[address]) * 100;
-                            changes[address] = changePercent;
-                        } else {
-                            changes[address] = 0;
-                        }
-                        console.log(`[DEBUG] WVTRU price fetched successfully: $${price}`);
-                        console.log(`[DEBUG] Assigned to address ${address} in newPrices: ${newPrices[address]}`);
-                    } else {
-                        throw new Error("Invalid price (zero or negative)");
-                    }
-                } catch (error) {
-                    console.warn(`Failed to get WVTRU price:`, error);
-                    errors[address] = error.message || 'Unknown error';
-                    
-                    // Keep old price if available
+                        changes[address] = previousPrices[address] ? ((price - previousPrices[address]) / previousPrices[address]) * 100 : 0;
+                    } else throw new Error('Invalid price');
+                } catch (e) {
+                    errors[address] = e.message || 'Unknown error';
                     if (previousPrices[address]) {
                         newPrices[address] = previousPrices[address];
                         changes[address] = 0;
                         newSources[address] = 'Outdated (fetch failed)';
                     } else {
                         newPrices[address] = null;
-                        newSources[address] = 'No price data available';
+                        newSources[address] = 'No price data';
                     }
                 }
-
-                // Update state with WVTRU price for fallback use - remove this early update to prevent conflicts
-                // setLivePrice(prev => ({ ...prev, [address]: newPrices[address] }));
             }
 
-            // Fetch prices for remaining tokens
-            for (const [address, token] of tokenEntries) {
-                // Skip USDC (already set) and WVTRU (already processed)
-                if (address === USDC_ADDRESS || address === WVTRU_ADDRESS) {
-                    continue;
-                }
-
-                console.log(`[DEBUG] Getting price for ${token.symbol} (${address})`);
+            // Others
+            for (const [address] of entries) {
+                if (address === USDC_ADDRESS || address === WVTRU_ADDRESS) continue;
                 try {
                     const { price, source } = await getUniswapPrice(address);
-
                     if (price && price > 0) {
                         newPrices[address] = price;
                         newSources[address] = source;
-
-                        // Calculate price change
-                        if (previousPrices[address]) {
-                            const changePercent = ((price - previousPrices[address]) / previousPrices[address]) * 100;
-                            changes[address] = changePercent;
-                        } else {
-                            changes[address] = 0;
-                        }
-                        console.log(`[DEBUG] ${token.symbol} price: $${price}`);
-                        console.log(`[DEBUG] Assigned to address ${address} in newPrices: ${newPrices[address]}`);
-                    } else {
-                        throw new Error("Invalid price (zero or negative)");
-                    }
-                } catch (error) {
-                    console.warn(`Failed to get price for ${token.symbol}:`, error);
-                    errors[address] = error.message || 'Unknown error';
-
-                    // Keep old price if available
+                        changes[address] = previousPrices[address] ? ((price - previousPrices[address]) / previousPrices[address]) * 100 : 0;
+                    } else throw new Error('Invalid price');
+                } catch (e) {
+                    errors[address] = e.message || 'Unknown error';
                     if (previousPrices[address]) {
                         newPrices[address] = previousPrices[address];
                         changes[address] = 0;
                         newSources[address] = 'Outdated (fetch failed)';
                     } else {
                         newPrices[address] = null;
-                        newSources[address] = 'No price data available';
+                        newSources[address] = 'No price data';
                     }
                 }
-
-                // Small delay between requests to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise((r) => setTimeout(r, 100));
             }
 
-            // Update all state at once
-            console.log(`[DEBUG] Final price assignments before state update:`, newPrices);
-            console.log(`[DEBUG] VTRU final price: ${newPrices[ethers.ZeroAddress]}`);
-            console.log(`[DEBUG] WVTRU final price: ${newPrices[WVTRU_ADDRESS]}`);
-            console.log(`[DEBUG] USDC final price: ${newPrices[USDC_ADDRESS]}`);
-            
-            // Validate prices before setting state
-            const validatedPrices = {};
-            Object.entries(newPrices).forEach(([address, price]) => {
-                if (typeof price === 'number' && price >= 0) {
-                    validatedPrices[address] = price;
-                } else {
-                    console.warn(`[DEBUG] Invalid price for ${address}: ${price}`);
-                    validatedPrices[address] = null;
-                }
+            const validated = {};
+            Object.entries(newPrices).forEach(([a, p]) => {
+                validated[a] = typeof p === 'number' && p >= 0 ? p : null;
             });
-            
-            setLivePrice(validatedPrices);
+
+            setLivePrice(validated);
             setPriceChange(changes);
             setPriceSources(newSources);
             setPriceErrors(errors);
             setLastUpdateTime(new Date());
 
-            // Update display price if needed
-            if (formData.price && formData.paymentToken) {
-                const token = activeTokenList[formData.paymentToken];
-                if (token && newPrices[formData.paymentToken]) {
-                    const usdValue = (parseFloat(formData.price) * newPrices[formData.paymentToken]).toFixed(2);
-                    setDisplayPrice(prev => ({
-                        ...prev,
-                        usd: usdValue
-                    }));
-                }
+            if (formData.price && formData.paymentToken && validated[formData.paymentToken]) {
+                const usdValue = (parseFloat(formData.price) * validated[formData.paymentToken]).toFixed(2);
+                setDisplayPrice((prev) => ({ ...prev, usd: usdValue }));
             }
-
-            console.log("[DEBUG] Price update completed successfully");
-            
-            // Count successful vs failed prices
-            const totalTokens = Object.keys(activeTokenList).length;
-            const successfulPrices = Object.values(newPrices).filter(price => price !== null).length;
-            const failedPrices = totalTokens - successfulPrices;
-            
-            if (failedPrices > 0) {
-                console.warn(`[DEBUG] ${failedPrices}/${totalTokens} tokens failed to get prices`);
-            }
-
         } catch (error) {
-            console.error("Error updating prices:", error);
-            
-            // Retry logic for network errors
-            if (retryCount < MAX_RETRIES && (
-                error.message.includes('network') || 
-                error.message.includes('timeout') ||
-                error.message.includes('fetch')
-            )) {
-                console.log(`[DEBUG] Retrying price fetch in ${RETRY_DELAY}ms (attempt ${retryCount + 1}/${MAX_RETRIES})`);
-                setTimeout(() => {
-                    fetchUniswapPrices(retryCount + 1, activeTokenList);
-                }, RETRY_DELAY);
+            if (retryCount < MAX_RETRIES && /(network|timeout|fetch)/i.test(error.message || '')) {
+                setTimeout(() => fetchUniswapPrices(retryCount + 1, activeTokenList), RETRY_DELAY);
             } else {
-                console.error(`[DEBUG] Price fetching failed after ${retryCount + 1} attempts`);
-                setStatus("Warning: Some token prices could not be fetched. You can still create listings.");
+                setStatus('Warning: Some token prices could not be fetched. You can still create listings.');
             }
         }
     };
 
-    // Initialize tokens
     const initializeTokens = async () => {
-        console.log("[DEBUG] Initializing tokens...");
         setLoadingPrices(true);
-
         const initialTokens = {};
-
         try {
-            // Initialize Native VTRU
             initialTokens[ethers.ZeroAddress] = {
                 address: ethers.ZeroAddress,
                 symbol: 'VTRU',
                 name: 'Native VTRU',
                 decimals: 18,
-                isNative: true
+                isNative: true,
             };
 
-            // Add WVTRU token
+            // WVTRU
             try {
-                const wvtruContract = new ethers.Contract(WVTRU_ADDRESS, ERC20_ABI, provider);
-                let wvtruSymbol, wvtruName, wvtruDecimals;
-
-                try {
-                    wvtruSymbol = await wvtruContract.symbol();
-                    wvtruName = await wvtruContract.name();
-                    wvtruDecimals = await wvtruContract.decimals();
-                    console.log(`[DEBUG] WVTRU token details: ${wvtruName} (${wvtruSymbol}) - ${wvtruDecimals} decimals`);
-                } catch (e) {
-                    console.warn("Could not fetch WVTRU details, using defaults", e);
-                    wvtruSymbol = 'WVTRU';
-                    wvtruName = 'Wrapped VTRU';
-                    wvtruDecimals = 18;
-                }
-
-                initialTokens[WVTRU_ADDRESS] = {
-                    address: WVTRU_ADDRESS,
-                    symbol: wvtruSymbol,
-                    name: wvtruName,
-                    decimals: wvtruDecimals
-                };
-            } catch (error) {
-                console.warn("Could not load WVTRU token, using defaults", error);
-                initialTokens[WVTRU_ADDRESS] = {
-                    address: WVTRU_ADDRESS,
-                    symbol: 'WVTRU',
-                    name: 'Wrapped VTRU',
-                    decimals: 18
-                };
+                const c = new ethers.Contract(WVTRU_ADDRESS, ERC20_ABI, provider);
+                const [symbol, name, decimals] = await Promise.all([
+                    c.symbol().catch(() => 'WVTRU'),
+                    c.name().catch(() => 'Wrapped VTRU'),
+                    c.decimals().catch(() => 18),
+                ]);
+                initialTokens[WVTRU_ADDRESS] = { address: WVTRU_ADDRESS, symbol, name, decimals };
+            } catch {
+                initialTokens[WVTRU_ADDRESS] = { address: WVTRU_ADDRESS, symbol: 'WVTRU', name: 'Wrapped VTRU', decimals: 18 };
             }
 
-            // Add USDC token
+            // USDC
             try {
-                const usdcContract = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, provider);
-                let usdcSymbol, usdcName, usdcDecimals;
-
-                try {
-                    usdcSymbol = await usdcContract.symbol();
-                    usdcName = await usdcContract.name();
-                    usdcDecimals = await usdcContract.decimals();
-                    console.log(`[DEBUG] USDC token details: ${usdcName} (${usdcSymbol}) - ${usdcDecimals} decimals`);
-                } catch (e) {
-                    console.warn("Could not fetch USDC details, using defaults", e);
-                    usdcSymbol = 'USDC';
-                    usdcName = 'USD Coin';
-                    usdcDecimals = 6;
-                }
-
-                initialTokens[USDC_ADDRESS] = {
-                    address: USDC_ADDRESS,
-                    symbol: usdcSymbol,
-                    name: usdcName,
-                    decimals: usdcDecimals
-                };
-
-                // USDC is always $1 - set immediately
-                setLivePrice(prev => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
-                setPriceSources(prev => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
-
-            } catch (error) {
-                console.warn("Could not load USDC token, using defaults", error);
-                initialTokens[USDC_ADDRESS] = {
-                    address: USDC_ADDRESS,
-                    symbol: 'USDC',
-                    name: 'USD Coin',
-                    decimals: 6
-                };
-
-                setLivePrice(prev => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
-                setPriceSources(prev => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
+                const c = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, provider);
+                const [symbol, name, decimals] = await Promise.all([
+                    c.symbol().catch(() => 'USDC'),
+                    c.name().catch(() => 'USD Coin'),
+                    c.decimals().catch(() => 6),
+                ]);
+                initialTokens[USDC_ADDRESS] = { address: USDC_ADDRESS, symbol, name, decimals };
+                setLivePrice((prev) => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
+                setPriceSources((prev) => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
+            } catch {
+                initialTokens[USDC_ADDRESS] = { address: USDC_ADDRESS, symbol: 'USDC', name: 'USD Coin', decimals: 6 };
+                setLivePrice((prev) => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
+                setPriceSources((prev) => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
             }
 
-            // Helper function to initialize a token
-            const initializeToken = async (address, fallbackSymbol, fallbackName, fallbackDecimals = 18) => {
+            const addToken = async (addr, fallbackSymbol, fallbackName, fallbackDecimals = 18) => {
                 try {
-                    const tokenContract = new ethers.Contract(address, ERC20_ABI, provider);
-                    let symbol, name, decimals;
-
-                    try {
-                        symbol = await tokenContract.symbol();
-                        name = await tokenContract.name();
-                        decimals = await tokenContract.decimals();
-                        console.log(`[DEBUG] ${fallbackSymbol} token details: ${name} (${symbol}) - ${decimals} decimals`);
-                    } catch (e) {
-                        console.warn(`Could not fetch ${fallbackSymbol} details, using defaults`, e);
-                        symbol = fallbackSymbol;
-                        name = fallbackName;
-                        decimals = fallbackDecimals;
-                    }
-
-                    initialTokens[address] = {
-                        address,
-                        symbol,
-                        name,
-                        decimals
-                    };
-                } catch (error) {
-                    console.warn(`Could not load ${fallbackSymbol} token, using defaults`, error);
-                    initialTokens[address] = {
-                        address,
-                        symbol: fallbackSymbol,
-                        name: fallbackName,
-                        decimals: fallbackDecimals
-                    };
+                    const c = new ethers.Contract(addr, ERC20_ABI, provider);
+                    const [symbol, name, decimals] = await Promise.all([
+                        c.symbol().catch(() => fallbackSymbol),
+                        c.name().catch(() => fallbackName),
+                        c.decimals().catch(() => fallbackDecimals),
+                    ]);
+                    initialTokens[addr] = { address: addr, symbol, name, decimals };
+                } catch {
+                    initialTokens[addr] = { address: addr, symbol: fallbackSymbol, name: fallbackName, decimals: fallbackDecimals };
                 }
             };
 
-            // Add new ERC20 payment tokens
-            await initializeToken(VUSD_ADDRESS, 'VUSD', 'VUSD Token');
-            await initializeToken(SEVO_ADDRESS, 'SEVO', 'SEVO Token');
-            await initializeToken(WSEVO_ADDRESS, 'WSEVO', 'Wrapped SEVO');
-            await initializeToken(VITEX_ADDRESS, 'VITEX', 'VITEX Token');
-            await initializeToken(VTRO_ADDRESS, 'VTRO', 'VTRO Token');
+            await addToken(VUSD_ADDRESS, 'VUSD', 'VUSD Token');
+            await addToken(SEVO_ADDRESS, 'SEVO', 'SEVO Token');
+            await addToken(WSEVO_ADDRESS, 'WSEVO', 'Wrapped SEVO');
+            await addToken(VITEX_ADDRESS, 'VITEX', 'VITEX Token');
+            await addToken(VTRO_ADDRESS, 'VTRO', 'VTRO Token');
 
-            // Set token list with initial data - CRITICAL: Do this before any price fetching
-            console.log(`[DEBUG] Setting token list with ${Object.keys(initialTokens).length} tokens`);
             setTokenList(initialTokens);
             setLastUpdateTime(new Date());
 
-            // Build payment options now that token list is set
-            console.log("[DEBUG] Building initial payment options...");
             const options = Object.entries(initialTokens).map(([address, token]) => ({
                 address,
                 name: `${token.symbol}${token.isNative ? ' (Native)' : ''}`,
@@ -726,41 +711,29 @@ function SellPage() {
                 symbol: token.symbol,
                 price: address === USDC_ADDRESS ? 1.0 : null,
                 priceSource: address === USDC_ADDRESS ? 'USD Stablecoin' : 'Price pending...',
-                error: null
+                error: null,
             }));
             setPaymentOptions(options);
 
-            console.log("[DEBUG] Token initialization completed successfully");
-            return initialTokens; // Return the initialized token list
+            return initialTokens;
         } catch (error) {
-            console.error("Error initializing tokens", error);
-            setStatus("Error loading token information. Please refresh the page.");
-            throw error; // Re-throw to prevent price fetching
+            setStatus('Error loading token information. Please refresh the page.');
+            throw error;
         } finally {
             setLoadingPrices(false);
         }
     };
 
-    // Build payment options from token list
     const buildPaymentOptions = () => {
-        console.log("[DEBUG] Building payment options from token list");
         if (!tokenList || Object.keys(tokenList).length === 0) {
-            console.warn("[DEBUG] Token list is empty, cannot build payment options");
             setPaymentOptions([]);
             return;
         }
-
         const options = Object.entries(tokenList).map(([address, token]) => {
             const price = livePrice[address];
             const priceSource = priceSources[address] || 'Unknown';
             const error = priceErrors[address];
-            
-            // Debug logging for price assignment
-            console.log(`[DEBUG] Payment option for ${token.symbol} (${address}): price=${price}, source=${priceSource}`);
-            
-            // Ensure price is properly validated
-            const validPrice = (typeof price === 'number' && price > 0) ? price : null;
-            
+            const validPrice = typeof price === 'number' && price > 0 ? price : null;
             return {
                 address,
                 name: `${token.symbol}${token.isNative ? ' (Native)' : ''}`,
@@ -768,31 +741,21 @@ function SellPage() {
                 symbol: token.symbol,
                 price: validPrice,
                 priceSource,
-                error
+                error,
             };
         });
-
-        console.log(`[DEBUG] Built ${options.length} payment options`);
         setPaymentOptions(options);
     };
 
-    // Update payment options when token list or live prices change
     useEffect(() => {
-        if (Object.keys(tokenList).length > 0) {
-            buildPaymentOptions();
-        }
+        if (Object.keys(tokenList).length > 0) buildPaymentOptions();
     }, [tokenList, livePrice, priceSources, priceErrors]);
 
-    // Handle custom token changes
     const handleCustomTokenChange = (e) => {
         const { id, value } = e.target;
-        setCustomTokenData({
-            ...customTokenData,
-            [id]: value
-        });
+        setCustomTokenData({ ...customTokenData, [id]: value });
     };
 
-    // Add custom token
     const addCustomToken = async () => {
         setCustomTokenError('');
 
@@ -802,102 +765,63 @@ function SellPage() {
         }
 
         try {
-            const checksumAddress = ethers.getAddress(customTokenData.address);
-
-            // Check if token already exists
-            if (tokenList[checksumAddress]) {
+            const checksum = ethers.getAddress(customTokenData.address);
+            if (tokenList[checksum]) {
                 setCustomTokenError('Token already added');
                 return;
             }
 
             setLoadingPrices(true);
+            const c = new ethers.Contract(checksum, ERC20_ABI, provider);
 
-            // Try to get token data from chain
-            const contract = new ethers.Contract(checksumAddress, ERC20_ABI, provider);
             let symbol, name, decimals;
-
             try {
-                symbol = await contract.symbol();
-                name = await contract.name();
-                decimals = await contract.decimals();
-            } catch (e) {
-                console.warn("Could not fetch token data from chain, using provided data", e);
+                symbol = await c.symbol();
+                name = await c.name();
+                decimals = await c.decimals();
+            } catch {
                 symbol = customTokenData.symbol || 'UNKNOWN';
                 name = customTokenData.name || 'Custom Token';
                 decimals = parseInt(customTokenData.decimals) || 18;
             }
 
-            // Add token to list
-            const newToken = {
-                address: checksumAddress,
-                symbol,
-                name,
-                decimals
-            };
+            const newToken = { address: checksum, symbol, name, decimals };
+            setTokenList((prev) => ({ ...prev, [checksum]: newToken }));
 
-            setTokenList(prev => ({
-                ...prev,
-                [checksumAddress]: newToken
-            }));
-
-            // If user provided a manual price, use it
             if (customTokenData.price) {
-                const manualPrice = parseFloat(customTokenData.price);
-                setLivePrice(prev => ({
-                    ...prev,
-                    [checksumAddress]: manualPrice
-                }));
-                setPriceSources(prev => ({
-                    ...prev,
-                    [checksumAddress]: 'Manually entered'
-                }));
+                const manual = parseFloat(customTokenData.price);
+                setLivePrice((prev) => ({ ...prev, [checksum]: manual }));
+                setPriceSources((prev) => ({ ...prev, [checksum]: 'Manually entered' }));
             } else {
-                // Flag as fetching price
-                setPriceSources(prev => ({
-                    ...prev,
-                    [checksumAddress]: 'Fetching from Uniswap...'
-                }));
+                setPriceSources((prev) => ({ ...prev, [checksum]: 'Fetching from Uniswap...' }));
             }
 
-            // Reset form
-            setCustomTokenData({
-                address: '',
-                symbol: '',
-                name: '',
-                decimals: '18',
-                price: ''
-            });
-
+            setCustomTokenData({ address: '', symbol: '', name: '', decimals: '18', price: '' });
             setShowAddTokenForm(false);
         } catch (error) {
             setCustomTokenError(`Error adding token: ${error.message}`);
-            console.error("Error adding custom token", error);
         } finally {
             setLoadingPrices(false);
         }
     };
 
-    // Resolve IPFS URIs
-    const resolveIpfsUri = (uri) => {
-        if (!uri) return '';
-        if (uri.startsWith('ipfs://')) {
-            return uri.replace('ipfs://', 'https://ipfs.io/ipfs/');
-        }
-        return uri;
-    };
+    /* =========================
+       NFT metadata (robust)
+       ========================= */
+    function mediaCandidatesFromMetadata(m) {
+        if (!m || typeof m !== 'object') return [];
+        return [m.image, m.image_url, m.imageUrl, m.animation_url, m.animationUrl].filter(isString);
+    }
 
-    // Fetch NFT metadata
     const fetchNftMetadata = async () => {
         if (!formData.nftContract || !formData.tokenId) {
             setStatus('Please enter contract address and token ID');
             return;
         }
-
         if (!wallet) {
             setStatus('Please connect your wallet first');
             return;
         }
-
         if (!provider) {
             setStatus('No provider available. Please reconnect your wallet.');
             return;
@@ -911,150 +835,103 @@ function SellPage() {
         setOwnershipVerified(false);
 
         try {
-            // Validate contract address
-            if (!ethers.isAddress(formData.nftContract)) {
-                throw new Error('Invalid contract address format');
-            }
+            if (!ethers.isAddress(formData.nftContract)) throw new Error('Invalid contract address format');
+            const checksum = ethers.getAddress(formData.nftContract);
 
-            const checksumAddress = ethers.getAddress(formData.nftContract);
-
-            // Try as ERC721
-            const erc721Contract = new ethers.Contract(checksumAddress, ERC721_ABI, provider);
-
+            // Try ERC721 first
             try {
-                console.log(`Checking ERC721 ownership for token ${formData.tokenId}`);
+                const erc721 = new ethers.Contract(checksum, ERC721_ABI, provider);
 
-                // Check ownership
-                const owner = await erc721Contract.ownerOf(formData.tokenId);
-                console.log(`Owner address: ${owner}`);
-
-                const isOwner = owner.toLowerCase() === wallet.toLowerCase();
-                console.log(`Wallet address: ${wallet}, Is owner: ${isOwner}`);
-
-                setOwnershipVerified(isOwner);
-
+                const owner = await erc721.ownerOf(formData.tokenId);
+                const isOwner = owner?.toLowerCase?.() === wallet?.toLowerCase?.();
+                setOwnershipVerified(!!isOwner);
                 if (!isOwner) {
                     setStatus('Warning: You are not the owner of this NFT');
                     setLoading(false);
                     return;
                 }
 
-                // Get token URI
-                console.log(`Getting tokenURI for ${formData.tokenId}`);
-                const tokenURI = await erc721Contract.tokenURI(formData.tokenId);
-                console.log(`Token URI: ${tokenURI}`);
+                const tokenURI = await erc721.tokenURI(formData.tokenId);
+                const metaCands = metadataCandidatesFromUri(tokenURI, formData.tokenId, false);
+                const { json } = await fetchJsonFromCandidates(metaCands);
 
-                const resolvedUri = resolveIpfsUri(tokenURI);
-                console.log(`Resolved URI: ${resolvedUri}`);
+                setMetadata(json);
+                setNftName(json?.name || `NFT #${formData.tokenId}`);
 
-                // Fetch metadata
-                console.log(`Fetching metadata from ${resolvedUri}`);
-                const metadataResponse = await fetch(resolvedUri);
-
-                if (!metadataResponse.ok) {
-                    throw new Error(`Failed to fetch metadata: ${metadataResponse.status} ${metadataResponse.statusText}`);
+                // Pre-resolve one working preview URL for zoom
+                try {
+                    const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
+                    const firstVideo = media.find(isVideoUrl);
+                    if (firstVideo) setNftImage(firstVideo);
+                    else setNftImage(await findFirstWorkingImage(media));
+                } catch {
+                    setNftImage('');
                 }
 
-                const metadataJson = await metadataResponse.json();
-                console.log(`Metadata fetched:`, metadataJson);
-
-                setMetadata(metadataJson);
-
-                // Set NFT details
-                setNftName(metadataJson.name || `NFT #${formData.tokenId}`);
-                setNftImage(resolveIpfsUri(metadataJson.image) || '');
                 setNftType('ERC721');
                 setBalance('1');
                 setStatus('');
+                return;
+            } catch {
+                // fallthrough to ERC1155
+            }
 
-            } catch (e) {
-                console.log("Not an ERC721 or error occurred:", e);
+            // Try ERC1155
+            try {
+                const erc1155 = new ethers.Contract(checksum, ERC1155_ABI, provider);
 
-                // Try as ERC1155
-                try {
-                    console.log(`Trying as ERC1155 for token ${formData.tokenId}`);
-                    const erc1155Contract = new ethers.Contract(checksumAddress, ERC1155_ABI, provider);
-
-                    // Check ownership
-                    const balance = await erc1155Contract.balanceOf(wallet, formData.tokenId);
-                    const ownerBalance = balance.toString();
-                    console.log(`ERC1155 balance: ${ownerBalance}`);
-
-                    setBalance(ownerBalance);
-
-                    if (ownerBalance === '0') {
-                        setStatus('Warning: You do not own any of these tokens');
-                        setLoading(false);
-                        return;
-                    }
-
-                    setOwnershipVerified(true);
-
-                    // Get token URI
-                    console.log(`Getting URI for ERC1155`);
-                    const tokenURI = await erc1155Contract.uri(formData.tokenId);
-                    console.log(`Token URI: ${tokenURI}`);
-
-                    const resolvedUri = resolveIpfsUri(tokenURI).replace('{id}', formData.tokenId);
-                    console.log(`Resolved URI: ${resolvedUri}`);
-
-                    // Fetch metadata
-                    console.log(`Fetching metadata from ${resolvedUri}`);
-                    const metadataResponse = await fetch(resolvedUri);
-
-                    if (!metadataResponse.ok) {
-                        throw new Error(`Failed to fetch metadata: ${metadataResponse.status} ${metadataResponse.statusText}`);
-                    }
-
-                    const metadataJson = await metadataResponse.json();
-                    console.log(`Metadata fetched:`, metadataJson);
-
-                    setMetadata(metadataJson);
-
-                    // Set NFT details
-                    setNftName(metadataJson.name || `NFT #${formData.tokenId}`);
-                    setNftImage(resolveIpfsUri(metadataJson.image) || '');
-                    setNftType('ERC1155');
-
-                    // Update quantity
-                    setFormData(prev => ({
-                        ...prev,
-                        quantity: ownerBalance
-                    }));
-
-                    setStatus('');
-
-                } catch (e2) {
-                    console.error("Not an ERC1155 either:", e2);
-                    setStatus('Could not fetch NFT metadata. Make sure the contract and token ID are correct.');
+                const bal = await erc1155.balanceOf(wallet, formData.tokenId);
+                const ownerBalance = bal.toString();
+                setBalance(ownerBalance);
+                if (ownerBalance === '0') {
+                    setStatus('Warning: You do not own any of these tokens');
+                    setLoading(false);
+                    return;
                 }
+                setOwnershipVerified(true);
+
+                const uri = await erc1155.uri(formData.tokenId);
+                const metaCands = metadataCandidatesFromUri(uri, formData.tokenId, true);
+                const { json } = await fetchJsonFromCandidates(metaCands);
+
+                setMetadata(json);
+                setNftName(json?.name || `NFT #${formData.tokenId}`);
+
+                try {
+                    const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
+                    const firstVideo = media.find(isVideoUrl);
+                    if (firstVideo) setNftImage(firstVideo);
+                    else setNftImage(await findFirstWorkingImage(media));
+                } catch {
+                    setNftImage('');
+                }
+
+                setNftType('ERC1155');
+                setFormData((prev) => ({ ...prev, quantity: ownerBalance }));
+                setStatus('');
+            } catch {
+                setStatus('Could not fetch NFT metadata. Make sure the contract and token ID are correct.');
             }
         } catch (error) {
-            console.error("Error fetching NFT metadata:", error);
             setStatus('Error fetching NFT metadata: ' + (error.message || error));
         } finally {
             setLoading(false);
         }
     };
 
-    // Fetch NFT when contract and tokenId change
     useEffect(() => {
         if (formData.nftContract && formData.tokenId && wallet && provider) {
             fetchNftMetadata();
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [formData.nftContract, formData.tokenId, wallet, provider]);
 
-    
-
-    // Calculate proceeds
+    /* =========================
+       Proceeds & rarity helpers
+       ========================= */
     const calculateProceeds = () => {
-        if (!displayPrice.eth || !formData.quantity) return {
-            subtotal: '0',
-            marketplaceFee: '0',
-            royaltyFee: '0',
-            total: '0',
-            usdValue: '0'
-        };
+        if (!displayPrice.eth || !formData.quantity)
+            return { subtotal: '0', marketplaceFee: '0', royaltyFee: '0', total: '0', usdValue: '0' };
 
         const quantity = parseFloat(formData.quantity);
         const pricePerUnit = parseFloat(displayPrice.eth);
@@ -1064,41 +941,37 @@ function SellPage() {
         const royaltyFeeAmount = subtotal * (fees.creatorRoyalty / 100);
         const total = subtotal - marketplaceFeeAmount - royaltyFeeAmount;
 
-        // Calculate USD values
         let usdValue = 'Unknown';
         const currentPrice = livePrice[formData.paymentToken];
-        if (currentPrice) {
-            usdValue = (total * currentPrice).toFixed(2);
-        }
+        if (currentPrice) usdValue = (total * currentPrice).toFixed(2);
 
         return {
             subtotal: subtotal.toFixed(6),
             marketplaceFee: marketplaceFeeAmount.toFixed(6),
             royaltyFee: royaltyFeeAmount.toFixed(6),
             total: total.toFixed(6),
-            usdValue
+            usdValue,
         };
     };
 
     const proceeds = calculateProceeds();
 
-    // Trait rarity helper
     const getTraitRarity = (trait) => {
-        const rarityMap = {
-            'common': { label: 'Common', color: '#78909c', percentage: '25.4%' },
-            'uncommon': { label: 'Uncommon', color: '#26a69a', percentage: '15.2%' },
-            'rare': { label: 'Rare', color: '#5c6bc0', percentage: '8.7%' },
-            'epic': { label: 'Epic', color: '#ab47bc', percentage: '3.2%' },
-            'legendary': { label: 'Legendary', color: '#ffb300', percentage: '0.9%' }
+        const map = {
+            common: { label: 'Common', color: '#78909c', percentage: '25.4%' },
+            uncommon: { label: 'Uncommon', color: '#26a69a', percentage: '15.2%' },
+            rare: { label: 'Rare', color: '#5c6bc0', percentage: '8.7%' },
+            epic: { label: 'Epic', color: '#ab47bc', percentage: '3.2%' },
+            legendary: { label: 'Legendary', color: '#ffb300', percentage: '0.9%' },
         };
-
-        const rarities = Object.keys(rarityMap);
-        const randomIndex = Math.floor((trait.trait_type.length + trait.value.length) % 5);
-        const rarityKey = rarities[randomIndex];
-
-        return rarityMap[rarityKey];
+        const keys = Object.keys(map);
+        const i = Math.floor((((trait.trait_type?.length) || 0) + (String(trait.value || '').length)) % 5);
+        return map[keys[i]];
     };
 
+    /* =========================
+       UI
+       ========================= */
     return (
         <div className="sell-container">
             <div className="page-header">
@@ -1111,14 +984,11 @@ function SellPage() {
                 <div className="price-ticker">
                     <div className="ticker-header">
                         <span>Uniswap V3 Token Prices</span>
-                        <span className="ticker-time">
-                            Last updated: {formatTime(lastUpdateTime)}
-                        </span>
+                        <span className="ticker-time">Last updated: {formatTime(lastUpdateTime)}</span>
                     </div>
                     <div className="ticker-items">
                         {Object.entries(tokenList)
-                            // Show ALL tokens with prices, including wrapped tokens
-                            .filter(([address, token]) => livePrice[address] !== null)
+                            .filter(([address]) => livePrice[address] !== null)
                             .map(([address, token]) => {
                                 const price = livePrice[address];
                                 const change = priceChange[address] || 0;
@@ -1132,15 +1002,14 @@ function SellPage() {
                                             <>
                                                 <div className="ticker-price">${price.toFixed(4)}</div>
                                                 <div className={`ticker-change ${change > 0 ? 'positive' : change < 0 ? 'negative' : ''}`}>
-                                                    {change > 0 ? '+' : ''}{change.toFixed(2)}%
+                                                    {change > 0 ? '+' : ''}
+                                                    {change.toFixed(2)}%
                                                 </div>
                                             </>
                                         ) : (
                                             <div className="ticker-no-price">No Price Data</div>
                                         )}
-                                        <div className="ticker-source" title={error || source}>
-                                            {error ? 'Error' : source}
-                                        </div>
+                                        <div className="ticker-source" title={error || source}>{error ? 'Error' : source}</div>
                                     </div>
                                 );
                             })}
@@ -1159,6 +1028,7 @@ function SellPage() {
                         <form onSubmit={handleSubmit}>
                             <div className="form-section">
                                 <h3>NFT Details</h3>
+
                                 <div className="form-group">
                                     <label htmlFor="nftContract">NFT Contract Address</label>
                                     <input
@@ -1186,11 +1056,7 @@ function SellPage() {
                                 </div>
 
                                 {!metadata && !loading && (
-                                    <button
-                                        type="button"
-                                        className="secondary-button fetch-button"
-                                        onClick={fetchNftMetadata}
-                                    >
+                                    <button type="button" className="secondary-button fetch-button" onClick={fetchNftMetadata}>
                                         Fetch NFT Data
                                     </button>
                                 )}
@@ -1214,13 +1080,9 @@ function SellPage() {
                                                 max={balance}
                                                 required
                                             />
-                                            <div className="input-info">
-                                                Available: {balance}
-                                            </div>
+                                            <div className="input-info">Available: {balance}</div>
                                         </div>
-                                        {nftType === 'ERC721' && (
-                                            <div className="small">ERC-721 NFTs are unique and quantity will be 1</div>
-                                        )}
+                                        {nftType === 'ERC721' && <div className="small">ERC-721 NFTs are unique and quantity will be 1</div>}
                                     </div>
 
                                     <div className="form-group">
@@ -1287,7 +1149,6 @@ function SellPage() {
                                                             placeholder="Auto-detect if available"
                                                         />
                                                     </div>
-
                                                     <div className="form-group">
                                                         <label htmlFor="decimals">Decimals</label>
                                                         <input
@@ -1325,22 +1186,14 @@ function SellPage() {
                                                             placeholder="Token USD price"
                                                             step="0.000001"
                                                         />
-                                                        <div className="input-info">
-                                                            Will try to find Uniswap pool if left empty
-                                                        </div>
+                                                        <div className="input-info">Will try to find Uniswap pool if left empty</div>
                                                     </div>
                                                 </div>
 
-                                                {customTokenError && (
-                                                    <div className="error-message">{customTokenError}</div>
-                                                )}
+                                                {customTokenError && <div className="error-message">{customTokenError}</div>}
 
                                                 <div className="form-actions token-actions">
-                                                    <button
-                                                        type="button"
-                                                        className="secondary-button"
-                                                        onClick={() => setShowAddTokenForm(false)}
-                                                    >
+                                                    <button type="button" className="secondary-button" onClick={() => setShowAddTokenForm(false)}>
                                                         Cancel
                                                     </button>
                                                     <button
@@ -1363,23 +1216,25 @@ function SellPage() {
                                         ) : (
                                             <div className="token-dropdown-container">
                                                 <div className="token-dropdown-wrapper">
-                                                    <select
-                                                        className="token-dropdown"
-                                                        value={formData.paymentToken}
-                                                        onChange={handlePaymentTokenChange}
-                                                    >
-                                                        <option value="" disabled>Select payment token</option>
-                                                        {paymentOptions.map(option => (
+                                                    <select className="token-dropdown" value={formData.paymentToken} onChange={handlePaymentTokenChange}>
+                                                        <option value="" disabled>
+                                                            Select payment token
+                                                        </option>
+                                                        {paymentOptions.map((option) => (
                                                             <option key={option.address} value={option.address}>
-                                                                {option.name} - ${option.price !== null ? 
-                                                                    (option.price < 0.01 ? option.price.toFixed(6) : option.price.toFixed(2)) 
-                                                                    : 'No price'} USD
+                                                                {option.name} - $
+                                                                {option.price !== null
+                                                                    ? option.price < 0.01
+                                                                        ? option.price.toFixed(6)
+                                                                        : option.price.toFixed(2)
+                                                                    : 'No price'}{' '}
+                                                                USD
                                                             </option>
                                                         ))}
                                                     </select>
                                                     <div className="dropdown-icon">
                                                         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                                                            <path d="M7 10l5 5 5-5z"/>
+                                                            <path d="M7 10l5 5 5-5z" />
                                                         </svg>
                                                     </div>
                                                 </div>
@@ -1387,26 +1242,26 @@ function SellPage() {
                                                 {formData.paymentToken && paymentOptions.length > 0 && (
                                                     <div className="selected-token-details">
                                                         {(() => {
-                                                            const selectedOption = paymentOptions.find(option => option.address === formData.paymentToken);
-                                                            if (!selectedOption) return null;
-                                                            
+                                                            const selected = paymentOptions.find((o) => o.address === formData.paymentToken);
+                                                            if (!selected) return null;
+
                                                             return (
-                                                                <div className={`token-details-card ${selectedOption.error ? 'has-error' : ''}`}>
+                                                                <div className={`token-details-card ${selected.error ? 'has-error' : ''}`}>
                                                                     <div className="token-details-header">
                                                                         <div className="token-details-info">
-                                                                            <div className="token-details-name">{selectedOption.name}</div>
-                                                                            <div className="token-details-full-name">{selectedOption.fullName}</div>
+                                                                            <div className="token-details-name">{selected.name}</div>
+                                                                            <div className="token-details-full-name">{selected.fullName}</div>
                                                                         </div>
                                                                         <div className="token-details-price-info">
-                                                                            {selectedOption.price !== null ? (
+                                                                            {selected.price !== null ? (
                                                                                 <div className="token-details-price">
-                                                                                    ${selectedOption.price < 0.01 ? selectedOption.price.toFixed(6) : selectedOption.price.toFixed(2)} USD
+                                                                                    ${selected.price < 0.01 ? selected.price.toFixed(6) : selected.price.toFixed(2)} USD
                                                                                 </div>
                                                                             ) : (
                                                                                 <div className="token-details-price-unknown">No price data</div>
                                                                             )}
-                                                                            <div className={`token-details-source ${selectedOption.error ? 'error' : ''}`} title={selectedOption.error}>
-                                                                                {selectedOption.error ? '⚠️ ' + selectedOption.error : selectedOption.priceSource}
+                                                                            <div className={`token-details-source ${selected.error ? 'error' : ''}`} title={selected.error}>
+                                                                                {selected.error ? '⚠️ ' + selected.error : selected.priceSource}
                                                                             </div>
                                                                         </div>
                                                                     </div>
@@ -1416,11 +1271,7 @@ function SellPage() {
                                                     </div>
                                                 )}
 
-                                                {paymentOptions.length === 0 && (
-                                                    <div className="no-tokens-message">
-                                                        No tokens available. Add a custom token to continue.
-                                                    </div>
-                                                )}
+                                                {paymentOptions.length === 0 && <div className="no-tokens-message">No tokens available. Add a custom token to continue.</div>}
                                             </div>
                                         )}
                                     </div>
@@ -1428,10 +1279,12 @@ function SellPage() {
                             )}
 
                             <div className="form-actions">
-                                {/* Note about approval */}
                                 <div className="approval-note">
                                     <svg viewBox="0 0 24 24" width="16" height="16">
-                                        <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+                                        <path
+                                            fill="currentColor"
+                                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"
+                                        />
                                     </svg>
                                     <span>Note: You'll need to approve the marketplace to transfer your NFT. This is a one-time action per collection.</span>
                                 </div>
@@ -1448,18 +1301,19 @@ function SellPage() {
                                     <button
                                         type="submit"
                                         className="primary-button"
-                                        disabled={!wallet || !metadata || status.includes('Creating') || !ownershipVerified}
+                                        disabled={!wallet || !metadata || (typeof status === 'string' && status.includes('Creating')) || !ownershipVerified}
                                     >
-                                        {status.includes('Creating') ? 'Processing...' : 'List NFT for Sale'}
+                                        {typeof status === 'string' && status.includes('Creating') ? 'Processing...' : 'List NFT for Sale'}
                                     </button>
                                 )}
                             </div>
 
-                            {status && <div className={`status-message ${status.includes('Warning') ? 'warning' : ''}`}>{status}</div>}
+                            {status && <div className={`status-message ${String(status).includes('Warning') ? 'warning' : ''}`}>{status}</div>}
                         </form>
                     </div>
                 </div>
 
+                {/* Preview */}
                 <div className="nft-preview">
                     {loading ? (
                         <div className="preview-loading">
@@ -1469,9 +1323,7 @@ function SellPage() {
                     ) : metadata ? (
                         <div className="premium-preview">
                             <div className="preview-header">
-                                <div className="preview-badge">
-                                    {nftType || 'NFT'}
-                                </div>
+                                <div className="preview-badge">{nftType || 'NFT'}</div>
                                 {ownershipVerified && (
                                     <div className="ownership-badge">
                                         <svg viewBox="0 0 24 24" width="16" height="16" fill="#22cc88">
@@ -1483,16 +1335,27 @@ function SellPage() {
                             </div>
 
                             <div className="premium-image-container">
-                                {nftImage ? (
-                                    <div className="premium-image-wrapper">
-                                        <img
-                                            src={nftImage}
-                                            alt={nftName}
-                                            className="premium-image"
-                                        />
+                                <div className="premium-image-wrapper">
+                                    <SmartMedia
+                                        srcList={[
+                                            nftImage,
+                                            metadata?.image,
+                                            metadata?.image_url,
+                                            metadata?.imageUrl,
+                                            metadata?.animation_url,
+                                            metadata?.animationUrl,
+                                        ]}
+                                        alt={nftName}
+                                        width={640}
+                                        height={460}
+                                        seed={`${String(formData.nftContract)}-${String(formData.tokenId)}`}
+                                        title={nftName}
+                                        className="premium-image"
+                                    />
+                                    {isString(nftImage) && (
                                         <div className="image-overlay">
                                             <a
-                                                href={nftImage}
+                                                href={expandToCandidateUrls(nftImage)[0] || nftImage}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
                                                 className="zoom-button"
@@ -1503,10 +1366,8 @@ function SellPage() {
                                                 </svg>
                                             </a>
                                         </div>
-                                    </div>
-                                ) : (
-                                    <div className="no-image">No image available</div>
-                                )}
+                                    )}
+                                </div>
                             </div>
 
                             <div className="preview-title-section">
@@ -1519,22 +1380,13 @@ function SellPage() {
                             </div>
 
                             <div className="preview-tabs">
-                                <button
-                                    className={activePreviewTab === 'details' ? 'active' : ''}
-                                    onClick={() => setActivePreviewTab('details')}
-                                >
+                                <button className={activePreviewTab === 'details' ? 'active' : ''} onClick={() => setActivePreviewTab('details')}>
                                     Details
                                 </button>
-                                <button
-                                    className={activePreviewTab === 'properties' ? 'active' : ''}
-                                    onClick={() => setActivePreviewTab('properties')}
-                                >
+                                <button className={activePreviewTab === 'properties' ? 'active' : ''} onClick={() => setActivePreviewTab('properties')}>
                                     Properties
                                 </button>
-                                <button
-                                    className={activePreviewTab === 'pricing' ? 'active' : ''}
-                                    onClick={() => setActivePreviewTab('pricing')}
-                                >
+                                <button className={activePreviewTab === 'pricing' ? 'active' : ''} onClick={() => setActivePreviewTab('pricing')}>
                                     Pricing & Fees
                                 </button>
                             </div>
@@ -1544,9 +1396,9 @@ function SellPage() {
                                     <div className="details-tab">
                                         <div className="preview-description">
                                             <h4>Description</h4>
-                                            <p>{metadata.description || 'No description available'}</p>
+                                            <p>{metadata?.description || 'No description available'}</p>
                                         </div>
-                                        
+
                                         <div className="preview-details">
                                             <div className="detail-row">
                                                 <span className="detail-label">Token Standard</span>
@@ -1584,8 +1436,8 @@ function SellPage() {
                                                 </span>
                                             </div>
                                         </div>
-                                        
-                                        {metadata.external_url && (
+
+                                        {isString(metadata?.external_url) && (
                                             <div className="external-link">
                                                 <h4>External Link</h4>
                                                 <a href={metadata.external_url} target="_blank" rel="noopener noreferrer">
@@ -1595,12 +1447,11 @@ function SellPage() {
                                         )}
                                     </div>
                                 )}
-                                
+
                                 {activePreviewTab === 'properties' && (
                                     <div className="properties-tab">
                                         <h4>Properties</h4>
-                                                
-                                        {metadata.attributes && metadata.attributes.length > 0 ? (
+                                        {Array.isArray(metadata?.attributes) && metadata.attributes.length > 0 ? (
                                             <div className="attributes-grid">
                                                 {metadata.attributes.map((attr, index) => {
                                                     const rarity = getTraitRarity(attr);
@@ -1609,9 +1460,7 @@ function SellPage() {
                                                             <div className="attribute-type" style={{ color: rarity.color }}>
                                                                 {attr.trait_type || 'Property'}
                                                             </div>
-                                                            <div className="attribute-value">
-                                                                {attr.value?.toString() || 'Unknown'}
-                                                            </div>
+                                                            <div className="attribute-value">{attr.value?.toString() || 'Unknown'}</div>
                                                             <div className="attribute-rarity" style={{ backgroundColor: rarity.color }}>
                                                                 {rarity.label} ({rarity.percentage})
                                                             </div>
@@ -1626,19 +1475,18 @@ function SellPage() {
                                         )}
                                     </div>
                                 )}
-                                
+
                                 {activePreviewTab === 'pricing' && (
                                     <div className="pricing-tab">
-                                        {/* Existing pricing tab content */}
                                         <div className="pricing-summary">
                                             <div className="pricing-row">
                                                 <div className="pricing-label">Listing Subtotal</div>
                                                 <div className="pricing-value">
-                                                    <span>{proceeds.subtotal} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}</span>
+                                                    <span>
+                                                        {proceeds.subtotal} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    </span>
                                                     <span className="pricing-usd">
-                                                        {proceeds.usdValue === 'Unknown' ?
-                                                            '(USD value unknown)' :
-                                                            `($${proceeds.usdValue})`}
+                                                        {proceeds.usdValue === 'Unknown' ? '(USD value unknown)' : `($${proceeds.usdValue})`}
                                                     </span>
                                                 </div>
                                             </div>
@@ -1646,7 +1494,9 @@ function SellPage() {
                                             <div className="pricing-row fee">
                                                 <div className="pricing-label">
                                                     <span>Marketplace Fee ({fees.marketplaceFee}%)</span>
-                                                    <span className="info-icon" title="Fee charged by the marketplace">ⓘ</span>
+                                                    <span className="info-icon" title="Fee charged by the marketplace">
+                                                        ⓘ
+                                                    </span>
                                                 </div>
                                                 <div className="pricing-value negative">
                                                     -{proceeds.marketplaceFee} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
@@ -1656,7 +1506,9 @@ function SellPage() {
                                             <div className="pricing-row fee">
                                                 <div className="pricing-label">
                                                     <span>Creator Royalty ({fees.creatorRoyalty}%)</span>
-                                                    <span className="info-icon" title="Royalty paid to the original creator">ⓘ</span>
+                                                    <span className="info-icon" title="Royalty paid to the original creator">
+                                                        ⓘ
+                                                    </span>
                                                 </div>
                                                 <div className="pricing-value negative">
                                                     -{proceeds.royaltyFee} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
@@ -1668,25 +1520,35 @@ function SellPage() {
                                             <div className="pricing-row total">
                                                 <div className="pricing-label">You'll Receive</div>
                                                 <div className="pricing-value">
-                                                    <span>{proceeds.total} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}</span>
+                                                    <span>
+                                                        {proceeds.total} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    </span>
                                                     <span className="pricing-usd">
-                                                        {proceeds.usdValue === 'Unknown' ?
-                                                            '(USD value unknown)' :
-                                                            `($${proceeds.usdValue})`}
+                                                        {proceeds.usdValue === 'Unknown' ? '(USD value unknown)' : `($${proceeds.usdValue})`}
                                                     </span>
                                                 </div>
                                             </div>
 
                                             <div className="network-fee-note">
                                                 <svg viewBox="0 0 24 24" width="16" height="16">
-                                                    <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+                                                    <path
+                                                        fill="currentColor"
+                                                        d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"
+                                                    />
                                                 </svg>
                                                 <span>Estimated network fee: {fees.networkFee} VTRU</span>
                                             </div>
 
                                             <div className="price-source-note">
                                                 <span>Price source: {priceSources[formData.paymentToken] || 'Unknown'}</span>
-                                                <a href="#" onClick={(e) => { e.preventDefault(); fetchUniswapPrices(); }} className="refresh-link">
+                                                <a
+                                                    href="#"
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        fetchUniswapPrices();
+                                                    }}
+                                                    className="refresh-link"
+                                                >
                                                     Refresh Uniswap prices
                                                 </a>
                                             </div>
@@ -1694,7 +1556,10 @@ function SellPage() {
                                             {formData.paymentToken === ethers.ZeroAddress && (
                                                 <div className="pricing-note">
                                                     <svg viewBox="0 0 24 24" width="16" height="16">
-                                                        <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+                                                        <path
+                                                            fill="currentColor"
+                                                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"
+                                                        />
                                                     </svg>
                                                     <span>Native VTRU uses WVTRU price from Uniswap</span>
                                                 </div>
@@ -1712,7 +1577,10 @@ function SellPage() {
 
                                         <div className="pricing-explainer">
                                             <h4>How our fees work</h4>
-                                            <p>Our marketplace charges {fees.marketplaceFee}% on all sales to support our platform development and operations. Creator royalties of {fees.creatorRoyalty}% ensure original creators are compensated for their work.</p>
+                                            <p>
+                                                Our marketplace charges {fees.marketplaceFee}% on all sales to support our platform development and operations.
+                                                Creator royalties of {fees.creatorRoyalty}% ensure original creators are compensated for their work.
+                                            </p>
                                         </div>
                                     </div>
                                 )}

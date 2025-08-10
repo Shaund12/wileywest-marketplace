@@ -13,6 +13,13 @@ import {
     isCacheValid,
     scopedClass
 } from '../utils/nftUtils';
+import { 
+    fetchJSON,
+    resolveIPFSWithFallbacks,
+    isCORSError,
+    isNetworkError,
+    retryWithBackoff
+} from '../utils/networkUtils';
 
 const MarketplaceContext = createContext();
 
@@ -1012,12 +1019,15 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         setStatus('Loading listings...');
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
+        let cachedListings = [];
+        let shouldCheckBlockchain = true; // Default to check blockchain
+        
         try {
 
             // Step 1: Try to load from cache first (unless force refresh)
             if (!forceRefresh && supabaseConnected && getCachedListings) {
                 debugLog("Checking cache for listings...");
-                const cachedListings = await getCachedListings();
+                cachedListings = await getCachedListings();
                 
                 if (cachedListings && cachedListings.length > 0) {
                     // Validate cache using content signature if available
@@ -1035,13 +1045,19 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         const cacheAge = Date.now() - (cachedListings[0]?.timestamp || 0);
                         if (cacheAge > 60 * 60 * 1000) {
                             setStatusWithType('Loaded from cache (data may be stale)', 'warning', true);
+                            shouldCheckBlockchain = true; // Check blockchain if cache is stale
                         } else {
                             setStatusWithType('Loaded from cache', 'success');
+                            shouldCheckBlockchain = false; // Don't need to check blockchain if cache is fresh
                         }
                         
                         // Clear non-persistent status after delay
                         setTimeout(() => clearStatus(), 2000);
-                        return;
+                        
+                        // If cache is fresh, don't check blockchain unless forced
+                        if (!shouldCheckBlockchain && !forceRefresh) {
+                            return;
+                        }
                     } else {
                         debugLog("Cache signature mismatch, fetching fresh data");
                     }
@@ -1311,8 +1327,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         }
                     }
 
-                    // Create a proper image URL for the NFT
-                    let image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+                    // Create a proper deterministic fallback image URL for the NFT
+                    const deterministic_fallback = `https://picsum.photos/seed/${listing.nftContract}${listing.tokenId}/300/300`;
+                    let image = deterministic_fallback;
                     let name = resolveCollectionName({ tokenId: listing.tokenId?.toString() || '0' });
                     let metadata = null;
                     let collectionName = null;
@@ -1352,21 +1369,65 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
                         debugLog(`Token URI for listing ${i}: ${tokenURI}`);
 
-                        // Resolve IPFS URI
-                        const resolvedURI = tokenURI.startsWith('ipfs://')
-                            ? tokenURI.replace('ipfs://', 'https://ipfs.io/ipfs/')
-                            : tokenURI;
+                        // Enhanced metadata fetching with multiple IPFS gateway fallbacks
+                        const ipfsGateways = [
+                            'https://ipfs.io/ipfs/',
+                            'https://cloudflare-ipfs.com/ipfs/',
+                            'https://gateway.pinata.cloud/ipfs/',
+                            'https://ipfs.fleek.co/ipfs/',
+                            'https://dweb.link/ipfs/'
+                        ];
 
-                        // Fetch metadata
-                        const response = await fetch(resolvedURI);
-                        const metadataJson = await response.json();
+                        // Enhanced metadata fetching with CORS-safe requests and better error handling
+                        const { primaryUrl, fallbacks } = resolveIPFSWithFallbacks(tokenURI);
                         
-                        // Normalize metadata using utility function
-                        metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
+                        debugLog(`Fetching metadata for listing ${i} from: ${primaryUrl}`);
+                        if (fallbacks.length > 0) {
+                            debugLog(`Available fallbacks: ${fallbacks.length} IPFS gateways`);
+                        }
+
+                        // Fetch metadata with CORS-safe requests and automatic fallbacks
+                        let metadata = null;
+                        let fetchSuccess = false;
+                        
+                        try {
+                            const metadataJson = await fetchJSON(primaryUrl, {
+                                timeout: 10000
+                            }, fallbacks);
+                            
+                            metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
+                            fetchSuccess = true;
+                            debugLog(`Successfully fetched metadata for listing ${i}`);
+                            
+                        } catch (fetchError) {
+                            debugWarn(`All metadata fetch attempts failed for listing ${i}:`, fetchError.message);
+                            
+                            // Provide specific error feedback for debugging
+                            if (isCORSError(fetchError)) {
+                                debugLog(`CORS issue detected - this is often due to restrictive server policies`);
+                            } else if (isNetworkError(fetchError)) {
+                                debugLog(`Network connectivity issue - may be temporary`);
+                            }
+                            
+                            // Use fallback metadata
+                            metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
+                        }
 
                         debugLog(`Metadata for listing ${i}:`, metadata);
 
                         if (metadata.name) name = metadata.name;
+
+                        // Enhanced image resolution with IPFS gateway support
+                        if (metadata.image) {
+                            image = metadata.image;
+                            
+                            // If metadata image is also IPFS, ensure it uses a working gateway
+                            if (image.startsWith('ipfs://')) {
+                                image = image.replace('ipfs://', ipfsGateways[0]);
+                            }
+                            
+                            debugLog(`Image URL for listing ${i}: ${image}`);
+                        }
 
                         // Enhanced collection name resolution with multiple fallbacks
                         if (!collectionName || collectionName.includes('Collection 0x')) {
@@ -1399,16 +1460,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                                 }
                             }
                         }
-
-                        if (metadata.image) {
-                            image = metadata.image;
-                            debugLog(`Image URL for listing ${i}: ${image}`);
-                        }
                     } catch (error) {
                         debugWarn(`Failed to fetch metadata for listing ${i}:`, error);
                         // Use fallback metadata
                         metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
                         name = metadata.name;
+                        // Ensure we still use the deterministic fallback image even if metadata fails
+                        image = deterministic_fallback;
                     }
 
                     // Create the sanitized listing object with standardized BigInt handling
@@ -1467,6 +1525,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             debugLog(`Auto-caching DISABLED to prevent mass data collection to Supabase`);
             debugLog(`Found ${res.length} listings - caching disabled to prevent database overload`);
 
+            // Auto-caching disabled to prevent mass data collection
+            const shouldCache = false;
             
             if (shouldCache && supabaseConnected && res.length > 0 && cacheListings) {
                 try {

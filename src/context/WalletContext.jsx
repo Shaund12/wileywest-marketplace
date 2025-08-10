@@ -1,250 +1,369 @@
-import React, { createContext, useState, useContext, useEffect, useCallback } from 'react';
+﻿// src/context/WalletContext.jsx
+import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
 
-// Create context
 const WalletContext = createContext();
 
+// ======= ENV / CONFIG =========
+const RPC_URL = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
+const RAW_CHAIN_ID = import.meta.env.VITE_CHAIN_ID || '0x5d2'; // accepts "0x.." or decimal string
+const CHAIN_NAME = import.meta.env.VITE_CHAIN_NAME || 'Vitruveo';
+const NATIVE_NAME = import.meta.env.VITE_NATIVE_NAME || 'VTRU';
+const NATIVE_SYMBOL = import.meta.env.VITE_NATIVE_SYMBOL || 'VTRU';
+const NATIVE_DECIMALS = Number(import.meta.env.VITE_NATIVE_DECIMALS || 18);
+const EXPLORER_URL = import.meta.env.VITE_BLOCK_EXPLORER_URL || 'https://explorer.vitruveo.xyz';
+
+// Parse chain ID from env (decimal/hex) → { num, hex }
+function normalizeChainId(id) {
+    if (!id) return { num: null, hex: null };
+    let num;
+    if (typeof id === 'number') num = id;
+    else if (typeof id === 'bigint') num = Number(id);
+    else if (typeof id === 'string' && id.startsWith('0x')) num = parseInt(id, 16);
+    else num = parseInt(String(id), 10);
+    if (!Number.isFinite(num) || num <= 0) return { num: null, hex: null };
+    const hex = '0x' + num.toString(16);
+    return { num, hex };
+}
+const TARGET = normalizeChainId(RAW_CHAIN_ID);
+
+// EIP-3085 params (used when wallet doesn’t know the chain)
+const ADD_CHAIN_PARAMS = TARGET.hex
+    ? {
+        chainId: TARGET.hex,
+        chainName: CHAIN_NAME,
+        nativeCurrency: { name: NATIVE_NAME, symbol: NATIVE_SYMBOL, decimals: NATIVE_DECIMALS },
+        rpcUrls: [RPC_URL],
+        blockExplorerUrls: EXPLORER_URL ? [EXPLORER_URL] : []
+    }
+    : null;
+
+// ============ PROVIDER HELPERS ============
+async function makeBrowserProvider() {
+    if (!window.ethereum) return null;
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    // simple probe
+    await provider.getNetwork();
+    return provider;
+}
+
+async function makeReadonlyProvider() {
+    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    // probe to surface misconfig early
+    await provider.getNetwork().catch(() => { });
+    return provider;
+}
+
+// ============ CONTEXT PROVIDER ============
 export function WalletProvider({ children }) {
-    const [wallet, setWallet] = useState(null);
-    const [provider, setProvider] = useState(null);
+    const mountedRef = useRef(true);
+    const listenersBoundRef = useRef(false);
+
+    const [wallet, setWallet] = useState(null);        // checksummed address
+    const [provider, setProvider] = useState(null);    // ethers Provider (RW if connected, else RO)
     const [signer, setSigner] = useState(null);
-    const [chainId, setChainId] = useState(null);
+    const [chainId, setChainId] = useState(null);      // number
     const [isConnecting, setIsConnecting] = useState(false);
     const [connectionError, setConnectionError] = useState(null);
-    const [isInitialized, setIsInitialized] = useState(false);
+    const [status, setStatus] = useState('idle');      // idle | initialising | ready | error
 
-    // Initialize provider safely
-    const initializeProvider = useCallback(async () => {
-        if (!window.ethereum) return null;
+    // Guarded state setters
+    const safeSet = (fn) => (...args) => { if (mountedRef.current) fn(...args); };
 
-        try {
-            const ethersProvider = new ethers.BrowserProvider(window.ethereum);
-            // Validate provider by making a simple call
-            await ethersProvider.getNetwork();
-            return ethersProvider;
-        } catch (error) {
-            console.error("Provider initialization error:", error);
-            return null;
-        }
-    }, []);
+    const _setWallet = safeSet(setWallet);
+    const _setProvider = safeSet(setProvider);
+    const _setSigner = safeSet(setSigner);
+    const _setChainId = safeSet(setChainId);
+    const _setIsConnecting = safeSet(setIsConnecting);
+    const _setConnectionError = safeSet(setConnectionError);
+    const _setStatus = safeSet(setStatus);
 
-    // Get signer safely
-    const getSigner = useCallback(async (ethersProvider) => {
-        if (!ethersProvider) return null;
-        
-        try {
-            return await ethersProvider.getSigner();
-        } catch (error) {
-            console.error("Failed to get signer:", error);
-            return null;
-        }
-    }, []);
-
-    // Update wallet state
-    const updateWalletState = useCallback(async (address, ethersProvider) => {
-        if (!address || !ethersProvider) {
-            setWallet(null);
-            setSigner(null);
-            setChainId(null);
-            return;
-        }
-
-        try {
-            // Get signer
-            const ethersSigner = await getSigner(ethersProvider);
-            
-            // Get network info
-            let network;
-            try {
-                network = await ethersProvider.getNetwork();
-            } catch (error) {
-                console.error("Failed to get network:", error);
-                network = { chainId: 0 };
+    // ======= Core updater =======
+    const updateWalletState = useCallback(
+        async (addr, prov) => {
+            if (!prov) {
+                _setWallet(null);
+                _setSigner(null);
+                _setChainId(null);
+                _setProvider(null);
+                return;
             }
 
-            // Update state atomically to prevent race conditions
-            setWallet(address);
-            setSigner(ethersSigner);
-            setChainId(network.chainId);
-            setProvider(ethersProvider);
-        } catch (error) {
-            console.error("Error updating wallet state:", error);
-            // On failure, clear state to prevent inconsistency
-            setWallet(null);
-            setSigner(null);
-            setChainId(null);
-        }
-    }, [getSigner]);
-
-    // Initialize wallet from stored state
-    useEffect(() => {
-        const initializeWallet = async () => {
-            if (isInitialized) return;
-            
             try {
-                setIsConnecting(true);
-                
-                // Check if user was previously connected
-                const savedWalletState = localStorage.getItem('walletConnected');
-                
-                if (savedWalletState === 'true' && window.ethereum) {
-                    // Initialize provider
-                    const ethersProvider = await initializeProvider();
-                    if (!ethersProvider) {
-                        throw new Error("Could not initialize provider");
+                const net = await prov.getNetwork();
+                const signer = addr ? await prov.getSigner() : null;
+
+                _setProvider(prov);
+                _setSigner(signer);
+                _setWallet(addr ? ethers.getAddress(addr) : null); // checksum normalize
+                _setChainId(net?.chainId ? Number(net.chainId) : null);
+            } catch (e) {
+                console.error('[Wallet] updateWalletState failed:', e);
+                _setWallet(null);
+                _setSigner(null);
+                // Keep provider for read-only usage
+                const ro = await makeReadonlyProvider().catch(() => null);
+                _setProvider(ro);
+            }
+        },
+        [_setWallet, _setSigner, _setChainId, _setProvider]
+    );
+
+    // ======= Switch / ensure network =======
+    const switchNetwork = useCallback(
+        async (target = TARGET) => {
+            if (!window.ethereum || !target?.hex) return false;
+            try {
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: target.hex }]
+                });
+                return true;
+            } catch (err) {
+                // Unknown chain → try add
+                if (err?.code === 4902 && ADD_CHAIN_PARAMS) {
+                    try {
+                        await window.ethereum.request({
+                            method: 'wallet_addEthereumChain',
+                            params: [ADD_CHAIN_PARAMS]
+                        });
+                        return true;
+                    } catch (err2) {
+                        console.warn('[Wallet] addEthereumChain failed:', err2);
+                        return false;
                     }
-                    
-                    // Try to get accounts without prompting
-                    const accounts = await window.ethereum.request({ 
-                        method: 'eth_accounts'
-                    });
-                    
-                    if (accounts && accounts.length > 0) {
-                        // Update wallet state with the account
-                        await updateWalletState(accounts[0], ethersProvider);
-                        localStorage.setItem('walletConnected', 'true');
-                    } else {
-                        // No accounts accessible
+                }
+                console.warn('[Wallet] switchEthereumChain failed:', err);
+                return false;
+            }
+        },
+        []
+    );
+
+    const ensureCorrectNetwork = useCallback(
+        async (force = false) => {
+            if (!TARGET.num) return true; // no target set → accept any
+            try {
+                const cur = provider || (await makeBrowserProvider());
+                if (!cur) return true;
+
+                const net = await cur.getNetwork();
+                const currentId = Number(net.chainId);
+                if (currentId === TARGET.num) return true;
+
+                if (!force) return false;
+                const ok = await switchNetwork(TARGET);
+                return ok;
+            } catch (e) {
+                console.warn('[Wallet] ensureCorrectNetwork error:', e);
+                return false;
+            }
+        },
+        [provider, switchNetwork]
+    );
+
+    // ======= Initialisation =======
+    useEffect(() => {
+        mountedRef.current = true;
+        (async () => {
+            _setStatus('initialising');
+            try {
+                // Always have a RO provider ready
+                const ro = await makeReadonlyProvider().catch(() => null);
+                _setProvider(ro);
+
+                // Eager restore?
+                const wasConnected = localStorage.getItem('walletConnected') === 'true';
+                if (wasConnected && window.ethereum) {
+                    try {
+                        const bp = await makeBrowserProvider();
+                        const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+                        const addr = accounts?.[0];
+                        if (addr) {
+                            await updateWalletState(addr, bp);
+                            await ensureCorrectNetwork(false); // don’t force-switch on load
+                        }
+                    } catch (e) {
+                        console.warn('[Wallet] eager connect failed:', e);
                         localStorage.removeItem('walletConnected');
                     }
-                } else if (!window.ethereum) {
-                    // Set a default read-only provider if MetaMask isn't available
-                    setProvider(new ethers.JsonRpcProvider('https://rpc.vitruveo.xyz'));
                 }
-            } catch (error) {
-                console.error("Failed to initialize wallet:", error);
-                setConnectionError(error.message);
-                localStorage.removeItem('walletConnected');
-            } finally {
-                setIsConnecting(false);
-                setIsInitialized(true);
+                _setStatus('ready');
+            } catch (e) {
+                console.error('[Wallet] init failed:', e);
+                _setConnectionError(e.message || String(e));
+                _setStatus('error');
             }
-        };
+        })();
 
-        initializeWallet();
-    }, [initializeProvider, updateWalletState, isInitialized]);
+        return () => { mountedRef.current = false; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    // Setup event listeners for wallet changes
+    // ======= Event listeners (EIP-1193) =======
     useEffect(() => {
-        if (!window.ethereum || !isInitialized) return;
+        if (!window.ethereum || listenersBoundRef.current) return;
 
-        const handleAccountsChanged = async (accounts) => {
-            console.log("Accounts changed:", accounts);
-            
-            if (!accounts || accounts.length === 0) {
-                // User disconnected wallet
-                setWallet(null);
-                setSigner(null);
-                localStorage.removeItem('walletConnected');
-                console.log("Wallet disconnected");
-            } else {
-                // Account changed
-                const currentProvider = provider || await initializeProvider();
-                await updateWalletState(accounts[0], currentProvider);
-                localStorage.setItem('walletConnected', 'true');
-                console.log("Wallet account updated:", accounts[0]);
-            }
-        };
-
-        const handleChainChanged = async (chainIdHex) => {
-            console.log("Chain changed:", chainIdHex);
-            
-            // Instead of reloading the page, update the chainId
+        const onAccountsChanged = async (accounts) => {
             try {
-                const chainIdDecimal = parseInt(chainIdHex, 16);
-                setChainId(chainIdDecimal);
-                
-                // Refresh provider and signer
-                if (wallet) {
-                    const refreshedProvider = await initializeProvider();
-                    await updateWalletState(wallet, refreshedProvider);
+                if (!accounts || accounts.length === 0) {
+                    _setWallet(null);
+                    _setSigner(null);
+                    localStorage.removeItem('walletConnected');
+                    return;
                 }
-            } catch (error) {
-                console.error("Error handling chain change:", error);
+                const bp = (provider instanceof ethers.BrowserProvider ? provider : await makeBrowserProvider()) || provider;
+                await updateWalletState(accounts[0], bp);
+                localStorage.setItem('walletConnected', 'true');
+            } catch (e) {
+                console.warn('[Wallet] accountsChanged handler error:', e);
             }
         };
 
-        const handleConnect = (connectInfo) => {
-            console.log("Wallet connected event:", connectInfo);
-            // We'll handle the actual connection in accountsChanged
+        const onChainChanged = async (chainIdHex) => {
+            try {
+                const chainNum = parseInt(chainIdHex, 16);
+                _setChainId(chainNum);
+                // Refresh provider/signer for ethers v6
+                if (wallet) {
+                    const bp = await makeBrowserProvider();
+                    await updateWalletState(wallet, bp);
+                }
+            } catch (e) {
+                console.warn('[Wallet] chainChanged handler error:', e);
+            }
         };
 
-        const handleDisconnect = (error) => {
-            console.log("Wallet disconnect event:", error);
-            setWallet(null);
-            setSigner(null);
+        const onConnect = (info) => {
+            // Usually followed by accountsChanged; keep it lightweight.
+            console.log('[Wallet] connect:', info);
+        };
+
+        const onDisconnect = (err) => {
+            console.log('[Wallet] disconnect:', err);
+            _setWallet(null);
+            _setSigner(null);
             localStorage.removeItem('walletConnected');
         };
 
-        // Subscribe to wallet events
-        window.ethereum.on('accountsChanged', handleAccountsChanged);
-        window.ethereum.on('chainChanged', handleChainChanged);
-        window.ethereum.on('connect', handleConnect);
-        window.ethereum.on('disconnect', handleDisconnect);
+        window.ethereum.on('accountsChanged', onAccountsChanged);
+        window.ethereum.on('chainChanged', onChainChanged);
+        window.ethereum.on('connect', onConnect);
+        window.ethereum.on('disconnect', onDisconnect);
+        listenersBoundRef.current = true;
 
-        // Cleanup function
         return () => {
             if (window.ethereum?.removeListener) {
-                window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
-                window.ethereum.removeListener('chainChanged', handleChainChanged);
-                window.ethereum.removeListener('connect', handleConnect);
-                window.ethereum.removeListener('disconnect', handleDisconnect);
+                window.ethereum.removeListener('accountsChanged', onAccountsChanged);
+                window.ethereum.removeListener('chainChanged', onChainChanged);
+                window.ethereum.removeListener('connect', onConnect);
+                window.ethereum.removeListener('disconnect', onDisconnect);
             }
+            listenersBoundRef.current = false;
         };
-    }, [provider, wallet, isInitialized, initializeProvider, updateWalletState]);
+    }, [provider, wallet, updateWalletState, _setChainId, _setSigner, _setWallet]);
 
-    // Connect wallet function
-    const connect = async () => {
-        if (!window.ethereum) {
-            setConnectionError('MetaMask is not installed. Please install it to use this feature.');
-            return false;
-        }
-
-        try {
-            setIsConnecting(true);
-            setConnectionError(null);
-
-            // Initialize provider
-            const ethersProvider = await initializeProvider();
-            if (!ethersProvider) {
-                throw new Error("Could not initialize provider");
+    // ======= Public API =======
+    const connect = useCallback(
+        async ({ forceSwitchToTarget = !!TARGET.num } = {}) => {
+            if (!window.ethereum) {
+                _setConnectionError('No injected wallet found. Please install MetaMask or a compatible wallet.');
+                return false;
             }
+            try {
+                _setIsConnecting(true);
+                _setConnectionError(null);
 
-            // Request accounts - this triggers the wallet popup
-            const accounts = await window.ethereum.request({ 
-                method: 'eth_requestAccounts'
-            });
-            
-            if (accounts && accounts.length > 0) {
-                // Update wallet state
-                await updateWalletState(accounts[0], ethersProvider);
-                
-                // Store connection state
+                // Optionally ask the wallet to switch chains before requesting accounts
+                if (forceSwitchToTarget && TARGET.hex) {
+                    const ok = await ensureCorrectNetwork(true);
+                    if (!ok) throw new Error('Please approve the network switch in your wallet.');
+                }
+
+                const bp = await makeBrowserProvider();
+                if (!bp) throw new Error('Failed to initialise wallet provider.');
+
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                if (!accounts || accounts.length === 0) throw new Error('No account returned by wallet.');
+
+                await updateWalletState(accounts[0], bp);
                 localStorage.setItem('walletConnected', 'true');
                 return true;
-            } else {
-                throw new Error("No accounts returned from wallet");
+            } catch (e) {
+                console.error('[Wallet] connect error:', e);
+                _setConnectionError(e.message || String(e));
+                return false;
+            } finally {
+                _setIsConnecting(false);
             }
-        } catch (error) {
-            console.error("Failed to connect wallet:", error);
-            setConnectionError(error.message);
-            return false;
-        } finally {
-            setIsConnecting(false);
-        }
-    };
+        },
+        [ensureCorrectNetwork, updateWalletState, _setConnectionError, _setIsConnecting]
+    );
 
-    // Disconnect wallet function - note that this doesn't actually disconnect MetaMask
-    // It just clears our local state
-    const disconnect = () => {
-        setWallet(null);
-        setSigner(null);
+    const disconnect = useCallback(() => {
+        _setWallet(null);
+        _setSigner(null);
         localStorage.removeItem('walletConnected');
-        // Maintain the provider for read-only functions
-    };
+        // keep read-only provider alive
+    }, []);
 
-    // Check if the wallet is connected
-    const isConnected = wallet !== null && signer !== null;
+    const signMessage = useCallback(
+        async (message) => {
+            if (!signer) throw new Error('Wallet not connected');
+            return await signer.signMessage(message);
+        },
+        [signer]
+    );
+
+    const signTypedData = useCallback(
+        async (domain, types, value) => {
+            if (!signer) throw new Error('Wallet not connected');
+            // ethers v6: signTypedData(domain, types, value)
+            return await signer.signTypedData(domain, types, value);
+        },
+        [signer]
+    );
+
+    const sendTransaction = useCallback(
+        async (tx) => {
+            if (!signer) throw new Error('Wallet not connected');
+            const resp = await signer.sendTransaction(tx);
+            return await resp.wait();
+        },
+        [signer]
+    );
+
+    const getBalance = useCallback(
+        async (address) => {
+            const prov = provider || (await makeReadonlyProvider());
+            const bal = await prov.getBalance(address);
+            return ethers.formatEther(bal);
+        },
+        [provider]
+    );
+
+    const watchAsset = useCallback(
+        async ({ address, symbol, decimals = 18, image } = {}) => {
+            if (!window.ethereum) return false;
+            try {
+                const res = await window.ethereum.request({
+                    method: 'wallet_watchAsset',
+                    params: {
+                        type: 'ERC20',
+                        options: { address, symbol, decimals, image }
+                    }
+                });
+                return !!res;
+            } catch (e) {
+                console.warn('[Wallet] watchAsset failed:', e);
+                return false;
+            }
+        },
+        []
+    );
+
+    const isConnected = !!wallet && !!signer;
+    const isCorrectNetwork = TARGET.num ? chainId === TARGET.num : true;
 
     return (
         <WalletContext.Provider
@@ -253,12 +372,24 @@ export function WalletProvider({ children }) {
                 provider,
                 signer,
                 chainId,
+                isConnected,
+                isCorrectNetwork,
+                status,
+                connectionError,
+                isConnecting,
+
                 connect,
                 disconnect,
-                isConnecting,
-                connectionError,
-                isConnected
-            }}>
+                switchNetwork,
+                ensureCorrectNetwork,
+
+                signMessage,
+                signTypedData,
+                sendTransaction,
+                getBalance,
+                watchAsset
+            }}
+        >
             {children}
         </WalletContext.Provider>
     );

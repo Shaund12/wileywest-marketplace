@@ -1,15 +1,219 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import { useSupabase } from '../context/SupabaseContext';
 import ListingCard from '../components/ListingCard';
 import MarketplaceStats from '../components/MarketplaceStats';
+import EmptyState from '../components/EmptyState';
+import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
 
-// Icons for the marketplace UI
-// Refresh Icon component
+/* =========================
+   Smart IPFS Image + SVG fallback
+   ========================= */
+const IPFS_GATEWAYS = [
+    'https://cloudflare-ipfs.com/ipfs/',
+    'https://cf-ipfs.com/ipfs/',
+    'https://dweb.link/ipfs/',
+    'https://gateway.pinata.cloud/ipfs/',
+    'https://infura-ipfs.io/ipfs/',
+    'https://w3s.link/ipfs/',
+    'https://nftstorage.link/ipfs/',
+    'https://ipfs.io/ipfs/'
+];
+const IPNS_GATEWAYS = [
+    'https://cloudflare-ipfs.com/ipns/',
+    'https://cf-ipfs.com/ipns/',
+    'https://dweb.link/ipns/',
+    'https://gateway.pinata.cloud/ipns/',
+    'https://infura-ipfs.io/ipns/',
+    'https://w3s.link/ipns/',
+    'https://nftstorage.link/ipns/',
+    'https://ipfs.io/ipns/'
+];
+
+const smartImageCache = new Map(); // key -> working URL
+const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
+
+function hashString(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+        h = (h << 5) - h + str.charCodeAt(i);
+        h |= 0;
+    }
+    return Math.abs(h);
+}
+function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '' }) {
+    const h = hashString(seed);
+    const hue = h % 360;
+    const hue2 = (hue + 180) % 360;
+    const gradId = `g${(h % 1e9).toString(36)}`;
+    const blobs = (h % 7) + 3;
+    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  <defs>
+    <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="hsl(${hue},70%,18%)"/>
+      <stop offset="100%" stop-color="hsl(${hue2},70%,16%)"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#${gradId})"/>
+  ${Array.from({ length: blobs }).map((_, i) => {
+        const a = (h + i * 97) % 360;
+        const r = 14 + ((h >> i) % 40);
+        const cx = (width / (blobs + 1)) * (i + 1);
+        const cy = (height / (blobs + 1)) * ((i % 3) + 1);
+        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
+    }).join('')}
+  <text x="50%" y="${height - 14}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">
+    ${label}
+  </text>
+</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function expandToCandidateUrls(raw) {
+    if (!raw || typeof raw !== 'string') return [];
+    const url = raw.trim();
+    if (!url) return [];
+    if (url.startsWith('data:')) return [url];
+
+    if (url.startsWith('ar://')) return [`https://arweave.net/${url.slice(5)}`];
+    if (/^https?:\/\/arweave\.net\//i.test(url)) return [url];
+
+    if (url.startsWith('ipfs://')) {
+        let rest = url.slice(7).replace(/^ipfs\//i, '');
+        return IPFS_GATEWAYS.map((g) => g + rest);
+    }
+    if (url.startsWith('ipns://')) {
+        let rest = url.slice(7).replace(/^ipns\//i, '');
+        return IPNS_GATEWAYS.map((g) => g + rest);
+    }
+
+    try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        const ipfsIdx = parts.indexOf('ipfs');
+        const ipnsIdx = parts.indexOf('ipns');
+        if (ipfsIdx !== -1 && parts[ipfsIdx + 1]) {
+            const rest = parts.slice(ipfsIdx + 1).join('/');
+            return IPFS_GATEWAYS.map((g) => g + rest);
+        }
+        if (ipnsIdx !== -1 && parts[ipnsIdx + 1]) {
+            const rest = parts.slice(ipnsIdx + 1).join('/');
+            return IPNS_GATEWAYS.map((g) => g + rest);
+        }
+        return [url];
+    } catch {
+        if (/^[a-z0-9]+$/i.test(url)) {
+            return IPFS_GATEWAYS.map((g) => g + url);
+        }
+        return [url];
+    }
+}
+
+function uniq(arr) {
+    const s = new Set();
+    const out = [];
+    for (const x of arr) if (!s.has(x)) { s.add(x); out.push(x); }
+    return out;
+}
+function flatten(arrs) { const out = []; for (const a of arrs) out.push(...a); return out; }
+
+function findFirstWorkingImage(candidates, timeoutMs = 6000) {
+    return new Promise((resolve, reject) => {
+        if (!candidates?.length) return reject(new Error('No candidates'));
+        if (typeof window === 'undefined') return reject(new Error('SSR window unavailable'));
+        let idx = 0, settled = false;
+
+        const tryNext = () => {
+            if (settled) return;
+            if (idx >= candidates.length) return reject(new Error('No working image'));
+            const test = candidates[idx++];
+            const img = new Image();
+            const timer = setTimeout(() => { img.onload = img.onerror = null; tryNext(); }, timeoutMs);
+            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(test); };
+            img.onerror = () => { clearTimeout(timer); tryNext(); };
+            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+        };
+        tryNext();
+    });
+}
+
+function SmartImage({
+    src,
+    srcList = [],
+    alt = '',
+    className,
+    width = 300,
+    height = 200,
+    seed = 'nft',
+    title = ''
+}) {
+    const [url, setUrl] = useState(null);
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        const raws = [];
+        if (src) raws.push(src);
+        if (Array.isArray(srcList)) raws.push(...srcList);
+
+        const key = raws.join('|');
+        if (smartImageCache.has(key)) {
+            setUrl(smartImageCache.get(key));
+            setFailed(false);
+            return;
+        }
+
+        const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
+        if (!candidates.length) {
+            setUrl(null); setFailed(true);
+            return;
+        }
+
+        findFirstWorkingImage(candidates)
+            .then((u) => {
+                if (cancelled) return;
+                smartImageCache.set(key, u);
+                setUrl(u);
+                setFailed(false);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setUrl(null);
+                setFailed(true);
+            });
+
+        return () => { cancelled = true; };
+    }, [src, JSON.stringify(srcList)]);
+
+    const finalSrc = failed || !url
+        ? svgFallbackDataUrl({ seed, width, height, title })
+        : url;
+
+    return (
+        <img
+            src={finalSrc}
+            alt={alt}
+            className={className}
+            width={width}
+            height={height}
+            loading="lazy"
+            crossOrigin="anonymous"
+            onError={() => { if (!failed) setFailed(true); }}
+            style={{ objectFit: 'cover', display: 'block', borderRadius: 8 }}
+        />
+    );
+}
+
+/* =========================
+   Icons
+   ========================= */
 const RefreshIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="23 4 23 10 17 10"></polyline>
@@ -17,20 +221,17 @@ const RefreshIcon = () => (
         <path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
     </svg>
 );
-
 const SearchIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="11" cy="11" r="8"></circle>
         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
     </svg>
 );
-
 const FilterIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
     </svg>
 );
-
 const GridIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="7" height="7"></rect>
@@ -39,7 +240,6 @@ const GridIcon = () => (
         <rect x="3" y="14" width="7" height="7"></rect>
     </svg>
 );
-
 const ListIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <line x1="8" y1="6" x2="21" y2="6"></line>
@@ -52,17 +252,20 @@ const ListIcon = () => (
 );
 
 function MarketplacePage() {
-    const { 
-        listings, 
-        hotListings, 
-        fetchListings, 
-        status, 
-        setStatus, 
+    const {
+        listings,
+        hotListings,
+        fetchListings,
+        status,
+        setStatus,
         isInitialized,
         marketplaceStats,
         canceledListings
     } = useMarketplace();
+
     const { wallet, connect, provider } = useWallet();
+    const { cacheListings, isConnected } = useSupabase();
+
     const [searchTerm, setSearchTerm] = useState('');
     const [filteredListings, setFilteredListings] = useState([]);
     const [viewMode, setViewMode] = useState('grid');
@@ -94,6 +297,7 @@ function MarketplacePage() {
     const [itemsPerPage] = useState(12);
     const topRef = useRef(null);
     const hasLoadedRef = useRef(false);
+    const cacheSigRef = useRef('');
 
     // Categories for filtering
     const categories = [
@@ -103,102 +307,115 @@ function MarketplacePage() {
         { id: 'sports', name: 'Sports' },
         { id: 'utility', name: 'Utility' },
         { id: 'music', name: 'Music' },
-        { id: 'gaming', name: 'Gaming' },
+        { id: 'gaming', name: 'Gaming' }
     ];
 
     // Load listings and process data
     useEffect(() => {
         async function loadData() {
-            // Only fetch if we haven't loaded yet and marketplace is initialized
             if (!hasLoadedRef.current && isInitialized && fetchListings) {
                 try {
-                    console.log("[Marketplace] Initial data load");
                     setIsLoading(true);
                     await fetchListings();
-                    hasLoadedRef.current = true; // Mark as loaded
-                    console.log("[Marketplace] Initial data load complete");
+                    hasLoadedRef.current = true;
                 } catch (error) {
-                    console.error("[Marketplace] Error fetching listings:", error);
-                    setStatus("Error loading marketplace data");
+                    console.error('[Marketplace] Error fetching listings:', error);
+                    setStatus('Error loading marketplace data');
                 } finally {
                     setIsLoading(false);
                 }
             }
         }
-        
         loadData();
-        
-        // Manual refresh function - expose for refresh button
+
+        // optional manual refresh
+        // @ts-ignore
         window.refreshMarketplace = async () => {
             try {
-                console.log("[Marketplace] Manual refresh triggered");
                 setIsLoading(true);
                 await fetchListings();
-                console.log("[Marketplace] Manual refresh complete");
             } catch (error) {
-                console.error("[Marketplace] Refresh error:", error);
+                console.error('[Marketplace] Refresh error:', error);
             } finally {
                 setIsLoading(false);
             }
         };
-        
-        // Clean up
-        return () => {
-            delete window.refreshMarketplace;
-        };
-    }, [isInitialized, fetchListings]);
+        return () => { delete window.refreshMarketplace; };
+    }, [isInitialized, fetchListings, setStatus]);
+
+    // Persist NEW/UPDATED listings to Supabase whenever listings state changes
+    useEffect(() => {
+        if (!isConnected) return;
+        if (!Array.isArray(listings) || listings.length === 0) return;
+
+        const active = listings.filter(
+            (l) => l.active && !(canceledListings?.has?.(String(l.id)))
+        );
+        if (active.length === 0) return;
+
+        // lightweight content signature to avoid redundant upserts
+        const sig = JSON.stringify(
+            active.map((l) => [
+                String(l.id),
+                String(l.pricePerUnit ?? ''),
+                String(l.paymentToken ?? ''),
+                String(l.quantity ?? ''),
+                String(l.active ?? '')
+            ])
+        );
+        if (sig === cacheSigRef.current) return;
+        cacheSigRef.current = sig;
+
+        const t = setTimeout(() => {
+            try {
+                cacheListings(active, canceledListings || new Set());
+            } catch (e) {
+                console.warn('Cache listings error:', e);
+            }
+        }, 300);
+
+        return () => clearTimeout(t);
+    }, [isConnected, listings, canceledListings, cacheListings]);
 
     // Process listings and extract metadata with enhanced volume tracking
     useEffect(() => {
         async function processListingsWithEnhancedStats() {
             if (listings.length > 0 && provider) {
                 try {
-                    // Extract collections and set up stats
                     const collectionMap = {};
                     let currentListingVolumeUSDC = 0;
                     let lowestPriceUSDC = Infinity;
                     const pricePromises = [];
                     let hasAnyUSDCRates = false;
 
-                    // Filter out canceled listings for current volume calculation
-                    const activeListings = listings.filter(listing => 
-                        listing.active && !canceledListings.has(listing.id?.toString())
+                    const activeListings = listings.filter(
+                        (listing) => listing.active && !canceledListings.has(listing.id?.toString())
                     );
 
-                    // Process active listings and collect price conversion promises
                     for (const listing of activeListings) {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
-                            // Enhanced collection name resolution with multiple fallbacks and validation
                             let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
                             let collectionDescription = '';
-                            let collectionImage = listing.image || listing.imageUrl;
+                            let collectionImage =
+                                listing.image ||
+                                listing.imageUrl ||
+                                listing.metadata?.image ||
+                                listing.metadata?.image_url;
                             let collectionWebsite = '';
-                            
-                            // Priority order for collection name with validation:
-                            // 1. Direct collectionName property (from contract name())
-                            // 2. metadata.collection.name 
-                            // 3. metadata.name (if it doesn't look like a token name)
-                            // 4. Enhanced fallback to better formatted address
-                            if (listing.collectionName && listing.collectionName.trim() !== '' && 
+
+                            if (listing.collectionName && listing.collectionName.trim() !== '' &&
                                 !listing.collectionName.includes('Collection 0x')) {
                                 collectionName = listing.collectionName.trim();
-                                console.log(`✅ Using direct collection name: ${collectionName}`);
                             } else if (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') {
                                 collectionName = listing.metadata.collection.name.trim();
-                                console.log(`📋 Using metadata collection name: ${collectionName}`);
-                            } else if (listing.metadata?.name && 
-                                       listing.metadata.name.trim() !== '' &&
-                                       !listing.metadata.name.includes('#') && 
-                                       !listing.metadata.name.toLowerCase().includes('token') &&
-                                       !listing.metadata.name.toLowerCase().includes('nft')) {
+                            } else if (listing.metadata?.name && listing.metadata.name.trim() !== '' &&
+                                !listing.metadata.name.includes('#') &&
+                                !listing.metadata.name.toLowerCase().includes('token') &&
+                                !listing.metadata.name.toLowerCase().includes('nft')) {
                                 collectionName = listing.metadata.name.trim();
-                                console.log(`📝 Using NFT name as collection: ${collectionName}`);
-                            } else {
-                                console.log(`⚠️ Using fallback address for collection: ${collectionName}`);
                             }
 
-                            // Extract additional collection information
                             if (listing.metadata?.collection) {
                                 collectionDescription = listing.metadata.collection.description || '';
                                 collectionImage = listing.metadata.collection.image || collectionImage;
@@ -214,61 +431,46 @@ function MarketplacePage() {
                                 items: [],
                                 floorPrice: Infinity,
                                 totalVolume: 0,
-                                // Enhanced collection stats
                                 avgPrice: 0,
                                 highestPrice: 0,
                                 lowestPrice: Infinity,
-                                createdAt: Date.now() // Track when we first saw this collection
+                                createdAt: Date.now()
                             };
                         }
 
                         collectionMap[collectionAddress].items.push(listing);
 
-                        // Add promise to convert this listing's price to USDC
                         pricePromises.push(
                             convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider)
-                                .then(usdcPrice => {
+                                .then((usdcPrice) => {
                                     hasAnyUSDCRates = true;
                                     return { listing, usdcPrice, hasRate: true };
                                 })
-                                .catch(err => {
-                                    console.warn(`Failed to convert price for listing ${listing.id}:`, err);
-                                    return { listing, usdcPrice: 0, hasRate: false };
-                                })
+                                .catch(() => ({ listing, usdcPrice: 0, hasRate: false }))
                         );
                     }
 
-                    // Wait for all price conversions
                     const priceResults = await Promise.all(pricePromises);
 
-                    // Update collections and stats with USDC prices
                     priceResults.forEach(({ listing, usdcPrice, hasRate }) => {
                         const collectionAddress = listing.nftContract;
-                        
                         if (hasRate) {
                             collectionMap[collectionAddress].totalVolume += usdcPrice;
-                            
-                            // Enhanced collection price tracking
                             if (usdcPrice < collectionMap[collectionAddress].floorPrice) {
                                 collectionMap[collectionAddress].floorPrice = usdcPrice;
                                 collectionMap[collectionAddress].lowestPrice = usdcPrice;
                             }
-                            
                             if (usdcPrice > collectionMap[collectionAddress].highestPrice) {
                                 collectionMap[collectionAddress].highestPrice = usdcPrice;
                             }
-
                             currentListingVolumeUSDC += usdcPrice;
                             if (usdcPrice < lowestPriceUSDC) lowestPriceUSDC = usdcPrice;
                         }
                     });
 
-                    // Calculate enhanced collection statistics
-                    Object.values(collectionMap).forEach(collection => {
+                    Object.values(collectionMap).forEach((collection) => {
                         if (collection.items.length > 0) {
                             collection.avgPrice = collection.totalVolume / collection.items.length;
-                            
-                            // Fix infinite floor price display
                             if (collection.floorPrice === Infinity) {
                                 collection.floorPrice = 0;
                                 collection.lowestPrice = 0;
@@ -282,9 +484,7 @@ function MarketplacePage() {
 
                     setCollections(collectionsList);
 
-                    // Use marketplace stats for actual sold volume, current page stats for listing volume
                     const actualSoldVolume = marketplaceStats.actualSoldVolume || 0;
-                    const totalSales = marketplaceStats.totalSales || 0;
 
                     setStats({
                         currentListingVolume: currentListingVolumeUSDC.toFixed(2),
@@ -296,42 +496,37 @@ function MarketplacePage() {
                         hasUSDCRates: hasAnyUSDCRates
                     });
 
-                    // Set a featured NFT (most expensive or first hot listing)
                     if (hotListings && hotListings.length > 0) {
                         setFeaturedNFT(hotListings[0]);
                     } else if (activeListings.length > 0) {
-                        // Find the highest priced NFT based on USDC value
-                        const highestPricedResult = priceResults.reduce((max, current) => {
-                            return current.usdcPrice > max.usdcPrice ? current : max;
-                        }, { usdcPrice: 0, listing: activeListings[0] });
-                        setFeaturedNFT(highestPricedResult.listing);
+                        const highest = priceResults.reduce(
+                            (max, cur) => (cur.usdcPrice > max.usdcPrice ? cur : max),
+                            { usdcPrice: 0, listing: activeListings[0] }
+                        );
+                        setFeaturedNFT(highest.listing);
                     }
                 } catch (error) {
                     console.error('Error processing listings with enhanced stats:', error);
-                    // Fallback to basic processing without USDC conversion
-                    const activeListings = listings.filter(listing => 
-                        listing.active && !canceledListings.has(listing.id?.toString())
+                    const activeListings = listings.filter(
+                        (listing) => listing.active && !canceledListings.has(listing.id?.toString())
                     );
-                    
                     const collectionMap = {};
                     let totalVolume = 0;
                     let lowestPrice = Infinity;
 
-                    activeListings.forEach(listing => {
+                    activeListings.forEach((listing) => {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
-                            // Use the same enhanced collection name resolution in fallback
                             let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
-                            if (listing.collectionName && listing.collectionName.trim() !== '' && 
+                            if (listing.collectionName && listing.collectionName.trim() !== '' &&
                                 !listing.collectionName.includes('Collection 0x')) {
                                 collectionName = listing.collectionName.trim();
                             } else if (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') {
                                 collectionName = listing.metadata.collection.name.trim();
-                            } else if (listing.metadata?.name && 
-                                       listing.metadata.name.trim() !== '' &&
-                                       !listing.metadata.name.includes('#') && 
-                                       !listing.metadata.name.toLowerCase().includes('token') &&
-                                       !listing.metadata.name.toLowerCase().includes('nft')) {
+                            } else if (listing.metadata?.name && listing.metadata.name.trim() !== '' &&
+                                !listing.metadata.name.includes('#') &&
+                                !listing.metadata.name.toLowerCase().includes('token') &&
+                                !listing.metadata.name.toLowerCase().includes('nft')) {
                                 collectionName = listing.metadata.name.trim();
                             }
 
@@ -365,7 +560,6 @@ function MarketplacePage() {
                     const collectionsList = Object.values(collectionMap).sort(
                         (a, b) => b.items.length - a.items.length
                     );
-
                     setCollections(collectionsList);
 
                     setStats({
@@ -379,7 +573,6 @@ function MarketplacePage() {
                     });
                 }
             } else {
-                // Set default stats when no listings
                 setStats({
                     currentListingVolume: '0.00',
                     actualSoldVolume: marketplaceStats.actualSoldVolume?.toFixed(2) || '0.00',
@@ -391,7 +584,6 @@ function MarketplacePage() {
                 });
             }
         }
-
         processListingsWithEnhancedStats();
     }, [listings, hotListings, provider, canceledListings, marketplaceStats]);
 
@@ -408,25 +600,19 @@ function MarketplacePage() {
                 });
                 return;
             }
-
             try {
-                // Use the same price formatting logic as ListingCard
                 const priceInfo = await formatPriceWithUSDC(
-                    featuredNFT.pricePerUnit, 
-                    featuredNFT.paymentToken, 
+                    featuredNFT.pricePerUnit,
+                    featuredNFT.paymentToken,
                     provider,
-                    true // Show both token amount and USDC value for featured display
+                    true
                 );
-                
                 setFeaturedNFTPriceDisplay(priceInfo);
             } catch (error) {
-                console.error('Error formatting featured NFT price with USDC:', error);
-                // Fallback to basic formatting
-                const tokenSymbol = featuredNFT.paymentToken ? 
-                    (featuredNFT.paymentToken === ethers.ZeroAddress ? 'VTRU' : 'TOKEN') : 
-                    'VTRU';
+                const tokenSymbol = featuredNFT.paymentToken
+                    ? (featuredNFT.paymentToken === ethers.ZeroAddress ? 'VTRU' : 'TOKEN')
+                    : 'VTRU';
                 const tokenAmount = formatPrice(featuredNFT.pricePerUnit);
-                
                 setFeaturedNFTPriceDisplay({
                     tokenAmount,
                     tokenSymbol,
@@ -436,73 +622,72 @@ function MarketplacePage() {
                 });
             }
         }
-
         updateFeaturedNFTPriceDisplay();
     }, [featuredNFT, provider]);
 
-    // Filter and sort listings
+    // Filter + sort
     useEffect(() => {
         let result = [...listings];
 
-        // Apply search filter
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
             result = result.filter(
-                item =>
-                    (item.name?.toLowerCase().includes(term)) ||
-                    (item.metadata?.name?.toLowerCase().includes(term)) ||
-                    (item.metadata?.description?.toLowerCase().includes(term)) ||
+                (item) =>
+                    item.name?.toLowerCase().includes(term) ||
+                    item.metadata?.name?.toLowerCase().includes(term) ||
+                    item.metadata?.description?.toLowerCase().includes(term) ||
                     item.tokenId.toString().includes(term)
             );
         }
 
-        // Apply category filters
         if (selectedCategories.length > 0) {
-            result = result.filter(item => {
-                const category = item.metadata?.properties?.category ||
-                    item.metadata?.attributes?.find(attr => attr.trait_type === 'Category')?.value;
-                return category && selectedCategories.includes(category.toLowerCase());
+            result = result.filter((item) => {
+                const category =
+                    item.metadata?.properties?.category ||
+                    item.metadata?.attributes?.find((attr) => attr.trait_type === 'Category')?.value;
+                return category && selectedCategories.includes(String(category).toLowerCase());
             });
         }
 
-        // Apply collection filters
         if (selectedCollections.length > 0) {
-            result = result.filter(item =>
+            result = result.filter((item) =>
                 selectedCollections.includes(item.nftContract.toLowerCase())
             );
         }
 
-        // Apply price filters
         if (priceRange.min !== '') {
             const minWei = ethers.parseEther(priceRange.min.toString());
-            result = result.filter(item => ethers.getBigInt(item.pricePerUnit) >= minWei);
+            result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) >= minWei);
         }
         if (priceRange.max !== '') {
             const maxWei = ethers.parseEther(priceRange.max.toString());
-            result = result.filter(item => ethers.getBigInt(item.pricePerUnit) <= maxWei);
+            result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) <= maxWei);
         }
 
-        // Apply sorting
         switch (sortMethod) {
             case 'price_low_to_high':
-                result.sort((a, b) => ethers.getBigInt(a.pricePerUnit) - ethers.getBigInt(b.pricePerUnit));
+                result.sort((a, b) =>
+                    Number(ethers.getBigInt(a.pricePerUnit) - ethers.getBigInt(b.pricePerUnit))
+                );
                 break;
             case 'price_high_to_low':
-                result.sort((a, b) => ethers.getBigInt(b.pricePerUnit) - ethers.getBigInt(a.pricePerUnit));
+                result.sort((a, b) =>
+                    Number(ethers.getBigInt(b.pricePerUnit) - ethers.getBigInt(a.pricePerUnit))
+                );
                 break;
             case 'newest':
-                // Assuming higher IDs are newer listings
                 result.sort((a, b) => b.id - a.id);
                 break;
             case 'oldest':
                 result.sort((a, b) => a.id - b.id);
+                break;
+            default:
                 break;
         }
 
         setFilteredListings(result);
     }, [listings, searchTerm, sortMethod, selectedCategories, selectedCollections, priceRange]);
 
-    // Calculate pagination
     const indexOfLastItem = currentPage * itemsPerPage;
     const indexOfFirstItem = indexOfLastItem - itemsPerPage;
     const currentItems = filteredListings.slice(indexOfFirstItem, indexOfLastItem);
@@ -513,29 +698,24 @@ function MarketplacePage() {
         topRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
-    // Toggle category selection
     const toggleCategory = (categoryId) => {
         if (selectedCategories.includes(categoryId)) {
-            setSelectedCategories(selectedCategories.filter(cat => cat !== categoryId));
+            setSelectedCategories(selectedCategories.filter((cat) => cat !== categoryId));
         } else {
             setSelectedCategories([...selectedCategories, categoryId]);
         }
     };
-
-    // Toggle collection selection
     const toggleCollection = (collectionAddress) => {
         if (selectedCollections.includes(collectionAddress)) {
-            setSelectedCollections(selectedCollections.filter(col => col !== collectionAddress));
+            setSelectedCollections(selectedCollections.filter((col) => col !== collectionAddress));
         } else {
             setSelectedCollections([...selectedCollections, collectionAddress]);
         }
     };
-
-    // Format price display
     const formatPrice = (priceInWei) => {
         try {
             return parseFloat(ethers.formatEther(priceInWei)).toFixed(4);
-        } catch (e) {
+        } catch {
             return '0';
         }
     };
@@ -553,7 +733,13 @@ function MarketplacePage() {
                         ) : (
                             <button className="primary-button" onClick={connect}>Connect Wallet</button>
                         )}
-                        <button className="secondary-button" onClick={() => window.scrollTo({ top: document.querySelector('.marketplace-stats').offsetTop, behavior: 'smooth' })}>
+                        <button
+                            className="secondary-button"
+                            onClick={() => {
+                                const el = document.querySelector('.marketplace-stats');
+                                if (el) window.scrollTo({ top: el.offsetTop, behavior: 'smooth' });
+                            }}
+                        >
                             Browse Marketplace
                         </button>
                     </div>
@@ -563,21 +749,36 @@ function MarketplacePage() {
                         <div className="featured-nft-card">
                             <div className="featured-badge">Featured</div>
                             <div className="featured-image">
-                                <img
-                                    src={featuredNFT.image || featuredNFT.imageUrl || '/placeholders/nft-placeholder.jpg'}
-                                    alt={featuredNFT.name || `NFT #${featuredNFT.tokenId}`}
+                                <SmartImage
+                                    srcList={[
+                                        featuredNFT.image,
+                                        featuredNFT.imageUrl,
+                                        featuredNFT.metadata?.image,
+                                        featuredNFT.metadata?.image_url,
+                                        featuredNFT.metadata?.animation_url
+                                    ]}
+                                    alt={featuredNFT.name || featuredNFT.metadata?.name || `NFT #${featuredNFT.tokenId}`}
+                                    width={480}
+                                    height={320}
+                                    seed={`${safeStr(featuredNFT.nftContract)}-${safeStr(featuredNFT.tokenId)}`}
+                                    title={featuredNFT.name || featuredNFT.metadata?.name}
+                                    className="featured-image-img"
                                 />
                             </div>
                             <div className="featured-details">
                                 <h3>{featuredNFT.name || featuredNFT.metadata?.name || `NFT #${featuredNFT.tokenId}`}</h3>
                                 <p className="featured-collection">
-                                    {(featuredNFT.collectionName && featuredNFT.collectionName.trim() !== '' && !featuredNFT.collectionName.includes('Collection 0x')) ? 
-                                     featuredNFT.collectionName.trim() :
-                                     (featuredNFT.metadata?.collection?.name && featuredNFT.metadata.collection.name.trim() !== '') ?
-                                     featuredNFT.metadata.collection.name.trim() :
-                                     (featuredNFT.metadata?.name && featuredNFT.metadata.name.trim() !== '' && !featuredNFT.metadata.name.includes('#') && !featuredNFT.metadata.name.toLowerCase().includes('token') && !featuredNFT.metadata.name.toLowerCase().includes('nft')) ?
-                                     featuredNFT.metadata.name.trim() :
-                                     `${featuredNFT.nftContract.slice(0, 8)}...${featuredNFT.nftContract.slice(-6)}`}
+                                    {(featuredNFT.collectionName && featuredNFT.collectionName.trim() !== '' && !featuredNFT.collectionName.includes('Collection 0x')) ?
+                                        featuredNFT.collectionName.trim() :
+                                        (featuredNFT.metadata?.collection?.name && featuredNFT.metadata.collection.name.trim() !== '') ?
+                                            featuredNFT.metadata.collection.name.trim() :
+                                            (featuredNFT.metadata?.name && featuredNFT.metadata.name.trim() !== '' &&
+                                                !featuredNFT.metadata.name.includes('#') &&
+                                                !featuredNFT.metadata.name.toLowerCase().includes('token') &&
+                                                !featuredNFT.metadata.name.toLowerCase().includes('nft')) ?
+                                                featuredNFT.metadata.name.trim() :
+                                                `${featuredNFT.nftContract.slice(0, 8)}...${featuredNFT.nftContract.slice(-6)}`
+                                    }
                                 </p>
                                 {featuredNFT.metadata?.collection?.description && (
                                     <p className="featured-description">
@@ -637,9 +838,19 @@ function MarketplacePage() {
                         <div className="collection-card enhanced" key={index}>
                             <div className="collection-header">
                                 <div className="collection-avatar">
-                                    <img
-                                        src={collection.image || collection.items[0]?.image || collection.items[0]?.imageUrl || '/placeholders/nft-placeholder.jpg'}
+                                    <SmartImage
+                                        srcList={[
+                                            collection.image,
+                                            collection.items[0]?.image,
+                                            collection.items[0]?.imageUrl,
+                                            collection.items[0]?.metadata?.image,
+                                            collection.items[0]?.metadata?.image_url
+                                        ]}
                                         alt={collection.name}
+                                        width={64}
+                                        height={64}
+                                        seed={collection.address}
+                                        title={collection.name}
                                     />
                                 </div>
                                 <div className="collection-rank">#{index + 1}</div>
@@ -647,9 +858,19 @@ function MarketplacePage() {
                             <div className="collection-preview">
                                 {collection.items.slice(0, 4).map((item, i) => (
                                     <div className="preview-item" key={i}>
-                                        <img
-                                            src={item.image || item.imageUrl || '/placeholders/nft-placeholder.jpg'}
+                                        <SmartImage
+                                            srcList={[
+                                                item.image,
+                                                item.imageUrl,
+                                                item.metadata?.image,
+                                                item.metadata?.image_url,
+                                                item.metadata?.animation_url
+                                            ]}
                                             alt={`Preview ${i}`}
+                                            width={96}
+                                            height={96}
+                                            seed={`${item.nftContract}-${item.tokenId}-${i}`}
+                                            title={item.metadata?.name || item.name}
                                         />
                                     </div>
                                 ))}
@@ -700,7 +921,7 @@ function MarketplacePage() {
             {/* Detailed Marketplace Statistics */}
             <MarketplaceStats />
 
-            {/* Trending Collections Detailed View */}
+            {/* Trending Collections */}
             {collections.length > 0 && (
                 <section className="trending-collections">
                     <div className="section-header">
@@ -711,16 +932,26 @@ function MarketplacePage() {
                             <button className="trend-filter">⭐ New</button>
                         </div>
                     </div>
-                    
+
                     <div className="trending-collections-grid">
                         {collections.slice(0, 6).map((collection, index) => (
                             <div className="trending-collection-card" key={collection.address}>
                                 <div className="trending-rank">#{index + 1}</div>
                                 <div className="trending-collection-header">
                                     <div className="trending-avatar">
-                                        <img
-                                            src={collection.image || collection.items[0]?.image || '/placeholders/nft-placeholder.jpg'}
+                                        <SmartImage
+                                            srcList={[
+                                                collection.image,
+                                                collection.items[0]?.image,
+                                                collection.items[0]?.imageUrl,
+                                                collection.items[0]?.metadata?.image,
+                                                collection.items[0]?.metadata?.image_url
+                                            ]}
                                             alt={collection.name}
+                                            width={56}
+                                            height={56}
+                                            seed={`trend-${collection.address}`}
+                                            title={collection.name}
                                         />
                                     </div>
                                     <div className="trending-info">
@@ -732,7 +963,7 @@ function MarketplacePage() {
                                         <span className="change-label">24h</span>
                                     </div>
                                 </div>
-                                
+
                                 <div className="trending-metrics">
                                     <div className="metric">
                                         <span className="metric-label">Floor Price</span>
@@ -751,13 +982,24 @@ function MarketplacePage() {
                                         <span className="metric-value">{collection.items.length}</span>
                                     </div>
                                 </div>
-                                
+
                                 <div className="trending-preview-small">
                                     {collection.items.slice(0, 3).map((item, i) => (
-                                        <img
+                                        <SmartImage
                                             key={i}
-                                            src={item.image || item.imageUrl || '/placeholders/nft-placeholder.jpg'}
-                                            alt={`${collection.name} item ${i+1}`}
+                                            srcList={[
+                                                item.image,
+                                                item.imageUrl,
+                                                item.metadata?.image,
+                                                item.metadata?.image_url,
+                                                item.metadata?.animation_url
+                                            ]}
+                                            alt={`${collection.name} item ${i + 1}`}
+                                            width={120}
+                                            height={90}
+                                            seed={`trend-prev-${collection.address}-${i}`}
+                                            title={item.metadata?.name || item.name}
+                                            className="trending-preview-img"
                                         />
                                     ))}
                                 </div>
@@ -785,7 +1027,7 @@ function MarketplacePage() {
                             disabled={isLoading}
                             title="Refresh listings from blockchain"
                         >
-                            <RefreshIcon /> 
+                            <RefreshIcon />
                             {isLoading ? 'Loading...' : 'Refresh'}
                         </button>
                         <button
@@ -839,7 +1081,7 @@ function MarketplacePage() {
                             <div className="filter-group">
                                 <h3>Categories</h3>
                                 <div className="filter-options">
-                                    {categories.map(category => (
+                                    {categories.map((category) => (
                                         <label key={category.id} className="filter-option">
                                             <input
                                                 type="checkbox"
@@ -855,7 +1097,7 @@ function MarketplacePage() {
                             <div className="filter-group">
                                 <h3>Collections</h3>
                                 <div className="filter-options scrollable">
-                                    {collections.slice(0, 10).map(collection => (
+                                    {collections.slice(0, 10).map((collection) => (
                                         <label key={collection.address} className="filter-option collection-filter">
                                             <input
                                                 type="checkbox"
@@ -864,9 +1106,17 @@ function MarketplacePage() {
                                             />
                                             <div className="collection-filter-info">
                                                 <div className="collection-filter-avatar">
-                                                    <img 
-                                                        src={collection.image || collection.items[0]?.image || '/placeholders/nft-placeholder.jpg'} 
+                                                    <SmartImage
+                                                        srcList={[
+                                                            collection.image,
+                                                            collection.items[0]?.image,
+                                                            collection.items[0]?.imageUrl
+                                                        ]}
                                                         alt={collection.name}
+                                                        width={40}
+                                                        height={40}
+                                                        seed={`filter-${collection.address}`}
+                                                        title={collection.name}
                                                     />
                                                 </div>
                                                 <div className="collection-filter-details">
@@ -888,7 +1138,7 @@ function MarketplacePage() {
                                         type="number"
                                         placeholder="Min"
                                         value={priceRange.min}
-                                        onChange={e => setPriceRange({ ...priceRange, min: e.target.value })}
+                                        onChange={(e) => setPriceRange({ ...priceRange, min: e.target.value })}
                                         min="0"
                                         step="0.001"
                                     />
@@ -897,7 +1147,7 @@ function MarketplacePage() {
                                         type="number"
                                         placeholder="Max"
                                         value={priceRange.max}
-                                        onChange={e => setPriceRange({ ...priceRange, max: e.target.value })}
+                                        onChange={(e) => setPriceRange({ ...priceRange, max: e.target.value })}
                                         min="0"
                                         step="0.001"
                                     />
@@ -920,86 +1170,92 @@ function MarketplacePage() {
                     {/* NFT Listings */}
                     <div className={`listings-container ${viewMode}`}>
                         {!isInitialized ? (
-                            <div className="loading-container">
-                                <div className="loading-spinner"></div>
-                                <p>Initializing marketplace...</p>
-                            </div>
+                            <EmptyState
+                                icon="⚙️"
+                                title="Initializing Marketplace"
+                                description="Setting up the marketplace and connecting to the blockchain..."
+                                className="loading"
+                            />
                         ) : isLoading ? (
-                            <div className="loading-container">
-                                <div className="loading-spinner"></div>
-                                <p>Loading NFTs...</p>
-                            </div>
+                            <LoadingSkeleton type="card" count={6} className="grid" />
                         ) : currentItems.length > 0 ? (
                             <>
                                 <div className={`listings-${viewMode}`}>
-                                    {currentItems.map(listing => (
-                                        <ListingCard
-                                            key={listing.id}
-                                            listing={listing}
-                                            viewMode={viewMode}
-                                        />
+                                    {currentItems.map((listing) => (
+                                        <ListingCard key={listing.id} listing={listing} viewMode={viewMode} />
                                     ))}
                                 </div>
 
                                 {/* Pagination */}
                                 {totalPages > 1 && (
                                     <div className="pagination">
-                                        <button
-                                            onClick={() => paginate(1)}
-                                            disabled={currentPage === 1}
-                                            className="pagination-button"
-                                        >
+                                        <button onClick={() => paginate(1)} disabled={currentPage === 1} className="pagination-button">
                                             First
                                         </button>
-                                        <button
-                                            onClick={() => paginate(currentPage - 1)}
-                                            disabled={currentPage === 1}
-                                            className="pagination-button"
-                                        >
+                                        <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="pagination-button">
                                             Previous
                                         </button>
 
-                                        <div className="pagination-info">
-                                            Page {currentPage} of {totalPages}
-                                        </div>
+                                        <div className="pagination-info">Page {currentPage} of {totalPages}</div>
 
-                                        <button
-                                            onClick={() => paginate(currentPage + 1)}
-                                            disabled={currentPage === totalPages}
-                                            className="pagination-button"
-                                        >
+                                        <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="pagination-button">
                                             Next
                                         </button>
-                                        <button
-                                            onClick={() => paginate(totalPages)}
-                                            disabled={currentPage === totalPages}
-                                            className="pagination-button"
-                                        >
+                                        <button onClick={() => paginate(totalPages)} disabled={currentPage === totalPages} className="pagination-button">
                                             Last
                                         </button>
                                     </div>
                                 )}
                             </>
                         ) : (
-                            <div className="no-listings-found">
-                                <div className="empty-icon">🔍</div>
-                                <h3>No NFTs Found</h3>
-                                {searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                    priceRange.min !== '' || priceRange.max !== '' ? (
-                                    <p>Try adjusting your filters or search criteria</p>
-                                ) : (
-                                    <p>There are currently no active listings in the marketplace</p>
-                                )}
-                                <button className="primary-button" onClick={() => {
+                            <EmptyState
+                                icon={
+                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                        ? '🔍'
+                                        : '🛍️'
+                                }
+                                title={
+                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                        ? 'No Results Found'
+                                        : 'No NFTs Available'
+                                }
+                                description={
+                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                        ? "Try adjusting your filters or search criteria to find what you're looking for."
+                                        : 'There are currently no active listings in the marketplace. Check back soon or be the first to list your NFT!'
+                                }
+                                actionText="Refresh Marketplace"
+                                onAction={() => {
                                     setSearchTerm('');
                                     setSelectedCategories([]);
                                     setSelectedCollections([]);
                                     setPriceRange({ min: '', max: '' });
                                     fetchListings();
-                                }}>
-                                    Refresh Marketplace
-                                </button>
-                            </div>
+                                }}
+                                secondaryActionText={
+                                    !(
+                                        searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                    ) ? 'List Your NFT' : 'Clear Filters'
+                                }
+                                onSecondaryAction={() => {
+                                    if (
+                                        searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                    ) {
+                                        setSearchTerm('');
+                                        setSelectedCategories([]);
+                                        setSelectedCollections([]);
+                                        setPriceRange({ min: '', max: '' });
+                                    } else {
+                                        window.location.href = '/sell';
+                                    }
+                                }}
+                                className="marketplace"
+                            />
                         )}
                     </div>
                 </div>

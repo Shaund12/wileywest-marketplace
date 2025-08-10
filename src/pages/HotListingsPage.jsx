@@ -1,353 +1,402 @@
-﻿import React, { useEffect, useRef, useState, useCallback } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import ListingCard from '../components/ListingCard';
+import LoadingSkeleton from '../components/LoadingSkeleton';
+import EmptyState from '../components/EmptyState';
+import { convertToUSDCValue } from '../utils/tokenUtils';
 import './HotListingsPage.css';
-import { ethers } from 'ethers';
 
-// Minimal ABIs to fetch collection information
+/* ---------- Minimal collection ABI ---------- */
 const COLLECTION_ABI = [
     'function name() view returns (string)',
     'function symbol() view returns (string)',
-    'function supportsInterface(bytes4 interfaceId) view returns (bool)'
+    'function supportsInterface(bytes4 interfaceId) view returns (bool)',
 ];
 
-// Interface IDs
-const INTERFACE_ID_ERC721 = '0x80ac58cd';
-const INTERFACE_ID_ERC1155 = '0xd9b67a26';
+const IFACE_ERC721 = '0x80ac58cd';
+const IFACE_ERC1155 = '0xd9b67a26';
 
-// Simplified particle generation with fewer particles
-const createParticles = (canvas) => {
-    if (!canvas) return null;
+/* ---------- Helpers / caches ---------- */
+const short = (a) => (a && a.length > 9 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a || '—');
+const collectionDetailsCache = Object.create(null);
 
+function useDebouncedValue(value, delay = 250) {
+    const [v, setV] = useState(value);
+    useEffect(() => {
+        const t = setTimeout(() => setV(value), delay);
+        return () => clearTimeout(t);
+    }, [value, delay]);
+    return v;
+}
+
+/* ---------- Subtle particles (perf-friendly) ---------- */
+function createParticles(canvas) {
+    if (!canvas || typeof window === 'undefined') return () => { };
     const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    let raf = 0;
 
-    // Reduced particles for cleaner look
-    const particles = [];
-    const particleCount = 50;
-    const colors = ['#ff3366', '#5533ff', '#33ccff'];
-
-    for (let i = 0; i < particleCount; i++) {
-        particles.push({
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height,
-            radius: Math.random() * 2 + 0.5,
-            color: colors[Math.floor(Math.random() * colors.length)],
-            velocity: {
-                x: Math.random() * 1 - 0.5,
-                y: Math.random() * 1 - 0.5
-            },
-            opacity: Math.random() * 0.4 + 0.1
-        });
-    }
-
-    const animate = () => {
-        requestAnimationFrame(animate);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        particles.forEach(particle => {
-            ctx.beginPath();
-            ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
-            ctx.fillStyle = particle.color + Math.floor(particle.opacity * 100).toString(16);
-            ctx.fill();
-
-            particle.x += particle.velocity.x;
-            particle.y += particle.velocity.y;
-
-            if (particle.x < 0) particle.x = canvas.width;
-            if (particle.x > canvas.width) particle.x = 0;
-            if (particle.y < 0) particle.y = canvas.height;
-            if (particle.y > canvas.height) particle.y = 0;
-        });
-    };
-
-    animate();
-
-    const handleResize = () => {
+    const resize = () => {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
     };
+    resize();
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-};
+    const colors = ['#ff3366', '#5533ff', '#33ccff'];
+    const count = Math.min(90, Math.max(50, Math.floor((canvas.width * canvas.height) / 90000)));
+    const parts = Array.from({ length: count }, () => ({
+        x: Math.random() * canvas.width,
+        y: Math.random() * canvas.height,
+        r: Math.random() * 2 + 0.6,
+        c: colors[(Math.random() * colors.length) | 0],
+        vx: (Math.random() - 0.5) * 0.7,
+        vy: (Math.random() - 0.5) * 0.7,
+        a: Math.random() * 0.45 + 0.15,
+    }));
 
-// Collection details cache to avoid duplicate requests
-const collectionDetailsCache = {};
+    const loop = () => {
+        raf = requestAnimationFrame(loop);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (const p of parts) {
+            const aHex = Math.round(p.a * 255).toString(16).padStart(2, '0');
+            ctx.fillStyle = `${p.c}${aHex}`;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+            ctx.fill();
+            p.x += p.vx; p.y += p.vy;
+            if (p.x < 0) p.x = canvas.width; if (p.x > canvas.width) p.x = 0;
+            if (p.y < 0) p.y = canvas.height; if (p.y > canvas.height) p.y = 0;
+        }
+    };
 
-function HotListingsPage() {
-    const { hotListings, fetchListings } = useMarketplace();
+    raf = requestAnimationFrame(loop);
+    window.addEventListener('resize', resize);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', resize); };
+}
+
+/* =======================================================
+   HotListingsPage
+======================================================= */
+export default function HotListingsPage() {
+    const navigate = useNavigate();
+    const { hotListings = [], fetchListings } = useMarketplace();
     const { provider } = useWallet();
-    const particleCanvas = useRef(null);
-    const cardsContainer = useRef(null);
-    const [groupedListings, setGroupedListings] = useState({});
-    const [collectionOrder, setCollectionOrder] = useState([]);
-    const [collectionsLoading, setCollectionsLoading] = useState(true);
-    const [hasInitiallyFetched, setHasInitiallyFetched] = useState(false);
-    const fetchInProgress = useRef(false);
 
-    // Initialize particles
+    const canvasRef = useRef(null);
+    const fetchedOnceRef = useRef(false);
+
+    const [pageLoading, setPageLoading] = useState(true);            // one-time network fetch
+    const [collectionsLoading, setCollectionsLoading] = useState(true); // local grouping
+    const [grouped, setGrouped] = useState({});   // addr -> { name, symbol, type, address, items[] }
+    const [order, setOrder] = useState([]);       // array of contract addresses
+
+    // UI state
+    const [search, setSearch] = useState('');
+    const [sort, setSort] = useState('count'); // count | name | type
+    const [expanded, setExpanded] = useState(() => new Set());
+    const [page, setPage] = useState(1);
+    const PAGE_SIZE = 6;
+
+    // Lazy collection stats loaded only when expanded
+    // addr -> { loading, floorUSDC, avgUSDC, count }
+    const [stats, setStats] = useState({});
+
+    /* Particles init */
+    useEffect(() => createParticles(canvasRef.current), []);
+
+    /* One-time fetch (prevents refresh loop) */
     useEffect(() => {
-        const cleanup = createParticles(particleCanvas.current);
-        return cleanup;
+        if (fetchedOnceRef.current) return;
+        fetchedOnceRef.current = true;
+        (async () => {
+            try {
+                setPageLoading(true);
+                await fetchListings?.();
+            } finally {
+                setPageLoading(false);
+            }
+        })();
+        // do not add dependencies (we want true run-once)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // Fetch listings only once on mount
-    useEffect(() => {
-        if (!hasInitiallyFetched && !fetchInProgress.current) {
-            fetchInProgress.current = true;
-            fetchListings().then(() => {
-                fetchInProgress.current = false;
-                setHasInitiallyFetched(true);
-            });
-        }
-    }, [fetchListings, hasInitiallyFetched]);
+    /* Fetch collection details (memoized & cached) */
+    const fetchCollectionDetails = useCallback(async (addr) => {
+        if (!addr) return { name: 'Unknown', symbol: '', type: 'Unknown', address: '' };
+        const key = addr.toLowerCase();
+        if (collectionDetailsCache[key]) return collectionDetailsCache[key];
 
-    // Function to fetch collection details from contract (memoized to avoid recreating)
-    const fetchCollectionDetails = useCallback(async (contractAddress) => {
-        // Return from cache if available
-        if (collectionDetailsCache[contractAddress]) {
-            return collectionDetailsCache[contractAddress];
+        if (!provider) {
+            const fallback = { name: `Collection ${short(addr)}`, symbol: '', type: 'Unknown', address: addr };
+            collectionDetailsCache[key] = fallback;
+            return fallback;
         }
 
         try {
-            // Create a contract instance with the collection ABI
-            const contract = new ethers.Contract(contractAddress, COLLECTION_ABI, provider);
+            const c = new ethers.Contract(addr, COLLECTION_ABI, provider);
+            let is721 = false, is1155 = false;
+            try { is721 = await c.supportsInterface(IFACE_ERC721); } catch { }
+            if (!is721) { try { is1155 = await c.supportsInterface(IFACE_ERC1155); } catch { } }
 
-            // Check if contract supports ERC721 or ERC1155 interface
-            let contractType = 'Unknown';
-            let isERC721 = false;
-            let isERC1155 = false;
+            let name = '', symbol = '';
+            try { name = await c.name(); } catch { }
+            try { symbol = await c.symbol(); } catch { }
 
-            try {
-                isERC721 = await contract.supportsInterface(INTERFACE_ID_ERC721);
-                contractType = isERC721 ? 'ERC721' : contractType;
-            } catch (e) {
-                // Silently handle error
-            }
-
-            if (!isERC721) {
-                try {
-                    isERC1155 = await contract.supportsInterface(INTERFACE_ID_ERC1155);
-                    contractType = isERC1155 ? 'ERC1155' : contractType;
-                } catch (e) {
-                    // Silently handle error
-                }
-            }
-
-            // Get collection name and symbol
-            let name = '';
-            let symbol = '';
-
-            try {
-                name = await contract.name();
-            } catch (e) {
-                name = `Collection ${contractAddress.substring(0, 6)}...${contractAddress.substring(38)}`;
-            }
-
-            try {
-                symbol = await contract.symbol();
-            } catch (e) {
-                symbol = '';
-            }
-
-            const details = {
-                name,
-                symbol,
-                type: contractType
+            const d = {
+                name: name || `Collection ${short(addr)}`,
+                symbol: symbol || '',
+                type: is721 ? 'ERC721' : is1155 ? 'ERC1155' : 'Unknown',
+                address: addr,
             };
-
-            // Cache the result
-            collectionDetailsCache[contractAddress] = details;
-            return details;
-        } catch (e) {
-            console.error(`Error fetching collection details for ${contractAddress}:`, e);
-            // Return fallback data
-            return {
-                name: `Collection ${contractAddress.substring(0, 6)}...`,
-                symbol: '',
-                type: 'Unknown'
-            };
+            collectionDetailsCache[key] = d;
+            return d;
+        } catch {
+            const fallback = { name: `Collection ${short(addr)}`, symbol: '', type: 'Unknown', address: addr };
+            collectionDetailsCache[key] = fallback;
+            return fallback;
         }
     }, [provider]);
 
-    // Track if we need to fetch collection details
-    const [needsFetch, setNeedsFetch] = useState(false);
-    
-    // Track when hotListings updates
+    /* Group hotListings locally (no network) */
     useEffect(() => {
-        if (hotListings?.length > 0 && provider && hasInitiallyFetched) {
-            setNeedsFetch(true);
-        }
-    }, [hotListings, provider, hasInitiallyFetched]);
-    
-    // Group listings by collection with enhanced details
-    useEffect(() => {
-        // Only proceed if we need to fetch and have the necessary data
-        if (!needsFetch || !hotListings?.length || !provider) return;
-        
-        // Prevent repeated fetches
-        setNeedsFetch(false);
-        
-        const fetchAndGroupListings = async () => {
+        let alive = true;
+        (async () => {
             setCollectionsLoading(true);
-            
             try {
-                const grouped = {};
-                const order = [];
-                const contractsToFetch = new Set();
+                const unique = Array.from(new Set(hotListings.map(l => l?.nftContract).filter(Boolean)));
+                const detailResults = await Promise.all(unique.map(fetchCollectionDetails));
+                const details = unique.reduce((acc, addr, i) => (acc[addr] = detailResults[i], acc), {});
+                const map = Object.create(null);
 
-                // First identify all unique contracts
-                hotListings.forEach(listing => {
-                    contractsToFetch.add(listing.nftContract);
-                });
+                for (const l of hotListings) {
+                    const addr = l?.nftContract;
+                    if (!addr) continue;
+                    if (!map[addr]) map[addr] = { ...details[addr], items: [] };
+                    map[addr].items.push(l);
+                }
 
-                // Fetch all collection details in parallel
-                const contractsArray = Array.from(contractsToFetch);
-                const detailsPromises = contractsArray.map(addr =>
-                    fetchCollectionDetails(addr)
-                );
-
-                // Wait for all collection details to load
-                const detailsResults = await Promise.allSettled(detailsPromises);
-
-                // Map contract addresses to their details
-                const contractDetails = {};
-                contractsArray.forEach((addr, index) => {
-                    if (detailsResults[index].status === 'fulfilled') {
-                        contractDetails[addr] = detailsResults[index].value;
-                    } else {
-                        contractDetails[addr] = {
-                            name: `Collection ${addr.substring(0, 6)}...`,
-                            symbol: '',
-                            type: 'Unknown'
-                        };
-                    }
-                });
-
-                // Group listings using the fetched details
-                hotListings.forEach(listing => {
-                    const collectionAddr = listing.nftContract;
-                    const details = contractDetails[collectionAddr];
-
-                    if (!grouped[collectionAddr]) {
-                        grouped[collectionAddr] = {
-                            name: details.name,
-                            symbol: details.symbol,
-                            type: details.type,
-                            address: collectionAddr,
-                            items: []
-                        };
-                        order.push(collectionAddr);
-                    }
-
-                    grouped[collectionAddr].items.push(listing);
-                });
-
-                // Sort collections by item count (descending)
-                order.sort((a, b) => grouped[b].items.length - grouped[a].items.length);
-
-                setGroupedListings(grouped);
-                setCollectionOrder(order);
-            } catch (error) {
-                console.error("Error grouping listings:", error);
+                const ord = Object.keys(map).sort((a, b) => map[b].items.length - map[a].items.length);
+                if (!alive) return;
+                setGrouped(map);
+                setOrder(ord);
+                setPage(1);
             } finally {
-                setCollectionsLoading(false);
+                if (alive) setCollectionsLoading(false);
             }
-        };
+        })();
+        return () => { alive = false; };
+    }, [hotListings, fetchCollectionDetails]);
 
-        fetchAndGroupListings();
-    }, [hotListings, provider, needsFetch, fetchCollectionDetails]);
+    /* Debounced search + sort + paginate */
+    const query = useDebouncedValue(search, 200);
+    const filteredOrder = useMemo(() => {
+        let ord = order.slice();
+        if (query.trim()) {
+            const q = query.trim().toLowerCase();
+            ord = ord.filter((addr) => {
+                const c = grouped[addr];
+                return (
+                    c?.name?.toLowerCase().includes(q) ||
+                    c?.symbol?.toLowerCase().includes(q) ||
+                    addr.toLowerCase().includes(q)
+                );
+            });
+        }
+        if (sort === 'name') {
+            ord.sort((a, b) => (grouped[a].name || '').localeCompare(grouped[b].name || ''));
+        } else if (sort === 'type') {
+            const rank = (t) => (t === 'ERC721' ? 0 : t === 'ERC1155' ? 1 : 2);
+            ord.sort((a, b) => rank(grouped[a].type) - rank(grouped[b].type));
+        } else {
+            ord.sort((a, b) => grouped[b].items.length - grouped[a].items.length);
+        }
+        return ord;
+    }, [order, grouped, query, sort]);
 
-    // Render a collection section with enhanced details
-    const renderCollectionSection = (collectionAddr, collection) => {
+    const totalPages = Math.max(1, Math.ceil(filteredOrder.length / PAGE_SIZE));
+    const visibleOrder = filteredOrder.slice(0, page * PAGE_SIZE);
+
+    /* Lazy stats loader for a collection when expanded */
+    const loadStats = useCallback(async (addr) => {
+        if (!provider || !addr) return;
+        setStats((s) => ({ ...s, [addr]: { ...(s[addr] || {}), loading: true } }));
+        try {
+            const items = grouped[addr]?.items || [];
+            if (!items.length) {
+                setStats((s) => ({ ...s, [addr]: { loading: false, floorUSDC: 0, avgUSDC: 0, count: 0 } }));
+                return;
+            }
+
+            // limit price conversion to first 20 items for perf
+            const sample = items.slice(0, 20);
+            const values = await Promise.all(
+                sample.map((it) =>
+                    convertToUSDCValue(it.pricePerUnit, it.paymentToken, provider).catch(() => 0)
+                )
+            );
+            const filtered = values.filter((v) => Number.isFinite(v) && v > 0);
+            const floor = filtered.length ? Math.min(...filtered) : 0;
+            const avg = filtered.length ? filtered.reduce((a, b) => a + b, 0) / filtered.length : 0;
+            setStats((s) => ({ ...s, [addr]: { loading: false, floorUSDC: floor, avgUSDC: avg, count: items.length } }));
+        } catch {
+            setStats((s) => ({ ...s, [addr]: { loading: false, floorUSDC: 0, avgUSDC: 0, count: (grouped[addr]?.items || []).length } }));
+        }
+    }, [provider, grouped]);
+
+    const toggleExpand = useCallback((addr) => {
+        setExpanded((prev) => {
+            const n = new Set(prev);
+            if (n.has(addr)) {
+                n.delete(addr);
+            } else {
+                n.add(addr);
+                // kick off stats load only when expanding
+                if (!stats[addr]) loadStats(addr);
+            }
+            return n;
+        });
+    }, [stats, loadStats]);
+
+    /* ---------- Render helpers ---------- */
+    const renderCollection = useCallback((addr) => {
+        const col = grouped[addr]; if (!col) return null;
+        const open = expanded.has(addr);
+        const items = open ? col.items : col.items.slice(0, 6);
+        const badge = col.symbol || 'Featured';
+        const st = stats[addr];
+
         return (
-            <div key={collectionAddr} className="collection-section">
-                <div className="collection-header">
+            <section key={addr} className="collection-section">
+                <header className="collection-header">
                     <div className="collection-header-left">
-                        <h2>{collection.name}</h2>
-                        {collection.symbol && (
-                            <span className="collection-symbol">{collection.symbol}</span>
-                        )}
-                        {collection.type !== 'Unknown' && (
-                            <span className="collection-type">{collection.type}</span>
-                        )}
-                    </div>
-                    <span className="collection-count">{collection.items.length} items</span>
-                </div>
-
-                <div className="listings-grid featured">
-                    {collection.items.map((listing, index) => renderListingCard(listing, index))}
-                </div>
-            </div>
-        );
-    };
-
-    // Function to render enhanced listing card
-    const renderListingCard = (listing, index) => {
-        // Use a collection-specific badge if this is a known collection
-        const collection = groupedListings[listing.nftContract];
-        const badgeLabel = collection?.symbol || "Featured";
-
-        return (
-            <div
-                key={listing.id}
-                className="listing-wrapper"
-                style={{ '--item-index': index }}
-            >
-                {/* Collection-branded hot badge */}
-                <div className="hot-badge">
-                    <span className="fire-emoji">🔥</span> {badgeLabel}
-                </div>
-
-                <ListingCard
-                    listing={listing}
-                    featured={true}
-                />
-            </div>
-        );
-    };
-
-    return (
-        <div className="hot-listings-container organized">
-            {/* Subtle particle background */}
-            <canvas ref={particleCanvas} className="particles-bg"></canvas>
-
-            {/* Premium header */}
-            <div className="page-header">
-                <h1>
-                    <span className="fire-emoji">🔥</span> Premium Listings
-                </h1>
-                <p>Curated collections of exclusive digital assets from verified creators</p>
-            </div>
-
-            {/* Collections view */}
-            <div className="collections-container" ref={cardsContainer}>
-                {collectionsLoading ? (
-                    <div className="loading-collections">
-                        <div className="loading-spinner"></div>
-                        <p>Loading collection information...</p>
-                    </div>
-                ) : collectionOrder.length > 0 ? (
-                    collectionOrder.map(addr =>
-                        renderCollectionSection(addr, groupedListings[addr])
-                    )
-                ) : (
-                    <div className="no-listings">
-                        <p>No premium listings available right now</p>
+                        <h2 title={col.name}>{col.name}</h2>
+                        {col.symbol && <span className="collection-symbol">{col.symbol}</span>}
+                        {col.type !== 'Unknown' && <span className="collection-type">{col.type}</span>}
                         <button
-                            className="primary-button"
-                            onClick={() => fetchListings()}
+                            className="copy-addr"
+                            onClick={() => navigator.clipboard?.writeText(addr)}
+                            title="Copy contract address"
+                            type="button"
                         >
-                            Discover NFTs
+                            {short(addr)}
                         </button>
                     </div>
+
+                    <div className="collection-right">
+                        <div className="collection-metrics">
+                            {st?.loading ? (
+                                <div className="metric shimmer" />
+                            ) : (
+                                <>
+                                    <div className="metric">
+                                        <span className="metric-label">Floor</span>
+                                        <span className="metric-value">${(st?.floorUSDC ?? 0).toFixed(2)}</span>
+                                    </div>
+                                    <div className="metric">
+                                        <span className="metric-label">Avg</span>
+                                        <span className="metric-value">${(st?.avgUSDC ?? 0).toFixed(2)}</span>
+                                    </div>
+                                    <div className="metric">
+                                        <span className="metric-label">Items</span>
+                                        <span className="metric-value">{st?.count ?? col.items.length}</span>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        <button className="toggle-btn" onClick={() => toggleExpand(addr)} type="button">
+                            {open ? 'Collapse' : 'Expand'}
+                        </button>
+                    </div>
+                </header>
+
+                <div className="listings-grid featured">
+                    {items.map((listing, i) => (
+                        <div className="listing-wrapper" style={{ '--item-index': i }} key={listing?.id ?? `${addr}-${listing?.tokenId}-${i}`}>
+                            <div className="hot-badge"><span className="fire-emoji">🔥</span> {badge}</div>
+                            <ListingCard listing={listing} featured />
+                        </div>
+                    ))}
+                </div>
+
+                {!open && col.items.length > 6 && (
+                    <div className="collection-footer">
+                        <button className="hp-btn hp-btn--primary" onClick={() => toggleExpand(addr)} type="button">
+                            Show more
+                        </button>
+                    </div>
+                )}
+            </section>
+        );
+    }, [grouped, expanded, stats, toggleExpand]);
+
+    /* ---------- JSX ---------- */
+    return (
+        <div className="hot-listings-container organized">
+            <canvas ref={canvasRef} className="particles-bg" aria-hidden />
+
+            <div className="page-header">
+                <h1><span className="fire-emoji">🔥</span> Premium Listings</h1>
+                <p>Curated collections of exclusive digital assets from verified creators.</p>
+
+                <div className="toolbar">
+                    <div className="toolbar-left">
+                        <input
+                            type="search"
+                            placeholder="Search collections or contract addresses…"
+                            value={search}
+                            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                            className="toolbar-search"
+                        />
+                    </div>
+                    <div className="toolbar-right">
+                        <label className="sr-only" htmlFor="sortSel">Sort</label>
+                        <select
+                            id="sortSel"
+                            className="toolbar-sort"
+                            value={sort}
+                            onChange={(e) => { setSort(e.target.value); setPage(1); }}
+                        >
+                            <option value="count">Most items</option>
+                            <option value="name">Name (A→Z)</option>
+                            <option value="type">Type (ERC721/1155)</option>
+                        </select>
+                        <button className="hp-btn" onClick={() => navigate('/marketplace')} type="button">Explore Marketplace</button>
+                        <button className="hp-btn hp-btn--primary" onClick={() => navigate('/sell')} type="button">List Your NFT</button>
+                    </div>
+                </div>
+            </div>
+
+            <div className="collections-container">
+                {pageLoading ? (
+                    <LoadingSkeleton type="card" count={6} className="grid" />
+                ) : collectionsLoading ? (
+                    <LoadingSkeleton type="card" count={6} className="grid" />
+                ) : visibleOrder.length ? (
+                    <>
+                        {visibleOrder.map(renderCollection)}
+                        {page < totalPages && (
+                            <div className="load-more">
+                                <button className="hp-btn hp-btn--primary" onClick={() => setPage((p) => p + 1)} type="button">
+                                    Load more collections
+                                </button>
+                            </div>
+                        )}
+                    </>
+                ) : (
+                    <EmptyState
+                        icon="🔥"
+                        title="No Premium Listings Yet"
+                        description="Premium collections will appear here when they become available. Be the first to discover exclusive NFT drops!"
+                        actionText="Explore Marketplace"
+                        onAction={() => navigate('/marketplace')}
+                        secondaryActionText="List Your NFT"
+                        onSecondaryAction={() => navigate('/sell')}
+                    />
                 )}
             </div>
         </div>
     );
 }
-
-export default HotListingsPage;
