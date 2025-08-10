@@ -364,6 +364,112 @@
 }
 
 /* --------------------------------
+   TRENDING COLLECTIONS (NEW)
+---------------------------------*/
+.hp-trending {
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 1.25rem;
+}
+
+.hp-trending__grid {
+    display: grid;
+    gap: .9rem;
+    grid-template-columns: repeat(6, minmax(0,1fr));
+}
+
+@media (max-width: 1200px) {
+    .hp-trending__grid {
+        grid-template-columns: repeat(4, minmax(0,1fr));
+    }
+}
+
+@media (max-width: 900px) {
+    .hp-trending__grid {
+        grid-template-columns: repeat(3, minmax(0,1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .hp-trending__grid {
+        grid-template-columns: repeat(2, minmax(0,1fr));
+    }
+}
+
+@media (max-width: 420px) {
+    .hp-trending__grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.hp-trend {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--hp-border);
+    border-radius: 14px;
+    text-decoration: none;
+    color: var(--hp-text);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));
+    overflow: hidden;
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+
+    .hp-trend:hover {
+        transform: translateY(-2px);
+        border-color: rgba(255,255,255,0.22);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.06) inset;
+        background: radial-gradient(600px 200px at 90% 10%, rgba(0,255,136,0.12), transparent 60%), radial-gradient(500px 200px at 10% 90%, rgba(122,92,255,0.12), transparent 60%), linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.025));
+    }
+
+    .hp-trend:focus-visible {
+        outline: none;
+        box-shadow: var(--hp-focus);
+    }
+
+.hp-trend__img {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 10; /* modern aspect control */
+    background-size: cover;
+    background-position: center;
+    border-bottom: 1px solid var(--hp-border);
+}
+
+    .hp-trend__img::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(180deg, transparent, rgba(0,0,0,0.25));
+        opacity: .7;
+        pointer-events: none;
+    }
+
+.hp-trend__info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .6rem;
+    padding: .7rem .8rem .8rem;
+}
+
+.hp-trend__name {
+    font-weight: 800;
+    font-size: .98rem;
+    line-height: 1.2;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.hp-trend__meta {
+    color: var(--hp-muted);
+    font-size: .82rem;
+    flex: 0 0 auto;
+}
+
+/* --------------------------------
    LATEST
 ---------------------------------*/
 .hp-latest {
@@ -397,109 +503,7 @@
 }
 
 /* --------------------------------
-   ACTIVITY TICKER (always animates)
----------------------------------*/
-.hp-activity {
-    max-width: 1200px;
-    margin: 2rem auto;
-    padding: 0 1.25rem;
-}
-
-.hp-pulse {
-    color: var(--hp-accent);
-    font-weight: 700;
-}
-
-/* viewport with padding + fade edges, track has NO padding */
-.hp-ticker {
-    position: relative;
-    overflow: hidden;
-    border: 1px solid var(--hp-border);
-    border-radius: 12px;
-    background: rgba(255,255,255,0.02);
-    padding: .75rem;
-    mask-image: linear-gradient(to right, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%);
-    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%);
-}
-
-/* animated strip = intrinsic width of its children */
-.hp-ticker__track {
-    display: inline-flex; /* content defines width */
-    gap: 1rem;
-    white-space: nowrap;
-    will-change: transform;
-    transform: translate3d(0,0,0);
-    animation: hp-marquee var(--hp-speed, 22s) linear infinite;
-}
-
-/* remove pause-on-hover so it actually moves */
-/* (intentionally no :hover rule here) */
-
-/* smooth, seamless loop (list is duplicated in JSX) */
-@keyframes hp-marquee {
-    from {
-        transform: translate3d(0, 0, 0);
-    }
-
-    to {
-        transform: translate3d(-50%, 0, 0);
-    }
-}
-
-/* items must not shrink or widths will change mid-loop */
-.hp-ticker__item {
-    flex: 0 0 auto;
-    min-width: 280px;
-    display: flex;
-    align-items: center;
-    gap: .6rem;
-    border: 1px solid var(--hp-border);
-    border-radius: 10px;
-    padding: .45rem .6rem;
-    background: rgba(255,255,255,0.04);
-}
-
-.hp-ticker__img {
-    width: 40px;
-    height: 40px;
-    flex: 0 0 auto;
-    border-radius: 8px;
-    background-size: cover;
-    background-position: center;
-    border: 1px solid var(--hp-border);
-}
-
-.hp-ticker__text {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.hp-dot {
-    margin: 0 .45rem;
-    color: var(--hp-muted);
-}
-
-.hp-mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
-    color: var(--hp-muted);
-}
-
-/* slower on small screens for readability */
-@media (max-width: 640px) {
-    .hp-ticker__track {
-        --hp-speed: 28s;
-    }
-}
-
-/* If your OS has “reduce motion”, we’ll still animate but slower (no hard stop) */
-@media (prefers-reduced-motion: reduce) {
-    .hp-ticker__track {
-        --hp-speed: 40s;
-    }
-}
-/* --------------------------------
-   ACTIVITY TICKER (fixed)
+   ACTIVITY TICKER (consolidated)
 ---------------------------------*/
 .hp-activity {
     max-width: 1200px;
@@ -527,7 +531,7 @@
 /* animated strip = intrinsic width of its children */
 .hp-ticker__track {
     display: inline-flex;
-    width: max-content; /* ensure track width grows to children */
+    width: max-content;
     gap: 1rem;
     white-space: nowrap;
     will-change: transform;
@@ -535,8 +539,7 @@
     animation: hp-marquee var(--hp-speed, 22s) linear infinite;
     animation-play-state: running;
 }
-
-/* FORCE ON, even if some other CSS tries to disable it */
+/* FORCE ON even if some other CSS tries to disable it */
 .hp-ticker[data-animate="true"] .hp-ticker__track {
     animation: hp-marquee var(--hp-speed, 22s) linear infinite !important;
 }
@@ -597,16 +600,12 @@
         --hp-speed: 28s;
     }
 }
-
 /* Reduced motion: slow it down (do NOT stop) */
 @media (prefers-reduced-motion: reduce) {
     .hp-ticker__track {
         --hp-speed: 40s;
     }
 }
-
-
-
 
 /* --------------------------------
    HOW IT WORKS
