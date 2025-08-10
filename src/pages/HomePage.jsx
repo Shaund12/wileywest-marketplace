@@ -1,25 +1,29 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+// HomePage.jsx
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
+import { useWallet } from '../context/WalletContext';
+import { convertToUSDCValue } from '../utils/tokenUtils';
 import ListingCard from '../components/ListingCard';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
 import './HomePage.css';
 
+/* -------------------------------
+   Utils
+-------------------------------- */
 function useCountUp(target = 0, duration = 900) {
     const [val, setVal] = useState(0);
-    const rafRef = useRef();
-    const startRef = useRef();
+    const rafRef = useRef(0);
 
     useEffect(() => {
         cancelAnimationFrame(rafRef.current);
         const start = performance.now();
-        startRef.current = start;
 
         const animate = (now) => {
             const p = Math.min(1, (now - start) / duration);
             const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
-            setVal(Math.floor(eased * target));
+            setVal(Math.floor(eased * (Number.isFinite(target) ? target : 0)));
             if (p < 1) rafRef.current = requestAnimationFrame(animate);
         };
         rafRef.current = requestAnimationFrame(animate);
@@ -30,6 +34,36 @@ function useCountUp(target = 0, duration = 900) {
     return val;
 }
 
+const formatUSD = (n) =>
+    (Number.isFinite(n) && n >= 0 ? `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$—');
+
+const coerceNumber = (val) => {
+    if (typeof val === 'number') return Number.isFinite(val) ? val : NaN;
+    if (typeof val === 'string') {
+        const n = Number(val);
+        return Number.isFinite(n) ? n : NaN;
+    }
+    if (typeof val === 'bigint') {
+        const n = Number(val);
+        return Number.isFinite(n) ? n : NaN;
+    }
+    if (val && typeof val === 'object') {
+        // ethers BigNumber or similar
+        if (typeof val.toString === 'function') {
+            const n = Number(val.toString());
+            return Number.isFinite(n) ? n : NaN;
+        }
+        if (typeof val._hex === 'string') {
+            const n = Number(val._hex);
+            return Number.isFinite(n) ? n : NaN;
+        }
+    }
+    return NaN;
+};
+
+/* -------------------------------
+   HomePage
+-------------------------------- */
 function HomePage() {
     const {
         listings = [],
@@ -40,17 +74,19 @@ function HomePage() {
         fetchListings,
     } = useMarketplace();
 
-    // Make sure we have some data when landing directly on home
+    const { provider } = useWallet();
+
+    // Ensure data on cold landings
     useEffect(() => {
         if (!isInitialized && typeof fetchListings === 'function') {
             fetchListings().catch(() => { });
         }
     }, [isInitialized, fetchListings]);
 
-    // Basic activity feed (lightweight + local)
+    // Activity feed (simple, local)
     const activity = useMemo(() => {
         return (listings || [])
-            .slice() // copy
+            .slice()
             .sort((a, b) => (b.id ?? 0) - (a.id ?? 0))
             .slice(0, 12)
             .map((l) => ({
@@ -63,7 +99,7 @@ function HomePage() {
             }));
     }, [listings]);
 
-    // Quick categories (link to marketplace and let its filters do the rest)
+    // Categories
     const categories = [
         { id: 'art', label: '🎨 Art' },
         { id: 'collectibles', label: '🧩 Collectibles' },
@@ -74,18 +110,87 @@ function HomePage() {
         { id: 'utility', label: '🛠️ Utility' },
     ];
 
-    // Stats (with graceful fallback)
-    const totalListings = Number(marketplaceStats?.totalListings ?? listings?.length ?? 0);
-    const floorPrice = marketplaceStats?.floorPrice ? Number(marketplaceStats.floorPrice) : 0;
-    const totalVolume = marketplaceStats?.totalVolume ? Number(marketplaceStats.totalVolume) : 0;
-    const currentListingVolume = marketplaceStats?.currentListingVolume
-        ? Number(marketplaceStats.currentListingVolume)
-        : 0;
+    // ----- Stats (with resilient fallbacks) -----
+    const totalListingsStat = coerceNumber(marketplaceStats?.totalListings);
+    const totalListings = Number.isFinite(totalListingsStat) && totalListingsStat > 0
+        ? totalListingsStat
+        : (listings?.length || 0);
 
+    const totalVolume = (() => {
+        const n = coerceNumber(marketplaceStats?.totalVolume);
+        return Number.isFinite(n) && n >= 0 ? n : 0;
+    })();
+
+    const currentListingVolume = (() => {
+        const n = coerceNumber(marketplaceStats?.currentListingVolume);
+        return Number.isFinite(n) && n >= 0 ? n : 0;
+    })();
+
+    // Floor (USDC) — prefer backend, else derive from live listings
+    const [derivedFloor, setDerivedFloor] = useState(null);
+    const [floorLoading, setFloorLoading] = useState(false);
+    const [floorSource, setFloorSource] = useState('stat'); // 'stat' | 'live'
+
+    const floorFromStats = useMemo(() => {
+        const fp = marketplaceStats?.floorPrice ?? marketplaceStats?.floorPriceUSDC;
+        const n = coerceNumber(fp);
+        return Number.isFinite(n) && n > 0 ? n : null;
+    }, [marketplaceStats]);
+
+    const computeLiveFloor = useCallback(async () => {
+        if (!provider || !listings?.length) {
+            setDerivedFloor(null);
+            return;
+        }
+        setFloorLoading(true);
+        setFloorSource('live');
+        try {
+            // sample first N valid listings to keep it snappy
+            const sample = listings
+                .filter((l) => l?.pricePerUnit && l?.paymentToken)
+                .slice(0, 80);
+
+            const results = await Promise.allSettled(
+                sample.map((l) => convertToUSDCValue(l.pricePerUnit, l.paymentToken, provider))
+            );
+
+            const values = results
+                .map((r) => (r.status === 'fulfilled' ? Number(r.value) : NaN))
+                .filter((v) => Number.isFinite(v) && v > 0);
+
+            setDerivedFloor(values.length ? Math.min(...values) : null);
+        } catch {
+            setDerivedFloor(null);
+        } finally {
+            setFloorLoading(false);
+        }
+    }, [provider, listings]);
+
+    // Compute on mount & when listings change (only if no valid stat)
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            if (floorFromStats) {
+                if (!cancelled) {
+                    setFloorSource('stat');
+                    setDerivedFloor(null); // not needed
+                    setFloorLoading(false);
+                }
+                return;
+            }
+            await computeLiveFloor();
+        })();
+        return () => { cancelled = true; };
+    }, [floorFromStats, computeLiveFloor]);
+
+    const floorUSDC = floorFromStats ?? derivedFloor;
+
+    // Small counters
     const totalListingsAnim = useCountUp(totalListings);
     const totalVolumeAnim = useCountUp(Math.round(totalVolume));
     const currentVolAnim = useCountUp(Math.round(currentListingVolume));
 
+    // ----- Featured listings -----
     const renderFeaturedListings = () => {
         if (!isInitialized) {
             return <LoadingSkeleton type="card" count={3} className="grid" />;
@@ -135,21 +240,43 @@ function HomePage() {
 
                     {/* Quick mini-stats */}
                     <div className="hp-mini">
-                        <div className="hp-mini__card">
+                        <div className="hp-mini__card" title="Total live listings">
                             <div className="hp-mini__label">Active Listings</div>
                             <div className="hp-mini__value">{totalListingsAnim.toLocaleString()}</div>
                         </div>
-                        <div className="hp-mini__card">
+
+                        <div className="hp-mini__card" title="All-time market volume (USDC)">
                             <div className="hp-mini__label">Market Volume</div>
-                            <div className="hp-mini__value">${totalVolumeAnim.toLocaleString()}</div>
+                            <div className="hp-mini__value">{formatUSD(totalVolumeAnim)}</div>
                         </div>
-                        <div className="hp-mini__card">
+
+                        <div className="hp-mini__card" title="Sum of current listing prices (USDC)">
                             <div className="hp-mini__label">Live Listing Value</div>
-                            <div className="hp-mini__value">${currentVolAnim.toLocaleString()}</div>
+                            <div className="hp-mini__value">{formatUSD(currentVolAnim)}</div>
                         </div>
-                        <div className="hp-mini__card">
-                            <div className="hp-mini__label">Floor (USDC)</div>
-                            <div className="hp-mini__value">${floorPrice ? floorPrice.toFixed(2) : '0.00'}</div>
+
+                        <div className="hp-mini__card hp-mini__card--floor" title="Lowest active listing price across the market (USDC)">
+                            <div className="hp-mini__label">
+                                Floor (USDC)
+                                <span
+                                    className={`hp-badge hp-badge--${floorFromStats ? 'stat' : 'live'}`}
+                                    aria-label={`Floor source: ${floorFromStats ? 'Stat' : 'Live'}`}
+                                    title={`Source: ${floorFromStats ? 'Backend stat' : 'Derived from listings'}`}
+                                >
+                                    {floorFromStats ? 'Stat' : 'Live'}
+                                </span>
+                                <button
+                                    className="hp-mini__refresh"
+                                    onClick={computeLiveFloor}
+                                    type="button"
+                                    title="Recalculate live floor"
+                                >
+                                    ↻
+                                </button>
+                            </div>
+                            <div className="hp-mini__value">
+                                {floorLoading ? '…' : formatUSD(floorUSDC)}
+                            </div>
                         </div>
                     </div>
 
@@ -224,7 +351,9 @@ function HomePage() {
                                         <strong>{a.name}</strong>
                                         <span> #{String(a.tokenId)}</span>
                                         <span className="hp-dot">•</span>
-                                        <span className="hp-mono">{a.nftContract?.slice(0, 6)}…{a.nftContract?.slice(-4)}</span>
+                                        <span className="hp-mono">
+                                            {a.nftContract?.slice(0, 6)}…{a.nftContract?.slice(-4)}
+                                        </span>
                                     </div>
                                 </div>
                             ))}
