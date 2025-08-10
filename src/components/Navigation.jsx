@@ -8,7 +8,7 @@ const VITRUVEO = {
     chainIdDec: 1490,
     chainName: 'Vitruveo',
     rpcUrls: ['https://rpc.vitruveo.xyz'],
-    blockExplorerUrls: ['https://scan.vitruveo.xyz'],
+    blockExplorerUrls: ['https://explorer.vitruveo.xyz'],
     nativeCurrency: { name: 'Vitruveo', symbol: 'VTRU', decimals: 18 },
 };
 
