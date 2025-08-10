@@ -200,29 +200,6 @@ export default function Footer() {
                         <Link to="/terms">Terms of Service</Link>
                         <Link to="/privacy">Privacy Policy</Link>
                     </details>
-
-                    {/* newsletter */}
-                    <section className="bd-newsletter" aria-labelledby="nl-title">
-                        <h4 id="nl-title">Stay in the loop</h4>
-                        <p>Fresh drops, hot listings, zero spam.</p>
-                        <form onSubmit={onNewsletterSubmit} className="bd-newsletter__form">
-                            <label className="sr-only" htmlFor="nl-email">Email address</label>
-                            <input
-                                id="nl-email"
-                                type="email"
-                                inputMode="email"
-                                autoComplete="email"
-                                placeholder="you@domain.com"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                required
-                            />
-                            <button type="submit" disabled={nlState.status === 'loading'}>
-                                {nlState.status === 'loading' ? 'Subscribing…' : 'Subscribe'}
-                            </button>
-                        </form>
-                        {nlState.message && <div className={`bd-note ${nlState.status}`}>{nlState.message}</div>}
-                    </section>
                 </nav>
             </div>
 
