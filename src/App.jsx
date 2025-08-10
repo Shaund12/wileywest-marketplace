@@ -8,7 +8,7 @@ import { Analytics } from '@vercel/analytics/react';
 
 // Components
 import Navigation from './components/Navigation';
-import Footer from './components/Footer';
+import Footer from './layout/Footer';
 import HomePage from './pages/HomePage';
 import ProfilePage from './pages/ProfilePage';
 import MarketplacePage from './pages/MarketplacePage';
