@@ -36,7 +36,9 @@ function useCountUp(target = 0, duration = 900) {
 }
 
 const formatUSD = (n) =>
-    (Number.isFinite(n) && n >= 0 ? `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '$—');
+    Number.isFinite(n) && n >= 0
+        ? `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : '$—';
 
 const coerceNumber = (val) => {
     if (typeof val === 'number') return Number.isFinite(val) ? val : NaN;
@@ -49,7 +51,6 @@ const coerceNumber = (val) => {
         return Number.isFinite(n) ? n : NaN;
     }
     if (val && typeof val === 'object') {
-        // ethers BigNumber or similar
         if (typeof val.toString === 'function') {
             const n = Number(val.toString());
             return Number.isFinite(n) ? n : NaN;
@@ -67,13 +68,9 @@ const coerceNumber = (val) => {
 -------------------------------- */
 const ERC721_METADATA_ABI = [
     'function name() view returns (string)',
-    'function symbol() view returns (string)'
+    'function symbol() view returns (string)',
 ];
 
-/**
- * Resolve human-readable collection names for a set of contract addresses.
- * Caches results in component state to avoid repeat RPCs.
- */
 function useCollectionNames(addresses = [], provider) {
     const [names, setNames] = useState({}); // { [lowerAddr]: 'Cool Cats' }
 
@@ -82,34 +79,34 @@ function useCollectionNames(addresses = [], provider) {
         if (!provider) return;
 
         const unique = Array.from(
-            new Set(
-                (addresses || [])
-                    .filter(Boolean)
-                    .map((a) => a.toLowerCase())
-            )
+            new Set((addresses || []).filter(Boolean).map((a) => a.toLowerCase()))
         );
 
-        // Only fetch missing
         const missing = unique.filter((a) => !names[a]);
         if (missing.length === 0) return;
 
         (async () => {
-            const entries = await Promise.all(missing.map(async (addr) => {
-                try {
-                    const c = new ethers.Contract(addr, ERC721_METADATA_ABI, provider);
-                    let label = '';
+            const entries = await Promise.all(
+                missing.map(async (addr) => {
                     try {
-                        label = await c.name();
+                        const c = new ethers.Contract(addr, ERC721_METADATA_ABI, provider);
+                        let label = '';
+                        try {
+                            label = await c.name();
+                        } catch {
+                            try {
+                                label = await c.symbol();
+                            } catch {
+                                /* ignore */
+                            }
+                        }
+                        label = (label && String(label).trim()) || null;
+                        return [addr, label];
                     } catch {
-                        // some contracts only expose symbol
-                        try { label = await c.symbol(); } catch { /* ignore */ }
+                        return [addr, null];
                     }
-                    label = (label && String(label).trim()) || null;
-                    return [addr, label];
-                } catch {
-                    return [addr, null];
-                }
-            }));
+                })
+            );
 
             if (!cancelled) {
                 setNames((prev) => {
@@ -122,7 +119,9 @@ function useCollectionNames(addresses = [], provider) {
             }
         })();
 
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+        };
     }, [addresses, provider, names]);
 
     return names;
@@ -176,7 +175,10 @@ function HomePage() {
             if (!addr) continue;
             const entry = map.get(addr) || { address: addr, count: 0, sample: null };
             entry.count += 1;
-            if (!entry.sample && (l.image || l.imageUrl || l.metadata?.image || l.metadata?.image_url)) {
+            if (
+                !entry.sample &&
+                (l.image || l.imageUrl || l.metadata?.image || l.metadata?.image_url)
+            ) {
                 entry.sample = l;
             }
             map.set(addr, entry);
@@ -186,7 +188,7 @@ function HomePage() {
             .slice(0, 6);
     }, [listings]);
 
-    // Addresses we need names for (trending + activity)
+    // Addresses needing names (trending + activity)
     const addressesNeedingNames = useMemo(() => {
         const s = new Set();
         for (const t of trendingCollections) s.add(t.address);
@@ -195,10 +197,13 @@ function HomePage() {
     }, [trendingCollections, activity]);
 
     const nameMap = useCollectionNames(addressesNeedingNames, provider);
-    const labelFor = (addr) => {
-        const key = (addr || '').toLowerCase();
-        return nameMap[key] || shortAddr(addr);
-    };
+    const labelFor = useCallback(
+        (addr) => {
+            const key = (addr || '').toLowerCase();
+            return nameMap[key] || shortAddr(addr);
+        },
+        [nameMap]
+    );
 
     // ----- Stats (with resilient fallbacks) -----
     const totalListingsStat = coerceNumber(marketplaceStats?.totalListings);
@@ -227,34 +232,36 @@ function HomePage() {
         return Number.isFinite(n) && n > 0 ? n : null;
     }, [marketplaceStats]);
 
-    const computeLiveFloor = useCallback(async () => {
-        if (!provider || !listings?.length) {
-            setDerivedFloor(null);
-            return;
-        }
-        setFloorLoading(true);
-        setFloorSource('live');
-        try {
-            // sample first N valid listings to keep it snappy
-            const sample = listings
-                .filter((l) => l?.pricePerUnit && l?.paymentToken)
-                .slice(0, 80);
+    const computeLiveFloor = useCallback(
+        async () => {
+            if (!provider || !listings?.length) {
+                setDerivedFloor(null);
+                return;
+            }
+            setFloorLoading(true);
+            setFloorSource('live');
+            try {
+                const sample = listings
+                    .filter((l) => l?.pricePerUnit && l?.paymentToken)
+                    .slice(0, 80);
 
-            const results = await Promise.allSettled(
-                sample.map((l) => convertToUSDCValue(l.pricePerUnit, l.paymentToken, provider))
-            );
+                const results = await Promise.allSettled(
+                    sample.map((l) => convertToUSDCValue(l.pricePerUnit, l.paymentToken, provider))
+                );
 
-            const values = results
-                .map((r) => (r.status === 'fulfilled' ? Number(r.value) : NaN))
-                .filter((v) => Number.isFinite(v) && v > 0);
+                const values = results
+                    .map((r) => (r.status === 'fulfilled' ? Number(r.value) : NaN))
+                    .filter((v) => Number.isFinite(v) && v > 0);
 
-            setDerivedFloor(values.length ? Math.min(...values) : null);
-        } catch {
-            setDerivedFloor(null);
-        } finally {
-            setFloorLoading(false);
-        }
-    }, [provider, listings]);
+                setDerivedFloor(values.length ? Math.min(...values) : null);
+            } catch {
+                setDerivedFloor(null);
+            } finally {
+                setFloorLoading(false);
+            }
+        },
+        [provider, listings]
+    );
 
     // Compute on mount & when listings change (only if no valid stat)
     useEffect(() => {
@@ -263,14 +270,16 @@ function HomePage() {
             if (floorFromStats) {
                 if (!cancelled) {
                     setFloorSource('stat');
-                    setDerivedFloor(null); // not needed
+                    setDerivedFloor(null);
                     setFloorLoading(false);
                 }
                 return;
             }
             await computeLiveFloor();
         })();
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+        };
     }, [floorFromStats, computeLiveFloor]);
 
     const floorUSDC = floorFromStats ?? derivedFloor;
@@ -345,7 +354,10 @@ function HomePage() {
                             <div className="hp-mini__value">{formatUSD(currentVolAnim)}</div>
                         </div>
 
-                        <div className="hp-mini__card hp-mini__card--floor" title="Lowest active listing price across the market (USDC)">
+                        <div
+                            className="hp-mini__card hp-mini__card--floor"
+                            title="Lowest active listing price across the market (USDC)"
+                        >
                             <div className="hp-mini__label">
                                 Floor (USDC)
                                 <span
@@ -409,7 +421,7 @@ function HomePage() {
                                 t.sample?.metadata?.image_url ||
                                 '';
                             return (
-                                <Link to={`/collection/${t.address}`} className="hp-trend" key={t.address}>
+                                <Link to={`/collections/${t.address}`} className="hp-trend" key={t.address}>
                                     <div className="hp-trend__img" style={{ backgroundImage: `url(${img})` }} />
                                     <div className="hp-trend__info">
                                         <strong className="hp-trend__name">{labelFor(t.address)}</strong>
@@ -462,14 +474,15 @@ function HomePage() {
                         <div className="hp-ticker__track">
                             {[...activity, ...activity].map((a, i) => (
                                 <div className="hp-ticker__item" key={`${a.id}-${i}`}>
-                                    <div className="hp-ticker__img" style={{ backgroundImage: `url(${a.image || ''})` }} />
+                                    <div
+                                        className="hp-ticker__img"
+                                        style={{ backgroundImage: `url(${a.image || ''})` }}
+                                    />
                                     <div className="hp-ticker__text">
                                         <strong>{a.name}</strong>
                                         <span> #{String(a.tokenId)}</span>
                                         <span className="hp-dot">•</span>
-                                        <span className="hp-mono">
-                                            {labelFor(a.nftContract)}
-                                        </span>
+                                        <span className="hp-mono">{labelFor(a.nftContract)}</span>
                                     </div>
                                 </div>
                             ))}
