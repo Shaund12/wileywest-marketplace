@@ -1,4 +1,6 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+﻿// src/pages/MarketplacePage.jsx
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { useSupabase } from '../context/SupabaseContext';
@@ -12,6 +14,74 @@ import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
 
 /* =========================
+   On-chain collection name resolver
+   ========================= */
+const ERC721_METADATA_ABI = [
+    'function name() view returns (string)',
+    'function symbol() view returns (string)',
+];
+
+const shortAddr = (a = '') => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
+
+/** Resolve ERC721 collection names; caches results locally to avoid repeat RPCs */
+function useCollectionNames(addresses = [], provider) {
+    const [names, setNames] = useState({}); // { [lowerAddr]: 'Cool Cats' | null }
+
+    useEffect(() => {
+        let cancelled = false;
+        if (!provider) return;
+
+        // Unique, normalized addresses
+        const uniq = Array.from(new Set(addresses.filter(Boolean).map((a) => a.toLowerCase())));
+        // Only fetch for addresses we don't already know about (including explicit nulls)
+        const missing = uniq.filter((a) => !(a in names));
+
+        if (missing.length === 0) return;
+
+        (async () => {
+            const entries = await Promise.all(
+                missing.map(async (addr) => {
+                    try {
+                        const c = new ethers.Contract(addr, ERC721_METADATA_ABI, provider);
+                        let label = '';
+                        try {
+                            label = await c.name();
+                        } catch {
+                            try {
+                                label = await c.symbol();
+                            } catch {
+                                /* ignore */
+                            }
+                        }
+                        label = (label && String(label).trim()) || null;
+                        return [addr, label];
+                    } catch {
+                        return [addr, null];
+                    }
+                })
+            );
+
+            if (!cancelled) {
+                setNames((prev) => {
+                    const next = { ...prev };
+                    for (const [addr, label] of entries) {
+                        if (!(addr in next)) next[addr] = label; // may be null
+                    }
+                    return next;
+                });
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+        // Using a simple join keeps deps stable and avoids deep compare overhead
+    }, [provider, addresses.join('|'), names]);
+
+    return names;
+}
+
+/* =========================
    Smart IPFS Image + SVG fallback
    ========================= */
 const IPFS_GATEWAYS = [
@@ -22,7 +92,7 @@ const IPFS_GATEWAYS = [
     'https://infura-ipfs.io/ipfs/',
     'https://w3s.link/ipfs/',
     'https://nftstorage.link/ipfs/',
-    'https://ipfs.io/ipfs/'
+    'https://ipfs.io/ipfs/',
 ];
 const IPNS_GATEWAYS = [
     'https://cloudflare-ipfs.com/ipns/',
@@ -32,7 +102,7 @@ const IPNS_GATEWAYS = [
     'https://infura-ipfs.io/ipns/',
     'https://w3s.link/ipns/',
     'https://nftstorage.link/ipns/',
-    'https://ipfs.io/ipns/'
+    'https://ipfs.io/ipns/',
 ];
 
 const smartImageCache = new Map(); // key -> working URL
@@ -62,13 +132,15 @@ function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '
     </linearGradient>
   </defs>
   <rect width="100%" height="100%" fill="url(#${gradId})"/>
-  ${Array.from({ length: blobs }).map((_, i) => {
-        const a = (h + i * 97) % 360;
-        const r = 14 + ((h >> i) % 40);
-        const cx = (width / (blobs + 1)) * (i + 1);
-        const cy = (height / (blobs + 1)) * ((i % 3) + 1);
-        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
-    }).join('')}
+  ${Array.from({ length: blobs })
+            .map((_, i) => {
+                const a = (h + i * 97) % 360;
+                const r = 14 + ((h >> i) % 40);
+                const cx = (width / (blobs + 1)) * (i + 1);
+                const cy = (height / (blobs + 1)) * ((i % 3) + 1);
+                return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
+            })
+            .join('')}
   <text x="50%" y="${height - 14}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">
     ${label}
   </text>
@@ -122,22 +194,38 @@ function uniq(arr) {
     for (const x of arr) if (!s.has(x)) { s.add(x); out.push(x); }
     return out;
 }
-function flatten(arrs) { const out = []; for (const a of arrs) out.push(...a); return out; }
+function flatten(arrs) {
+    const out = [];
+    for (const a of arrs) out.push(...a);
+    return out;
+}
 
 function findFirstWorkingImage(candidates, timeoutMs = 6000) {
     return new Promise((resolve, reject) => {
         if (!candidates?.length) return reject(new Error('No candidates'));
         if (typeof window === 'undefined') return reject(new Error('SSR window unavailable'));
-        let idx = 0, settled = false;
+        let idx = 0,
+            settled = false;
 
         const tryNext = () => {
             if (settled) return;
             if (idx >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[idx++];
             const img = new Image();
-            const timer = setTimeout(() => { img.onload = img.onerror = null; tryNext(); }, timeoutMs);
-            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(test); };
-            img.onerror = () => { clearTimeout(timer); tryNext(); };
+            const timer = setTimeout(() => {
+                img.onload = img.onerror = null;
+                tryNext();
+            }, timeoutMs);
+            img.onload = () => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(test);
+            };
+            img.onerror = () => {
+                clearTimeout(timer);
+                tryNext();
+            };
             img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
         };
         tryNext();
@@ -152,7 +240,7 @@ function SmartImage({
     width = 300,
     height = 200,
     seed = 'nft',
-    title = ''
+    title = '',
 }) {
     const [url, setUrl] = useState(null);
     const [failed, setFailed] = useState(false);
@@ -172,7 +260,8 @@ function SmartImage({
 
         const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
         if (!candidates.length) {
-            setUrl(null); setFailed(true);
+            setUrl(null);
+            setFailed(true);
             return;
         }
 
@@ -189,12 +278,12 @@ function SmartImage({
                 setFailed(true);
             });
 
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+        };
     }, [src, JSON.stringify(srcList)]);
 
-    const finalSrc = failed || !url
-        ? svgFallbackDataUrl({ seed, width, height, title })
-        : url;
+    const finalSrc = failed || !url ? svgFallbackDataUrl({ seed, width, height, title }) : url;
 
     return (
         <img
@@ -205,7 +294,9 @@ function SmartImage({
             height={height}
             loading="lazy"
             crossOrigin="anonymous"
-            onError={() => { if (!failed) setFailed(true); }}
+            onError={() => {
+                if (!failed) setFailed(true);
+            }}
             style={{ objectFit: 'cover', display: 'block', borderRadius: 8 }}
         />
     );
@@ -260,7 +351,7 @@ function MarketplacePage() {
         setStatus,
         isInitialized,
         marketplaceStats,
-        canceledListings
+        canceledListings,
     } = useMarketplace();
 
     const { wallet, connect, provider } = useWallet();
@@ -281,7 +372,7 @@ function MarketplacePage() {
         tokenSymbol: 'TOKEN',
         usdcValue: '0.00',
         formatted: '...',
-        hasUSDCRate: true
+        hasUSDCRate: true,
     });
     const [collections, setCollections] = useState([]);
     const [stats, setStats] = useState({
@@ -291,7 +382,7 @@ function MarketplacePage() {
         floorPrice: 0,
         currentListingVolume: 0,
         actualSoldVolume: 0,
-        hasUSDCRates: true
+        hasUSDCRates: true,
     });
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage] = useState(12);
@@ -307,10 +398,42 @@ function MarketplacePage() {
         { id: 'sports', name: 'Sports' },
         { id: 'utility', name: 'Utility' },
         { id: 'music', name: 'Music' },
-        { id: 'gaming', name: 'Gaming' }
+        { id: 'gaming', name: 'Gaming' },
     ];
 
-    // Load listings and process data
+    /* ----------------------------
+       Resolve collection names (addresses on screen + featured)
+       ---------------------------- */
+    const addressesNeedingNames = useMemo(() => {
+        const s = new Set();
+        for (const c of collections || []) if (c?.address) s.add(c.address.toLowerCase());
+        if (featuredNFT?.nftContract) s.add(featuredNFT.nftContract.toLowerCase());
+        // also include selectedCollections to keep filter labels stable
+        for (const addr of selectedCollections || []) s.add(addr.toLowerCase());
+        return Array.from(s);
+    }, [collections, featuredNFT, selectedCollections]);
+
+    const nameMap = useCollectionNames(addressesNeedingNames, provider);
+
+    const labelForAddress = useCallback(
+        (addr, fallbackName = '') => {
+            const key = (addr || '').toLowerCase();
+            const resolved = nameMap[key];
+            const base = (fallbackName || '').trim();
+            const baseLooksLikeAddr = /^collection\s+0x/i.test(base) || base.toLowerCase() === 'collection' || base === '';
+            return resolved || (!baseLooksLikeAddr && base) || shortAddr(addr);
+        },
+        [nameMap]
+    );
+
+    const labelForCollection = useCallback(
+        (collection) => labelForAddress(collection?.address, collection?.name),
+        [labelForAddress]
+    );
+
+    /* ----------------------------
+       Load listings
+       ---------------------------- */
     useEffect(() => {
         async function loadData() {
             if (!hasLoadedRef.current && isInitialized && fetchListings) {
@@ -340,17 +463,19 @@ function MarketplacePage() {
                 setIsLoading(false);
             }
         };
-        return () => { delete window.refreshMarketplace; };
+        return () => {
+            delete window.refreshMarketplace;
+        };
     }, [isInitialized, fetchListings, setStatus]);
 
-    // Persist NEW/UPDATED listings to Supabase whenever listings state changes
+    /* ----------------------------
+       Persist listings to Supabase cache (deduped)
+       ---------------------------- */
     useEffect(() => {
         if (!isConnected) return;
         if (!Array.isArray(listings) || listings.length === 0) return;
 
-        const active = listings.filter(
-            (l) => l.active && !(canceledListings?.has?.(String(l.id)))
-        );
+        const active = listings.filter((l) => l.active && !(canceledListings?.has?.(String(l.id))));
         if (active.length === 0) return;
 
         // lightweight content signature to avoid redundant upserts
@@ -360,7 +485,7 @@ function MarketplacePage() {
                 String(l.pricePerUnit ?? ''),
                 String(l.paymentToken ?? ''),
                 String(l.quantity ?? ''),
-                String(l.active ?? '')
+                String(l.active ?? ''),
             ])
         );
         if (sig === cacheSigRef.current) return;
@@ -377,7 +502,9 @@ function MarketplacePage() {
         return () => clearTimeout(t);
     }, [isConnected, listings, canceledListings, cacheListings]);
 
-    // Process listings and extract metadata with enhanced volume tracking
+    /* ----------------------------
+       Process listings & compute enhanced stats
+       ---------------------------- */
     useEffect(() => {
         async function processListingsWithEnhancedStats() {
             if (listings.length > 0 && provider) {
@@ -404,22 +531,29 @@ function MarketplacePage() {
                                 listing.metadata?.image_url;
                             let collectionWebsite = '';
 
-                            if (listing.collectionName && listing.collectionName.trim() !== '' &&
-                                !listing.collectionName.includes('Collection 0x')) {
+                            if (
+                                listing.collectionName &&
+                                listing.collectionName.trim() !== '' &&
+                                !listing.collectionName.includes('Collection 0x')
+                            ) {
                                 collectionName = listing.collectionName.trim();
                             } else if (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') {
                                 collectionName = listing.metadata.collection.name.trim();
-                            } else if (listing.metadata?.name && listing.metadata.name.trim() !== '' &&
+                            } else if (
+                                listing.metadata?.name &&
+                                listing.metadata.name.trim() !== '' &&
                                 !listing.metadata.name.includes('#') &&
                                 !listing.metadata.name.toLowerCase().includes('token') &&
-                                !listing.metadata.name.toLowerCase().includes('nft')) {
+                                !listing.metadata.name.toLowerCase().includes('nft')
+                            ) {
                                 collectionName = listing.metadata.name.trim();
                             }
 
                             if (listing.metadata?.collection) {
                                 collectionDescription = listing.metadata.collection.description || '';
                                 collectionImage = listing.metadata.collection.image || collectionImage;
-                                collectionWebsite = listing.metadata.collection.external_link || listing.metadata.collection.external_url || '';
+                                collectionWebsite =
+                                    listing.metadata.collection.external_link || listing.metadata.collection.external_url || '';
                             }
 
                             collectionMap[collectionAddress] = {
@@ -434,7 +568,7 @@ function MarketplacePage() {
                                 avgPrice: 0,
                                 highestPrice: 0,
                                 lowestPrice: Infinity,
-                                createdAt: Date.now()
+                                createdAt: Date.now(),
                             };
                         }
 
@@ -478,9 +612,7 @@ function MarketplacePage() {
                         }
                     });
 
-                    const collectionsList = Object.values(collectionMap).sort(
-                        (a, b) => b.items.length - a.items.length
-                    );
+                    const collectionsList = Object.values(collectionMap).sort((a, b) => b.items.length - a.items.length);
 
                     setCollections(collectionsList);
 
@@ -493,7 +625,7 @@ function MarketplacePage() {
                         totalVolume: (currentListingVolumeUSDC + actualSoldVolume).toFixed(2),
                         avgPrice: activeListings.length > 0 ? (currentListingVolumeUSDC / activeListings.length).toFixed(2) : '0.00',
                         floorPrice: lowestPriceUSDC === Infinity ? '0.00' : lowestPriceUSDC.toFixed(2),
-                        hasUSDCRates: hasAnyUSDCRates
+                        hasUSDCRates: hasAnyUSDCRates,
                     });
 
                     if (hotListings && hotListings.length > 0) {
@@ -518,15 +650,21 @@ function MarketplacePage() {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
                             let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
-                            if (listing.collectionName && listing.collectionName.trim() !== '' &&
-                                !listing.collectionName.includes('Collection 0x')) {
+                            if (
+                                listing.collectionName &&
+                                listing.collectionName.trim() !== '' &&
+                                !listing.collectionName.includes('Collection 0x')
+                            ) {
                                 collectionName = listing.collectionName.trim();
                             } else if (listing.metadata?.collection?.name && listing.metadata.collection.name.trim() !== '') {
                                 collectionName = listing.metadata.collection.name.trim();
-                            } else if (listing.metadata?.name && listing.metadata.name.trim() !== '' &&
+                            } else if (
+                                listing.metadata?.name &&
+                                listing.metadata.name.trim() !== '' &&
                                 !listing.metadata.name.includes('#') &&
                                 !listing.metadata.name.toLowerCase().includes('token') &&
-                                !listing.metadata.name.toLowerCase().includes('nft')) {
+                                !listing.metadata.name.toLowerCase().includes('nft')
+                            ) {
                                 collectionName = listing.metadata.name.trim();
                             }
 
@@ -541,7 +679,7 @@ function MarketplacePage() {
                                 totalVolume: 0,
                                 avgPrice: 0,
                                 highestPrice: 0,
-                                lowestPrice: Infinity
+                                lowestPrice: Infinity,
                             };
                         }
 
@@ -557,9 +695,7 @@ function MarketplacePage() {
                         if (priceInEth < lowestPrice) lowestPrice = priceInEth;
                     });
 
-                    const collectionsList = Object.values(collectionMap).sort(
-                        (a, b) => b.items.length - a.items.length
-                    );
+                    const collectionsList = Object.values(collectionMap).sort((a, b) => b.items.length - a.items.length);
                     setCollections(collectionsList);
 
                     setStats({
@@ -567,9 +703,10 @@ function MarketplacePage() {
                         actualSoldVolume: '0.00 (no USDC rate available)',
                         totalListings: activeListings.length,
                         totalVolume: `${totalVolume.toFixed(2)} (no USDC rate available)`,
-                        avgPrice: activeListings.length > 0 ? `${(totalVolume / activeListings.length).toFixed(3)} (est.)` : '0.00',
+                        avgPrice:
+                            activeListings.length > 0 ? `${(totalVolume / activeListings.length).toFixed(3)} (est.)` : '0.00',
                         floorPrice: lowestPrice === Infinity ? '0.00' : `${lowestPrice.toFixed(3)} (est.)`,
-                        hasUSDCRates: false
+                        hasUSDCRates: false,
                     });
                 }
             } else {
@@ -580,14 +717,16 @@ function MarketplacePage() {
                     totalVolume: '0.00',
                     avgPrice: '0.00',
                     floorPrice: '0.00',
-                    hasUSDCRates: true
+                    hasUSDCRates: true,
                 });
             }
         }
         processListingsWithEnhancedStats();
     }, [listings, hotListings, provider, canceledListings, marketplaceStats]);
 
-    // Update featured NFT price display
+    /* ----------------------------
+       Featured NFT price display
+       ---------------------------- */
     useEffect(() => {
         async function updateFeaturedNFTPriceDisplay() {
             if (!featuredNFT || !featuredNFT.pricePerUnit || !provider) {
@@ -596,7 +735,7 @@ function MarketplacePage() {
                     tokenSymbol: 'TOKEN',
                     usdcValue: '0.00',
                     formatted: '...',
-                    hasUSDCRate: true
+                    hasUSDCRate: true,
                 });
                 return;
             }
@@ -610,7 +749,9 @@ function MarketplacePage() {
                 setFeaturedNFTPriceDisplay(priceInfo);
             } catch (error) {
                 const tokenSymbol = featuredNFT.paymentToken
-                    ? (featuredNFT.paymentToken === ethers.ZeroAddress ? 'VTRU' : 'TOKEN')
+                    ? featuredNFT.paymentToken === ethers.ZeroAddress
+                        ? 'VTRU'
+                        : 'TOKEN'
                     : 'VTRU';
                 const tokenAmount = formatPrice(featuredNFT.pricePerUnit);
                 setFeaturedNFTPriceDisplay({
@@ -618,14 +759,16 @@ function MarketplacePage() {
                     tokenSymbol,
                     usdcValue: '0.00',
                     formatted: `${tokenAmount} ${tokenSymbol}`,
-                    hasUSDCRate: false
+                    hasUSDCRate: false,
                 });
             }
         }
         updateFeaturedNFTPriceDisplay();
     }, [featuredNFT, provider]);
 
-    // Filter + sort
+    /* ----------------------------
+       Search, filters, sorting
+       ---------------------------- */
     useEffect(() => {
         let result = [...listings];
 
@@ -650,9 +793,7 @@ function MarketplacePage() {
         }
 
         if (selectedCollections.length > 0) {
-            result = result.filter((item) =>
-                selectedCollections.includes(item.nftContract.toLowerCase())
-            );
+            result = result.filter((item) => selectedCollections.includes(item.nftContract.toLowerCase()));
         }
 
         if (priceRange.min !== '') {
@@ -666,14 +807,10 @@ function MarketplacePage() {
 
         switch (sortMethod) {
             case 'price_low_to_high':
-                result.sort((a, b) =>
-                    Number(ethers.getBigInt(a.pricePerUnit) - ethers.getBigInt(b.pricePerUnit))
-                );
+                result.sort((a, b) => Number(ethers.getBigInt(a.pricePerUnit) - ethers.getBigInt(b.pricePerUnit)));
                 break;
             case 'price_high_to_low':
-                result.sort((a, b) =>
-                    Number(ethers.getBigInt(b.pricePerUnit) - ethers.getBigInt(a.pricePerUnit))
-                );
+                result.sort((a, b) => Number(ethers.getBigInt(b.pricePerUnit) - ethers.getBigInt(a.pricePerUnit)));
                 break;
             case 'newest':
                 result.sort((a, b) => b.id - a.id);
@@ -720,18 +857,50 @@ function MarketplacePage() {
         }
     };
 
+    // Featured NFT collection label using resolver
+    const featuredCollectionLabel = useMemo(() => {
+        if (!featuredNFT) return '';
+        const addr = featuredNFT.nftContract || '';
+        // try on-chain resolver first, otherwise keep your original metadata heuristics, then short address
+        const resolved = labelForAddress(addr, '');
+        if (resolved && !resolved.startsWith('0x') && !resolved.toLowerCase().startsWith('collection')) return resolved;
+
+        // fallback to existing metadata-based heuristics
+        const metaName =
+            (featuredNFT.collectionName && featuredNFT.collectionName.trim() !== '' && !featuredNFT.collectionName.includes('Collection 0x'))
+                ? featuredNFT.collectionName.trim()
+                : (featuredNFT.metadata?.collection?.name && featuredNFT.metadata.collection.name.trim() !== '')
+                    ? featuredNFT.metadata.collection.name.trim()
+                    : (featuredNFT.metadata?.name &&
+                        featuredNFT.metadata.name.trim() !== '' &&
+                        !featuredNFT.metadata.name.includes('#') &&
+                        !featuredNFT.metadata.name.toLowerCase().includes('token') &&
+                        !featuredNFT.metadata.name.toLowerCase().includes('nft'))
+                        ? featuredNFT.metadata.name.trim()
+                        : '';
+        return metaName || shortAddr(addr);
+    }, [featuredNFT, labelForAddress]);
+
     return (
         <div className="marketplace-container" ref={topRef}>
             {/* Hero Section */}
             <div className="marketplace-hero">
                 <div className="hero-content">
-                    <h1>Discover, Collect & Sell<br /><span className="gradient-text">Extraordinary NFTs</span></h1>
+                    <h1>
+                        Discover, Collect & Sell
+                        <br />
+                        <span className="gradient-text">Extraordinary NFTs</span>
+                    </h1>
                     <p>Explore the most sought-after digital assets in the Vitruveo ecosystem</p>
                     <div className="hero-cta">
                         {wallet ? (
-                            <a href="/sell" className="primary-button">Create Listing</a>
+                            <a href="/sell" className="primary-button">
+                                Create Listing
+                            </a>
                         ) : (
-                            <button className="primary-button" onClick={connect}>Connect Wallet</button>
+                            <button className="primary-button" onClick={connect}>
+                                Connect Wallet
+                            </button>
                         )}
                         <button
                             className="secondary-button"
@@ -755,7 +924,7 @@ function MarketplacePage() {
                                         featuredNFT.imageUrl,
                                         featuredNFT.metadata?.image,
                                         featuredNFT.metadata?.image_url,
-                                        featuredNFT.metadata?.animation_url
+                                        featuredNFT.metadata?.animation_url,
                                     ]}
                                     alt={featuredNFT.name || featuredNFT.metadata?.name || `NFT #${featuredNFT.tokenId}`}
                                     width={480}
@@ -767,19 +936,7 @@ function MarketplacePage() {
                             </div>
                             <div className="featured-details">
                                 <h3>{featuredNFT.name || featuredNFT.metadata?.name || `NFT #${featuredNFT.tokenId}`}</h3>
-                                <p className="featured-collection">
-                                    {(featuredNFT.collectionName && featuredNFT.collectionName.trim() !== '' && !featuredNFT.collectionName.includes('Collection 0x')) ?
-                                        featuredNFT.collectionName.trim() :
-                                        (featuredNFT.metadata?.collection?.name && featuredNFT.metadata.collection.name.trim() !== '') ?
-                                            featuredNFT.metadata.collection.name.trim() :
-                                            (featuredNFT.metadata?.name && featuredNFT.metadata.name.trim() !== '' &&
-                                                !featuredNFT.metadata.name.includes('#') &&
-                                                !featuredNFT.metadata.name.toLowerCase().includes('token') &&
-                                                !featuredNFT.metadata.name.toLowerCase().includes('nft')) ?
-                                                featuredNFT.metadata.name.trim() :
-                                                `${featuredNFT.nftContract.slice(0, 8)}...${featuredNFT.nftContract.slice(-6)}`
-                                    }
-                                </p>
+                                <p className="featured-collection">{featuredCollectionLabel}</p>
                                 {featuredNFT.metadata?.collection?.description && (
                                     <p className="featured-description">
                                         {featuredNFT.metadata.collection.description.slice(0, 80)}
@@ -795,6 +952,16 @@ function MarketplacePage() {
                                             `${featuredNFTPriceDisplay.tokenAmount} ${featuredNFTPriceDisplay.tokenSymbol}`
                                         )}
                                     </span>
+                                </div>
+                                {/* Quick link to collection */}
+                                <div style={{ marginTop: '.4rem' }}>
+                                    <Link
+                                        to={`/collections/${(featuredNFT.nftContract || '').toLowerCase()}`}
+                                        className="see-all-button"
+                                        aria-label="View collection"
+                                    >
+                                        View collection →
+                                    </Link>
                                 </div>
                             </div>
                         </div>
@@ -826,95 +993,117 @@ function MarketplacePage() {
                 </div>
             </div>
 
-            {/* Hot Collections Carousel */}
+            {/* Popular Collections Carousel */}
             <section className="hot-collections">
                 <div className="section-header">
                     <h2>Popular Collections</h2>
-                    <button className="see-all-button">See All</button>
+                    <Link to="/collections" className="see-all-button">
+                        See All
+                    </Link>
                 </div>
 
                 <div className="collections-carousel">
-                    {collections.slice(0, 5).map((collection, index) => (
-                        <div className="collection-card enhanced" key={index}>
-                            <div className="collection-header">
-                                <div className="collection-avatar">
-                                    <SmartImage
-                                        srcList={[
-                                            collection.image,
-                                            collection.items[0]?.image,
-                                            collection.items[0]?.imageUrl,
-                                            collection.items[0]?.metadata?.image,
-                                            collection.items[0]?.metadata?.image_url
-                                        ]}
-                                        alt={collection.name}
-                                        width={64}
-                                        height={64}
-                                        seed={collection.address}
-                                        title={collection.name}
-                                    />
-                                </div>
-                                <div className="collection-rank">#{index + 1}</div>
-                            </div>
-                            <div className="collection-preview">
-                                {collection.items.slice(0, 4).map((item, i) => (
-                                    <div className="preview-item" key={i}>
+                    {collections.slice(0, 5).map((collection, index) => {
+                        const humanName = labelForCollection(collection);
+                        const addr = (collection.address || '').toLowerCase();
+                        return (
+                            <Link
+                                to={`/collections/${addr}`}
+                                className="collection-card enhanced"
+                                key={addr || index}
+                                aria-label={`Open collection ${humanName}`}
+                            >
+                                <div className="collection-header">
+                                    <div className="collection-avatar">
                                         <SmartImage
                                             srcList={[
-                                                item.image,
-                                                item.imageUrl,
-                                                item.metadata?.image,
-                                                item.metadata?.image_url,
-                                                item.metadata?.animation_url
+                                                collection.image,
+                                                collection.items[0]?.image,
+                                                collection.items[0]?.imageUrl,
+                                                collection.items[0]?.metadata?.image,
+                                                collection.items[0]?.metadata?.image_url,
                                             ]}
-                                            alt={`Preview ${i}`}
-                                            width={96}
-                                            height={96}
-                                            seed={`${item.nftContract}-${item.tokenId}-${i}`}
-                                            title={item.metadata?.name || item.name}
+                                            alt={humanName}
+                                            width={64}
+                                            height={64}
+                                            seed={collection.address}
+                                            title={humanName}
                                         />
                                     </div>
-                                ))}
-                                {collection.items.length > 4 && (
-                                    <div className="preview-item more-items">
-                                        <span>+{collection.items.length - 4}</span>
-                                    </div>
-                                )}
-                            </div>
-                            <div className="collection-info">
-                                <h3 title={collection.name}>{collection.name}</h3>
-                                {collection.description && (
-                                    <p className="collection-description" title={collection.description}>
-                                        {collection.description.slice(0, 60)}{collection.description.length > 60 ? '...' : ''}
-                                    </p>
-                                )}
-                                <div className="collection-stats">
-                                    <div className="stat">
-                                        <span className="value">{collection.items.length}</span>
-                                        <span className="label">items</span>
-                                    </div>
-                                    <div className="stat">
-                                        <span className="value">${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}</span>
-                                        <span className="label">floor</span>
-                                    </div>
-                                    <div className="stat">
-                                        <span className="value">${collection.totalVolume.toFixed(2)}</span>
-                                        <span className="label">volume</span>
-                                    </div>
-                                    <div className="stat">
-                                        <span className="value">${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}</span>
-                                        <span className="label">avg price</span>
-                                    </div>
+                                    <div className="collection-rank">#{index + 1}</div>
                                 </div>
-                                {collection.website && (
-                                    <div className="collection-links">
-                                        <a href={collection.website} target="_blank" rel="noopener noreferrer" className="website-link">
-                                            🌐 Website
-                                        </a>
+                                <div className="collection-preview">
+                                    {collection.items.slice(0, 4).map((item, i) => (
+                                        <div className="preview-item" key={i}>
+                                            <SmartImage
+                                                srcList={[
+                                                    item.image,
+                                                    item.imageUrl,
+                                                    item.metadata?.image,
+                                                    item.metadata?.image_url,
+                                                    item.metadata?.animation_url,
+                                                ]}
+                                                alt={`Preview ${i}`}
+                                                width={96}
+                                                height={96}
+                                                seed={`${item.nftContract}-${item.tokenId}-${i}`}
+                                                title={item.metadata?.name || item.name}
+                                            />
+                                        </div>
+                                    ))}
+                                    {collection.items.length > 4 && (
+                                        <div className="preview-item more-items">
+                                            <span>+{collection.items.length - 4}</span>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="collection-info">
+                                    <h3 title={humanName}>{humanName}</h3>
+                                    {collection.description && (
+                                        <p className="collection-description" title={collection.description}>
+                                            {collection.description.slice(0, 60)}
+                                            {collection.description.length > 60 ? '...' : ''}
+                                        </p>
+                                    )}
+                                    <div className="collection-stats">
+                                        <div className="stat">
+                                            <span className="value">{collection.items.length}</span>
+                                            <span className="label">items</span>
+                                        </div>
+                                        <div className="stat">
+                                            <span className="value">
+                                                ${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}
+                                            </span>
+                                            <span className="label">floor</span>
+                                        </div>
+                                        <div className="stat">
+                                            <span className="value">${collection.totalVolume.toFixed(2)}</span>
+                                            <span className="label">volume</span>
+                                        </div>
+                                        <div className="stat">
+                                            <span className="value">
+                                                ${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}
+                                            </span>
+                                            <span className="label">avg price</span>
+                                        </div>
                                     </div>
-                                )}
-                            </div>
-                        </div>
-                    ))}
+                                    {collection.website && (
+                                        <div className="collection-links">
+                                            <a
+                                                href={collection.website}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="website-link"
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                🌐 Website
+                                            </a>
+                                        </div>
+                                    )}
+                                </div>
+                            </Link>
+                        );
+                    })}
                 </div>
             </section>
 
@@ -934,77 +1123,90 @@ function MarketplacePage() {
                     </div>
 
                     <div className="trending-collections-grid">
-                        {collections.slice(0, 6).map((collection, index) => (
-                            <div className="trending-collection-card" key={collection.address}>
-                                <div className="trending-rank">#{index + 1}</div>
-                                <div className="trending-collection-header">
-                                    <div className="trending-avatar">
-                                        <SmartImage
-                                            srcList={[
-                                                collection.image,
-                                                collection.items[0]?.image,
-                                                collection.items[0]?.imageUrl,
-                                                collection.items[0]?.metadata?.image,
-                                                collection.items[0]?.metadata?.image_url
-                                            ]}
-                                            alt={collection.name}
-                                            width={56}
-                                            height={56}
-                                            seed={`trend-${collection.address}`}
-                                            title={collection.name}
-                                        />
+                        {collections.slice(0, 6).map((collection, index) => {
+                            const humanName = labelForCollection(collection);
+                            const addr = (collection.address || '').toLowerCase();
+                            return (
+                                <Link
+                                    to={`/collections/${addr}`}
+                                    className="trending-collection-card"
+                                    key={addr}
+                                    aria-label={`Open collection ${humanName}`}
+                                >
+                                    <div className="trending-rank">#{index + 1}</div>
+                                    <div className="trending-collection-header">
+                                        <div className="trending-avatar">
+                                            <SmartImage
+                                                srcList={[
+                                                    collection.image,
+                                                    collection.items[0]?.image,
+                                                    collection.items[0]?.imageUrl,
+                                                    collection.items[0]?.metadata?.image,
+                                                    collection.items[0]?.metadata?.image_url,
+                                                ]}
+                                                alt={humanName}
+                                                width={56}
+                                                height={56}
+                                                seed={`trend-${collection.address}`}
+                                                title={humanName}
+                                            />
+                                        </div>
+                                        <div className="trending-info">
+                                            <h4>{humanName}</h4>
+                                            <p>{collection.items.length} items</p>
+                                        </div>
+                                        <div className="trending-change">
+                                            <span className="change-percentage">+12.5%</span>
+                                            <span className="change-label">24h</span>
+                                        </div>
                                     </div>
-                                    <div className="trending-info">
-                                        <h4>{collection.name}</h4>
-                                        <p>{collection.items.length} items</p>
-                                    </div>
-                                    <div className="trending-change">
-                                        <span className="change-percentage">+12.5%</span>
-                                        <span className="change-label">24h</span>
-                                    </div>
-                                </div>
 
-                                <div className="trending-metrics">
-                                    <div className="metric">
-                                        <span className="metric-label">Floor Price</span>
-                                        <span className="metric-value">${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}</span>
+                                    <div className="trending-metrics">
+                                        <div className="metric">
+                                            <span className="metric-label">Floor Price</span>
+                                            <span className="metric-value">
+                                                ${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}
+                                            </span>
+                                        </div>
+                                        <div className="metric">
+                                            <span className="metric-label">Volume</span>
+                                            <span className="metric-value">${collection.totalVolume.toFixed(2)}</span>
+                                        </div>
+                                        <div className="metric">
+                                            <span className="metric-label">Avg Price</span>
+                                            <span className="metric-value">
+                                                ${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}
+                                            </span>
+                                        </div>
+                                        <div className="metric">
+                                            <span className="metric-label">Items</span>
+                                            <span className="metric-value">{collection.items.length}</span>
+                                        </div>
                                     </div>
-                                    <div className="metric">
-                                        <span className="metric-label">Volume</span>
-                                        <span className="metric-value">${collection.totalVolume.toFixed(2)}</span>
-                                    </div>
-                                    <div className="metric">
-                                        <span className="metric-label">Avg Price</span>
-                                        <span className="metric-value">${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}</span>
-                                    </div>
-                                    <div className="metric">
-                                        <span className="metric-label">Items</span>
-                                        <span className="metric-value">{collection.items.length}</span>
-                                    </div>
-                                </div>
 
-                                <div className="trending-preview-small">
-                                    {collection.items.slice(0, 3).map((item, i) => (
-                                        <SmartImage
-                                            key={i}
-                                            srcList={[
-                                                item.image,
-                                                item.imageUrl,
-                                                item.metadata?.image,
-                                                item.metadata?.image_url,
-                                                item.metadata?.animation_url
-                                            ]}
-                                            alt={`${collection.name} item ${i + 1}`}
-                                            width={120}
-                                            height={90}
-                                            seed={`trend-prev-${collection.address}-${i}`}
-                                            title={item.metadata?.name || item.name}
-                                            className="trending-preview-img"
-                                        />
-                                    ))}
-                                </div>
-                            </div>
-                        ))}
+                                    <div className="trending-preview-small">
+                                        {collection.items.slice(0, 3).map((item, i) => (
+                                            <SmartImage
+                                                key={i}
+                                                srcList={[
+                                                    item.image,
+                                                    item.imageUrl,
+                                                    item.metadata?.image,
+                                                    item.metadata?.image_url,
+                                                    item.metadata?.animation_url,
+                                                ]}
+                                                alt={`${humanName} item ${i + 1}`}
+                                                width={120}
+                                                height={90}
+                                                seed={`trend-prev-${collection.address}-${i}`}
+                                                title={item.metadata?.name || item.name}
+                                                className="trending-preview-img"
+                                            />
+                                        ))}
+                                    </div>
+                                </Link>
+                            );
+                        })}
                     </div>
                 </section>
             )}
@@ -1045,11 +1247,7 @@ function MarketplacePage() {
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
                         </div>
-                        <select
-                            className="sort-select"
-                            value={sortMethod}
-                            onChange={(e) => setSortMethod(e.target.value)}
-                        >
+                        <select className="sort-select" value={sortMethod} onChange={(e) => setSortMethod(e.target.value)}>
                             <option value="newest">Newest</option>
                             <option value="oldest">Oldest</option>
                             <option value="price_low_to_high">Price: Low to High</option>
@@ -1097,37 +1295,38 @@ function MarketplacePage() {
                             <div className="filter-group">
                                 <h3>Collections</h3>
                                 <div className="filter-options scrollable">
-                                    {collections.slice(0, 10).map((collection) => (
-                                        <label key={collection.address} className="filter-option collection-filter">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedCollections.includes(collection.address.toLowerCase())}
-                                                onChange={() => toggleCollection(collection.address.toLowerCase())}
-                                            />
-                                            <div className="collection-filter-info">
-                                                <div className="collection-filter-avatar">
-                                                    <SmartImage
-                                                        srcList={[
-                                                            collection.image,
-                                                            collection.items[0]?.image,
-                                                            collection.items[0]?.imageUrl
-                                                        ]}
-                                                        alt={collection.name}
-                                                        width={40}
-                                                        height={40}
-                                                        seed={`filter-${collection.address}`}
-                                                        title={collection.name}
-                                                    />
+                                    {collections.slice(0, 10).map((collection) => {
+                                        const humanName = labelForCollection(collection);
+                                        const addrLower = (collection.address || '').toLowerCase();
+                                        return (
+                                            <label key={collection.address} className="filter-option collection-filter">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedCollections.includes(addrLower)}
+                                                    onChange={() => toggleCollection(addrLower)}
+                                                />
+                                                <div className="collection-filter-info">
+                                                    <div className="collection-filter-avatar">
+                                                        <SmartImage
+                                                            srcList={[collection.image, collection.items[0]?.image, collection.items[0]?.imageUrl]}
+                                                            alt={humanName}
+                                                            width={40}
+                                                            height={40}
+                                                            seed={`filter-${collection.address}`}
+                                                            title={humanName}
+                                                        />
+                                                    </div>
+                                                    <div className="collection-filter-details">
+                                                        <span className="collection-name">{humanName}</span>
+                                                        <span className="collection-stats">
+                                                            {collection.items.length} items • Floor: $
+                                                            {collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                                <div className="collection-filter-details">
-                                                    <span className="collection-name">{collection.name}</span>
-                                                    <span className="collection-stats">
-                                                        {collection.items.length} items • Floor: ${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </label>
-                                    ))}
+                                            </label>
+                                        );
+                                    })}
                                 </div>
                             </div>
 
@@ -1192,16 +1391,30 @@ function MarketplacePage() {
                                         <button onClick={() => paginate(1)} disabled={currentPage === 1} className="pagination-button">
                                             First
                                         </button>
-                                        <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="pagination-button">
+                                        <button
+                                            onClick={() => paginate(currentPage - 1)}
+                                            disabled={currentPage === 1}
+                                            className="pagination-button"
+                                        >
                                             Previous
                                         </button>
 
-                                        <div className="pagination-info">Page {currentPage} of {totalPages}</div>
+                                        <div className="pagination-info">
+                                            Page {currentPage} of {totalPages}
+                                        </div>
 
-                                        <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="pagination-button">
+                                        <button
+                                            onClick={() => paginate(currentPage + 1)}
+                                            disabled={currentPage === totalPages}
+                                            className="pagination-button"
+                                        >
                                             Next
                                         </button>
-                                        <button onClick={() => paginate(totalPages)} disabled={currentPage === totalPages} className="pagination-button">
+                                        <button
+                                            onClick={() => paginate(totalPages)}
+                                            disabled={currentPage === totalPages}
+                                            className="pagination-button"
+                                        >
                                             Last
                                         </button>
                                     </div>
@@ -1210,20 +1423,29 @@ function MarketplacePage() {
                         ) : (
                             <EmptyState
                                 icon={
-                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                        priceRange.min !== '' || priceRange.max !== ''
+                                    searchTerm ||
+                                        selectedCategories.length > 0 ||
+                                        selectedCollections.length > 0 ||
+                                        priceRange.min !== '' ||
+                                        priceRange.max !== ''
                                         ? '🔍'
                                         : '🛍️'
                                 }
                                 title={
-                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                        priceRange.min !== '' || priceRange.max !== ''
+                                    searchTerm ||
+                                        selectedCategories.length > 0 ||
+                                        selectedCollections.length > 0 ||
+                                        priceRange.min !== '' ||
+                                        priceRange.max !== ''
                                         ? 'No Results Found'
                                         : 'No NFTs Available'
                                 }
                                 description={
-                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                        priceRange.min !== '' || priceRange.max !== ''
+                                    searchTerm ||
+                                        selectedCategories.length > 0 ||
+                                        selectedCollections.length > 0 ||
+                                        priceRange.min !== '' ||
+                                        priceRange.max !== ''
                                         ? "Try adjusting your filters or search criteria to find what you're looking for."
                                         : 'There are currently no active listings in the marketplace. Check back soon or be the first to list your NFT!'
                                 }
@@ -1237,14 +1459,22 @@ function MarketplacePage() {
                                 }}
                                 secondaryActionText={
                                     !(
-                                        searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                        priceRange.min !== '' || priceRange.max !== ''
-                                    ) ? 'List Your NFT' : 'Clear Filters'
+                                        searchTerm ||
+                                        selectedCategories.length > 0 ||
+                                        selectedCollections.length > 0 ||
+                                        priceRange.min !== '' ||
+                                        priceRange.max !== ''
+                                    )
+                                        ? 'List Your NFT'
+                                        : 'Clear Filters'
                                 }
                                 onSecondaryAction={() => {
                                     if (
-                                        searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                        priceRange.min !== '' || priceRange.max !== ''
+                                        searchTerm ||
+                                        selectedCategories.length > 0 ||
+                                        selectedCollections.length > 0 ||
+                                        priceRange.min !== '' ||
+                                        priceRange.max !== ''
                                     ) {
                                         setSearchTerm('');
                                         setSelectedCategories([]);
@@ -1271,11 +1501,17 @@ function MarketplacePage() {
                     <p>Join creators and collectors in the vibrant Vitruveo marketplace</p>
                     <div className="cta-buttons">
                         {wallet ? (
-                            <a href="/sell" className="primary-button">Create a Listing</a>
+                            <a href="/sell" className="primary-button">
+                                Create a Listing
+                            </a>
                         ) : (
-                            <button className="primary-button" onClick={connect}>Connect Wallet</button>
+                            <button className="primary-button" onClick={connect}>
+                                Connect Wallet
+                            </button>
                         )}
-                        <a href="/profile" className="secondary-button">View Your Profile</a>
+                        <a href="/profile" className="secondary-button">
+                            View Your Profile
+                        </a>
                     </div>
                 </div>
                 <div className="cta-image">
