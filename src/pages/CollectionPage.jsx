@@ -6,6 +6,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
+import ListingCard from '../components/ListingCard'; // ✅ add this
 
 const ERC721_METADATA_ABI = [
     'function name() view returns (string)',
@@ -23,14 +24,12 @@ export default function CollectionPage() {
     const [label, setLabel] = useState('');
     const [labelLoading, setLabelLoading] = useState(false);
 
-    // Ensure we have listings loaded if user lands cold on this route
     useEffect(() => {
         if (!isInitialized && typeof fetchListings === 'function') {
             fetchListings().catch(() => { });
         }
     }, [isInitialized, fetchListings]);
 
-    // Resolve collection name/symbol on-chain
     useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -43,9 +42,7 @@ export default function CollectionPage() {
                 const c = new ethers.Contract(addr, ERC721_METADATA_ABI, provider);
                 let n = '';
                 try { n = await c.name(); } catch { }
-                if (!n) {
-                    try { n = await c.symbol(); } catch { }
-                }
+                if (!n) { try { n = await c.symbol(); } catch { } }
                 if (!cancelled) setLabel((n || '').trim());
             } catch {
                 if (!cancelled) setLabel('');
@@ -80,9 +77,7 @@ export default function CollectionPage() {
         <div className="hp">
             <section className="hp-featured" style={{ marginTop: '2rem' }}>
                 <div className="hp-section__head">
-                    <h2>
-                        {labelLoading ? 'Loading…' : label || `${addr.slice(0, 6)}…${addr.slice(-4)}`}
-                    </h2>
+                    <h2>{labelLoading ? 'Loading…' : label || `${addr.slice(0, 6)}…${addr.slice(-4)}`}</h2>
                     <Link to="/marketplace" className="hp-link">Back to marketplace →</Link>
                 </div>
 
@@ -99,16 +94,7 @@ export default function CollectionPage() {
                 ) : (
                     <div className="hp-latest__grid">
                         {items.slice(0, 40).map((l) => (
-                            <React.Fragment key={l.id}>
-                                {/* Reuse your existing card */}
-                                {/* ListingCard should already handle images/prices */}
-                                <div>
-                                    {/* If ListingCard expects `listing` prop: */}
-                                    {/* <ListingCard listing={l} /> */}
-                                    {/* If not, render a minimal fallback: */}
-                                    <ListingCard listing={l} />
-                                </div>
-                            </React.Fragment>
+                            <ListingCard key={l.id} listing={l} />  {/* ✅ direct use */ }
                         ))}
                     </div>
                 )}
