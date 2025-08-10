@@ -6,7 +6,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
-import ListingCard from '../components/ListingCard'; // ✅ add this
+import ListingCard from '../components/ListingCard';
 
 const ERC721_METADATA_ABI = [
     'function name() view returns (string)',
@@ -24,12 +24,14 @@ export default function CollectionPage() {
     const [label, setLabel] = useState('');
     const [labelLoading, setLabelLoading] = useState(false);
 
+    // Ensure listings on cold entry
     useEffect(() => {
         if (!isInitialized && typeof fetchListings === 'function') {
             fetchListings().catch(() => { });
         }
     }, [isInitialized, fetchListings]);
 
+    // Resolve collection name/symbol
     useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -94,7 +96,7 @@ export default function CollectionPage() {
                 ) : (
                     <div className="hp-latest__grid">
                         {items.slice(0, 40).map((l) => (
-                            <ListingCard key={l.id} listing={l} />  {/* ✅ direct use */ }
+                            <ListingCard key={l.id} listing={l} />
                         ))}
                     </div>
                 )}
