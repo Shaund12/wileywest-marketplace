@@ -12,6 +12,7 @@ import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
+import blockdustLogo from '../assets/blockdust-logo.png';
 
 /* =========================
    On-chain collection name resolver
@@ -1518,7 +1519,7 @@ function MarketplacePage() {
                     </div>
                 </div>
                 <div className="cta-image">
-                    <img src="src/assets/blockdust-logo.png" alt="BlockDust NFT Marketplace" />
+                    <img src={blockdustLogo} alt="BlockDust NFT Marketplace" />
                 </div>
             </section>
         </div>
