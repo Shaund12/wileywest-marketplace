@@ -31,11 +31,8 @@ function useCollectionNames(addresses = [], provider) {
         let cancelled = false;
         if (!provider) return;
 
-        // Unique, normalized addresses
         const uniq = Array.from(new Set(addresses.filter(Boolean).map((a) => a.toLowerCase())));
-        // Only fetch for addresses we don't already know about (including explicit nulls)
         const missing = uniq.filter((a) => !(a in names));
-
         if (missing.length === 0) return;
 
         (async () => {
@@ -44,14 +41,8 @@ function useCollectionNames(addresses = [], provider) {
                     try {
                         const c = new ethers.Contract(addr, ERC721_METADATA_ABI, provider);
                         let label = '';
-                        try {
-                            label = await c.name();
-                        } catch {
-                            try {
-                                label = await c.symbol();
-                            } catch {
-                                /* ignore */
-                            }
+                        try { label = await c.name(); } catch {
+                            try { label = await c.symbol(); } catch { }
                         }
                         label = (label && String(label).trim()) || null;
                         return [addr, label];
@@ -72,10 +63,7 @@ function useCollectionNames(addresses = [], provider) {
             }
         })();
 
-        return () => {
-            cancelled = true;
-        };
-        // Using a simple join keeps deps stable and avoids deep compare overhead
+        return () => { cancelled = true; };
     }, [provider, addresses.join('|'), names]);
 
     return names;
@@ -110,10 +98,7 @@ const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
 
 function hashString(str) {
     let h = 0;
-    for (let i = 0; i < str.length; i++) {
-        h = (h << 5) - h + str.charCodeAt(i);
-        h |= 0;
-    }
+    for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; }
     return Math.abs(h);
 }
 function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '' }) {
@@ -132,15 +117,13 @@ function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '
     </linearGradient>
   </defs>
   <rect width="100%" height="100%" fill="url(#${gradId})"/>
-  ${Array.from({ length: blobs })
-            .map((_, i) => {
-                const a = (h + i * 97) % 360;
-                const r = 14 + ((h >> i) % 40);
-                const cx = (width / (blobs + 1)) * (i + 1);
-                const cy = (height / (blobs + 1)) * ((i % 3) + 1);
-                return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
-            })
-            .join('')}
+  ${Array.from({ length: blobs }).map((_, i) => {
+        const a = (h + i * 97) % 360;
+        const r = 14 + ((h >> i) % 40);
+        const cx = (width / (blobs + 1)) * (i + 1);
+        const cy = (height / (blobs + 1)) * ((i % 3) + 1);
+        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
+    }).join('')}
   <text x="50%" y="${height - 14}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">
     ${label}
   </text>
@@ -188,44 +171,23 @@ function expandToCandidateUrls(raw) {
     }
 }
 
-function uniq(arr) {
-    const s = new Set();
-    const out = [];
-    for (const x of arr) if (!s.has(x)) { s.add(x); out.push(x); }
-    return out;
-}
-function flatten(arrs) {
-    const out = [];
-    for (const a of arrs) out.push(...a);
-    return out;
-}
+function uniq(arr) { const s = new Set(); const out = []; for (const x of arr) if (!s.has(x)) { s.add(x); out.push(x); } return out; }
+function flatten(arrs) { const out = []; for (const a of arrs) out.push(...a); return out; }
 
 function findFirstWorkingImage(candidates, timeoutMs = 6000) {
     return new Promise((resolve, reject) => {
         if (!candidates?.length) return reject(new Error('No candidates'));
         if (typeof window === 'undefined') return reject(new Error('SSR window unavailable'));
-        let idx = 0,
-            settled = false;
+        let idx = 0, settled = false;
 
         const tryNext = () => {
             if (settled) return;
             if (idx >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[idx++];
             const img = new Image();
-            const timer = setTimeout(() => {
-                img.onload = img.onerror = null;
-                tryNext();
-            }, timeoutMs);
-            img.onload = () => {
-                if (settled) return;
-                settled = true;
-                clearTimeout(timer);
-                resolve(test);
-            };
-            img.onerror = () => {
-                clearTimeout(timer);
-                tryNext();
-            };
+            const timer = setTimeout(() => { img.onload = img.onerror = null; tryNext(); }, timeoutMs);
+            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(test); };
+            img.onerror = () => { clearTimeout(timer); tryNext(); };
             img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
         };
         tryNext();
@@ -252,35 +214,16 @@ function SmartImage({
         if (Array.isArray(srcList)) raws.push(...srcList);
 
         const key = raws.join('|');
-        if (smartImageCache.has(key)) {
-            setUrl(smartImageCache.get(key));
-            setFailed(false);
-            return;
-        }
+        if (smartImageCache.has(key)) { setUrl(smartImageCache.get(key)); setFailed(false); return; }
 
         const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
-        if (!candidates.length) {
-            setUrl(null);
-            setFailed(true);
-            return;
-        }
+        if (!candidates.length) { setUrl(null); setFailed(true); return; }
 
         findFirstWorkingImage(candidates)
-            .then((u) => {
-                if (cancelled) return;
-                smartImageCache.set(key, u);
-                setUrl(u);
-                setFailed(false);
-            })
-            .catch(() => {
-                if (cancelled) return;
-                setUrl(null);
-                setFailed(true);
-            });
+            .then((u) => { if (cancelled) return; smartImageCache.set(key, u); setUrl(u); setFailed(false); })
+            .catch(() => { if (cancelled) return; setUrl(null); setFailed(true); });
 
-        return () => {
-            cancelled = true;
-        };
+        return () => { cancelled = true; };
     }, [src, JSON.stringify(srcList)]);
 
     const finalSrc = failed || !url ? svgFallbackDataUrl({ seed, width, height, title }) : url;
@@ -294,9 +237,7 @@ function SmartImage({
             height={height}
             loading="lazy"
             crossOrigin="anonymous"
-            onError={() => {
-                if (!failed) setFailed(true);
-            }}
+            onError={() => { if (!failed) setFailed(true); }}
             style={{ objectFit: 'cover', display: 'block', borderRadius: 8 }}
         />
     );
@@ -342,6 +283,34 @@ const ListIcon = () => (
     </svg>
 );
 
+/* =========================
+   Timestamp helpers (24h recency)
+   ========================= */
+const nowMs = () => Date.now();
+function coerceMs(v) {
+    if (v == null) return NaN;
+    if (typeof v === 'number') {
+        // seconds vs ms
+        return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
+    }
+    if (typeof v === 'string') {
+        // try integer seconds, then Date.parse
+        const n = Number(v);
+        if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+        const d = Date.parse(v);
+        return Number.isNaN(d) ? NaN : d;
+    }
+    if (v && typeof v === 'object') {
+        // support { seconds } shape sometimes seen in DBs
+        if (typeof v.seconds === 'number') return Math.round(v.seconds * 1000);
+        if (typeof v.toString === 'function') {
+            const n = Number(v.toString());
+            if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+        }
+    }
+    return NaN;
+}
+
 function MarketplacePage() {
     const {
         listings,
@@ -386,9 +355,13 @@ function MarketplacePage() {
     });
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage] = useState(12);
+    const [trendMode, setTrendMode] = useState('volume'); // 'volume' | 'hot' | 'new'
     const topRef = useRef(null);
     const hasLoadedRef = useRef(false);
     const cacheSigRef = useRef('');
+
+    // 24h cutoff for "hot"
+    const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
     // Categories for filtering
     const categories = [
@@ -402,13 +375,12 @@ function MarketplacePage() {
     ];
 
     /* ----------------------------
-       Resolve collection names (addresses on screen + featured)
+       Resolve collection names (addresses on screen + featured/filters)
        ---------------------------- */
     const addressesNeedingNames = useMemo(() => {
         const s = new Set();
         for (const c of collections || []) if (c?.address) s.add(c.address.toLowerCase());
         if (featuredNFT?.nftContract) s.add(featuredNFT.nftContract.toLowerCase());
-        // also include selectedCollections to keep filter labels stable
         for (const addr of selectedCollections || []) s.add(addr.toLowerCase());
         return Array.from(s);
     }, [collections, featuredNFT, selectedCollections]);
@@ -463,9 +435,7 @@ function MarketplacePage() {
                 setIsLoading(false);
             }
         };
-        return () => {
-            delete window.refreshMarketplace;
-        };
+        return () => { delete window.refreshMarketplace; };
     }, [isInitialized, fetchListings, setStatus]);
 
     /* ----------------------------
@@ -478,7 +448,6 @@ function MarketplacePage() {
         const active = listings.filter((l) => l.active && !(canceledListings?.has?.(String(l.id))));
         if (active.length === 0) return;
 
-        // lightweight content signature to avoid redundant upserts
         const sig = JSON.stringify(
             active.map((l) => [
                 String(l.id),
@@ -492,18 +461,14 @@ function MarketplacePage() {
         cacheSigRef.current = sig;
 
         const t = setTimeout(() => {
-            try {
-                cacheListings(active, canceledListings || new Set());
-            } catch (e) {
-                console.warn('Cache listings error:', e);
-            }
+            try { cacheListings(active, canceledListings || new Set()); } catch (e) { console.warn('Cache listings error:', e); }
         }, 300);
 
         return () => clearTimeout(t);
     }, [isConnected, listings, canceledListings, cacheListings]);
 
     /* ----------------------------
-       Process listings & compute enhanced stats
+       Process listings & compute enhanced stats (incl. HOT/NEW signals)
        ---------------------------- */
     useEffect(() => {
         async function processListingsWithEnhancedStats() {
@@ -519,16 +484,15 @@ function MarketplacePage() {
                         (listing) => listing.active && !canceledListings.has(listing.id?.toString())
                     );
 
+                    const cutoff = nowMs() - RECENT_WINDOW_MS;
+
                     for (const listing of activeListings) {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
                             let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
                             let collectionDescription = '';
                             let collectionImage =
-                                listing.image ||
-                                listing.imageUrl ||
-                                listing.metadata?.image ||
-                                listing.metadata?.image_url;
+                                listing.image || listing.imageUrl || listing.metadata?.image || listing.metadata?.image_url;
                             let collectionWebsite = '';
 
                             if (
@@ -563,57 +527,82 @@ function MarketplacePage() {
                                 image: collectionImage,
                                 website: collectionWebsite,
                                 items: [],
+                                // pricing metrics
                                 floorPrice: Infinity,
                                 totalVolume: 0,
                                 avgPrice: 0,
                                 highestPrice: 0,
                                 lowestPrice: Infinity,
-                                createdAt: Date.now(),
+                                // recency metrics
+                                firstTs: Number.POSITIVE_INFINITY,
+                                lastTs: 0,
+                                recentListings: 0,
+                                recentVolume: 0,
                             };
                         }
 
+                        // Record item
                         collectionMap[collectionAddress].items.push(listing);
 
+                        // Coerce a timestamp for HOT/NEW
+                        const tsCandidate =
+                            coerceMs(listing.createdAt) ??
+                            coerceMs(listing.created_at) ??
+                            coerceMs(listing.timestamp) ??
+                            coerceMs(listing.time) ??
+                            coerceMs(listing.blockTimestamp) ??
+                            coerceMs(listing.listedAt);
+                        const ts = Number.isFinite(tsCandidate) ? tsCandidate : 0;
+
+                        if (ts > 0) {
+                            if (ts < collectionMap[collectionAddress].firstTs) collectionMap[collectionAddress].firstTs = ts;
+                            if (ts > collectionMap[collectionAddress].lastTs) collectionMap[collectionAddress].lastTs = ts;
+                        }
+
+                        const isRecent = ts >= cutoff && ts > 0;
+
+                        // Pre-bind recency flags into the price promise
                         pricePromises.push(
                             convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider)
                                 .then((usdcPrice) => {
                                     hasAnyUSDCRates = true;
-                                    return { listing, usdcPrice, hasRate: true };
+                                    return { listing, usdcPrice, hasRate: true, ts, isRecent };
                                 })
-                                .catch(() => ({ listing, usdcPrice: 0, hasRate: false }))
+                                .catch(() => ({ listing, usdcPrice: 0, hasRate: false, ts, isRecent }))
                         );
                     }
 
                     const priceResults = await Promise.all(pricePromises);
 
-                    priceResults.forEach(({ listing, usdcPrice, hasRate }) => {
+                    priceResults.forEach(({ listing, usdcPrice, hasRate, isRecent, ts }) => {
                         const collectionAddress = listing.nftContract;
+                        const col = collectionMap[collectionAddress];
+
                         if (hasRate) {
-                            collectionMap[collectionAddress].totalVolume += usdcPrice;
-                            if (usdcPrice < collectionMap[collectionAddress].floorPrice) {
-                                collectionMap[collectionAddress].floorPrice = usdcPrice;
-                                collectionMap[collectionAddress].lowestPrice = usdcPrice;
-                            }
-                            if (usdcPrice > collectionMap[collectionAddress].highestPrice) {
-                                collectionMap[collectionAddress].highestPrice = usdcPrice;
-                            }
+                            col.totalVolume += usdcPrice;
+                            if (usdcPrice < col.floorPrice) { col.floorPrice = usdcPrice; col.lowestPrice = usdcPrice; }
+                            if (usdcPrice > col.highestPrice) col.highestPrice = usdcPrice;
+                            if (isRecent) col.recentVolume += usdcPrice;
                             currentListingVolumeUSDC += usdcPrice;
                             if (usdcPrice < lowestPriceUSDC) lowestPriceUSDC = usdcPrice;
                         }
+
+                        if (isRecent) col.recentListings += 1;
+                        if (ts > 0 && ts > col.lastTs) col.lastTs = ts;
                     });
 
                     Object.values(collectionMap).forEach((collection) => {
                         if (collection.items.length > 0) {
                             collection.avgPrice = collection.totalVolume / collection.items.length;
-                            if (collection.floorPrice === Infinity) {
+                            if (!Number.isFinite(collection.floorPrice)) {
                                 collection.floorPrice = 0;
                                 collection.lowestPrice = 0;
                             }
+                            if (!Number.isFinite(collection.firstTs)) collection.firstTs = 0;
                         }
                     });
 
                     const collectionsList = Object.values(collectionMap).sort((a, b) => b.items.length - a.items.length);
-
                     setCollections(collectionsList);
 
                     const actualSoldVolume = marketplaceStats.actualSoldVolume || 0;
@@ -623,7 +612,8 @@ function MarketplacePage() {
                         actualSoldVolume: actualSoldVolume.toFixed(2),
                         totalListings: activeListings.length,
                         totalVolume: (currentListingVolumeUSDC + actualSoldVolume).toFixed(2),
-                        avgPrice: activeListings.length > 0 ? (currentListingVolumeUSDC / activeListings.length).toFixed(2) : '0.00',
+                        avgPrice:
+                            activeListings.length > 0 ? (currentListingVolumeUSDC / activeListings.length).toFixed(2) : '0.00',
                         floorPrice: lowestPriceUSDC === Infinity ? '0.00' : lowestPriceUSDC.toFixed(2),
                         hasUSDCRates: hasAnyUSDCRates,
                     });
@@ -639,12 +629,14 @@ function MarketplacePage() {
                     }
                 } catch (error) {
                     console.error('Error processing listings with enhanced stats:', error);
+                    // Fallback (no USDC conversion): compute basic recency signals with native amounts
                     const activeListings = listings.filter(
                         (listing) => listing.active && !canceledListings.has(listing.id?.toString())
                     );
                     const collectionMap = {};
                     let totalVolume = 0;
                     let lowestPrice = Infinity;
+                    const cutoff = nowMs() - RECENT_WINDOW_MS;
 
                     activeListings.forEach((listing) => {
                         const collectionAddress = listing.nftContract;
@@ -680,15 +672,37 @@ function MarketplacePage() {
                                 avgPrice: 0,
                                 highestPrice: 0,
                                 lowestPrice: Infinity,
+                                firstTs: Number.POSITIVE_INFINITY,
+                                lastTs: 0,
+                                recentListings: 0,
+                                recentVolume: 0, // in native units here
                             };
                         }
 
-                        const priceInEth = parseFloat(ethers.formatEther(listing.pricePerUnit));
+                        const priceInEth = Number.parseFloat(ethers.formatEther(listing.pricePerUnit));
+                        const tsCandidate =
+                            coerceMs(listing.createdAt) ??
+                            coerceMs(listing.created_at) ??
+                            coerceMs(listing.timestamp) ??
+                            coerceMs(listing.time) ??
+                            coerceMs(listing.blockTimestamp) ??
+                            coerceMs(listing.listedAt);
+                        const ts = Number.isFinite(tsCandidate) ? tsCandidate : 0;
+                        const isRecent = ts >= cutoff && ts > 0;
+
                         collectionMap[collectionAddress].items.push(listing);
                         collectionMap[collectionAddress].totalVolume += priceInEth;
-
                         if (priceInEth < collectionMap[collectionAddress].floorPrice) {
                             collectionMap[collectionAddress].floorPrice = priceInEth;
+                        }
+                        if (isRecent) {
+                            collectionMap[collectionAddress].recentListings += 1;
+                            collectionMap[collectionAddress].recentVolume += priceInEth;
+                        }
+
+                        if (ts > 0) {
+                            if (ts < collectionMap[collectionAddress].firstTs) collectionMap[collectionAddress].firstTs = ts;
+                            if (ts > collectionMap[collectionAddress].lastTs) collectionMap[collectionAddress].lastTs = ts;
                         }
 
                         totalVolume += priceInEth;
@@ -703,8 +717,7 @@ function MarketplacePage() {
                         actualSoldVolume: '0.00 (no USDC rate available)',
                         totalListings: activeListings.length,
                         totalVolume: `${totalVolume.toFixed(2)} (no USDC rate available)`,
-                        avgPrice:
-                            activeListings.length > 0 ? `${(totalVolume / activeListings.length).toFixed(3)} (est.)` : '0.00',
+                        avgPrice: activeListings.length > 0 ? `${(totalVolume / activeListings.length).toFixed(3)} (est.)` : '0.00',
                         floorPrice: lowestPrice === Infinity ? '0.00' : `${lowestPrice.toFixed(3)} (est.)`,
                         hasUSDCRates: false,
                     });
@@ -747,11 +760,9 @@ function MarketplacePage() {
                     true
                 );
                 setFeaturedNFTPriceDisplay(priceInfo);
-            } catch (error) {
+            } catch {
                 const tokenSymbol = featuredNFT.paymentToken
-                    ? featuredNFT.paymentToken === ethers.ZeroAddress
-                        ? 'VTRU'
-                        : 'TOKEN'
+                    ? (featuredNFT.paymentToken === ethers.ZeroAddress ? 'VTRU' : 'TOKEN')
                     : 'VTRU';
                 const tokenAmount = formatPrice(featuredNFT.pricePerUnit);
                 setFeaturedNFTPriceDisplay({
@@ -767,7 +778,7 @@ function MarketplacePage() {
     }, [featuredNFT, provider]);
 
     /* ----------------------------
-       Search, filters, sorting
+       Search, filters, sorting (for main listings)
        ---------------------------- */
     useEffect(() => {
         let result = [...listings];
@@ -850,22 +861,16 @@ function MarketplacePage() {
         }
     };
     const formatPrice = (priceInWei) => {
-        try {
-            return parseFloat(ethers.formatEther(priceInWei)).toFixed(4);
-        } catch {
-            return '0';
-        }
+        try { return parseFloat(ethers.formatEther(priceInWei)).toFixed(4); } catch { return '0'; }
     };
 
     // Featured NFT collection label using resolver
     const featuredCollectionLabel = useMemo(() => {
         if (!featuredNFT) return '';
         const addr = featuredNFT.nftContract || '';
-        // try on-chain resolver first, otherwise keep your original metadata heuristics, then short address
         const resolved = labelForAddress(addr, '');
         if (resolved && !resolved.startsWith('0x') && !resolved.toLowerCase().startsWith('collection')) return resolved;
 
-        // fallback to existing metadata-based heuristics
         const metaName =
             (featuredNFT.collectionName && featuredNFT.collectionName.trim() !== '' && !featuredNFT.collectionName.includes('Collection 0x'))
                 ? featuredNFT.collectionName.trim()
@@ -881,6 +886,38 @@ function MarketplacePage() {
         return metaName || shortAddr(addr);
     }, [featuredNFT, labelForAddress]);
 
+    /* ----------------------------
+       TRENDING / HOT / NEW derived lists
+       ---------------------------- */
+    const trendingSorted = useMemo(() => {
+        const arr = [...collections];
+        if (trendMode === 'hot') {
+            // Sort by 24h volume desc, then 24h listing count desc, then total volume
+            arr.sort((a, b) => {
+                const rv = (b.recentVolume || 0) - (a.recentVolume || 0);
+                if (rv !== 0) return rv;
+                const rc = (b.recentListings || 0) - (a.recentListings || 0);
+                if (rc !== 0) return rc;
+                return (b.totalVolume || 0) - (a.totalVolume || 0);
+            });
+        } else if (trendMode === 'new') {
+            // Sort by most recent activity (lastTs) desc, then number of items, then total volume
+            arr.sort((a, b) => {
+                const lt = (b.lastTs || 0) - (a.lastTs || 0);
+                if (lt !== 0) return lt;
+                const items = (b.items?.length || 0) - (a.items?.length || 0);
+                if (items !== 0) return items;
+                return (b.totalVolume || 0) - (a.totalVolume || 0);
+            });
+        } else {
+            // trendMode === 'volume'  (default Trending)
+            arr.sort((a, b) => (b.totalVolume || 0) - (a.totalVolume || 0));
+        }
+        return arr;
+    }, [collections, trendMode]);
+
+    const onClickTrendMode = (mode) => setTrendMode(mode);
+
     return (
         <div className="marketplace-container" ref={topRef}>
             {/* Hero Section */}
@@ -894,13 +931,9 @@ function MarketplacePage() {
                     <p>Explore the most sought-after digital assets in the Vitruveo ecosystem</p>
                     <div className="hero-cta">
                         {wallet ? (
-                            <a href="/sell" className="primary-button">
-                                Create Listing
-                            </a>
+                            <a href="/sell" className="primary-button">Create Listing</a>
                         ) : (
-                            <button className="primary-button" onClick={connect}>
-                                Connect Wallet
-                            </button>
+                            <button className="primary-button" onClick={connect}>Connect Wallet</button>
                         )}
                         <button
                             className="secondary-button"
@@ -946,14 +979,11 @@ function MarketplacePage() {
                                 <div className="featured-price">
                                     <span className="price-label">Price:</span>
                                     <span className="price-value">
-                                        {featuredNFTPriceDisplay.hasUSDCRate ? (
-                                            featuredNFTPriceDisplay.formatted
-                                        ) : (
-                                            `${featuredNFTPriceDisplay.tokenAmount} ${featuredNFTPriceDisplay.tokenSymbol}`
-                                        )}
+                                        {featuredNFTPriceDisplay.hasUSDCRate
+                                            ? featuredNFTPriceDisplay.formatted
+                                            : `${featuredNFTPriceDisplay.tokenAmount} ${featuredNFTPriceDisplay.tokenSymbol}`}
                                     </span>
                                 </div>
-                                {/* Quick link to collection */}
                                 <div style={{ marginTop: '.4rem' }}>
                                     <Link
                                         to={`/collections/${(featuredNFT.nftContract || '').toLowerCase()}`}
@@ -997,9 +1027,7 @@ function MarketplacePage() {
             <section className="hot-collections">
                 <div className="section-header">
                     <h2>Popular Collections</h2>
-                    <Link to="/collections" className="see-all-button">
-                        See All
-                    </Link>
+                    <Link to="/collections" className="see-all-button">See All</Link>
                 </div>
 
                 <div className="collections-carousel">
@@ -1052,52 +1080,25 @@ function MarketplacePage() {
                                         </div>
                                     ))}
                                     {collection.items.length > 4 && (
-                                        <div className="preview-item more-items">
-                                            <span>+{collection.items.length - 4}</span>
-                                        </div>
+                                        <div className="preview-item more-items"><span>+{collection.items.length - 4}</span></div>
                                     )}
                                 </div>
                                 <div className="collection-info">
                                     <h3 title={humanName}>{humanName}</h3>
                                     {collection.description && (
                                         <p className="collection-description" title={collection.description}>
-                                            {collection.description.slice(0, 60)}
-                                            {collection.description.length > 60 ? '...' : ''}
+                                            {collection.description.slice(0, 60)}{collection.description.length > 60 ? '...' : ''}
                                         </p>
                                     )}
                                     <div className="collection-stats">
-                                        <div className="stat">
-                                            <span className="value">{collection.items.length}</span>
-                                            <span className="label">items</span>
-                                        </div>
-                                        <div className="stat">
-                                            <span className="value">
-                                                ${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}
-                                            </span>
-                                            <span className="label">floor</span>
-                                        </div>
-                                        <div className="stat">
-                                            <span className="value">${collection.totalVolume.toFixed(2)}</span>
-                                            <span className="label">volume</span>
-                                        </div>
-                                        <div className="stat">
-                                            <span className="value">
-                                                ${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}
-                                            </span>
-                                            <span className="label">avg price</span>
-                                        </div>
+                                        <div className="stat"><span className="value">{collection.items.length}</span><span className="label">items</span></div>
+                                        <div className="stat"><span className="value">${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}</span><span className="label">floor</span></div>
+                                        <div className="stat"><span className="value">${collection.totalVolume.toFixed(2)}</span><span className="label">volume</span></div>
+                                        <div className="stat"><span className="value">${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}</span><span className="label">avg price</span></div>
                                     </div>
                                     {collection.website && (
                                         <div className="collection-links">
-                                            <a
-                                                href={collection.website}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="website-link"
-                                                onClick={(e) => e.stopPropagation()}
-                                            >
-                                                🌐 Website
-                                            </a>
+                                            <a href={collection.website} target="_blank" rel="noopener noreferrer" className="website-link" onClick={(e) => e.stopPropagation()}>🌐 Website</a>
                                         </div>
                                     )}
                                 </div>
@@ -1115,22 +1116,50 @@ function MarketplacePage() {
                 <section className="trending-collections">
                     <div className="section-header">
                         <h2>Trending Collections</h2>
-                        <div className="trend-filters">
-                            <button className="trend-filter active">📈 Volume</button>
-                            <button className="trend-filter">🔥 Hot</button>
-                            <button className="trend-filter">⭐ New</button>
+                        <div className="trend-filters" role="tablist" aria-label="Trending filter">
+                            <button
+                                className={`trend-filter ${trendMode === 'volume' ? 'active' : ''}`}
+                                onClick={() => onClickTrendMode('volume')}
+                                role="tab"
+                                aria-selected={trendMode === 'volume'}
+                            >
+                                📈 Volume
+                            </button>
+                            <button
+                                className={`trend-filter ${trendMode === 'hot' ? 'active' : ''}`}
+                                onClick={() => onClickTrendMode('hot')}
+                                role="tab"
+                                aria-selected={trendMode === 'hot'}
+                                title="Sorted by 24h volume & activity"
+                            >
+                                🔥 Hot
+                            </button>
+                            <button
+                                className={`trend-filter ${trendMode === 'new' ? 'active' : ''}`}
+                                onClick={() => onClickTrendMode('new')}
+                                role="tab"
+                                aria-selected={trendMode === 'new'}
+                                title="Newest active collections"
+                            >
+                                ⭐ New
+                            </button>
                         </div>
                     </div>
 
                     <div className="trending-collections-grid">
-                        {collections.slice(0, 6).map((collection, index) => {
+                        {trendingSorted.slice(0, 6).map((collection, index) => {
                             const humanName = labelForCollection(collection);
                             const addr = (collection.address || '').toLowerCase();
+                            const pct24 =
+                                collection.totalVolume > 0
+                                    ? Math.min(999, Math.max(0, (collection.recentVolume / collection.totalVolume) * 100))
+                                    : 0;
+                            const pctLabel = Number.isFinite(pct24) ? `${pct24.toFixed(1)}%` : '—';
                             return (
                                 <Link
                                     to={`/collections/${addr}`}
                                     className="trending-collection-card"
-                                    key={addr}
+                                    key={addr || `${humanName}-${index}`}
                                     aria-label={`Open collection ${humanName}`}
                                 >
                                     <div className="trending-rank">#{index + 1}</div>
@@ -1155,8 +1184,8 @@ function MarketplacePage() {
                                             <h4>{humanName}</h4>
                                             <p>{collection.items.length} items</p>
                                         </div>
-                                        <div className="trending-change">
-                                            <span className="change-percentage">+12.5%</span>
+                                        <div className="trending-change" title="24h volume vs total">
+                                            <span className="change-percentage">{pctLabel}</span>
                                             <span className="change-label">24h</span>
                                         </div>
                                     </div>
@@ -1169,13 +1198,17 @@ function MarketplacePage() {
                                             </span>
                                         </div>
                                         <div className="metric">
-                                            <span className="metric-label">Volume</span>
-                                            <span className="metric-value">${collection.totalVolume.toFixed(2)}</span>
+                                            <span className="metric-label">{trendMode === 'hot' ? '24h Volume' : 'Volume'}</span>
+                                            <span className="metric-value">
+                                                ${(trendMode === 'hot' ? collection.recentVolume : collection.totalVolume).toFixed(2)}
+                                            </span>
                                         </div>
                                         <div className="metric">
-                                            <span className="metric-label">Avg Price</span>
+                                            <span className="metric-label">{trendMode === 'hot' ? '24h Listings' : 'Avg Price'}</span>
                                             <span className="metric-value">
-                                                ${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}
+                                                {trendMode === 'hot'
+                                                    ? (collection.recentListings || 0)
+                                                    : `$${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}`}
                                             </span>
                                         </div>
                                         <div className="metric">
@@ -1388,35 +1421,11 @@ function MarketplacePage() {
                                 {/* Pagination */}
                                 {totalPages > 1 && (
                                     <div className="pagination">
-                                        <button onClick={() => paginate(1)} disabled={currentPage === 1} className="pagination-button">
-                                            First
-                                        </button>
-                                        <button
-                                            onClick={() => paginate(currentPage - 1)}
-                                            disabled={currentPage === 1}
-                                            className="pagination-button"
-                                        >
-                                            Previous
-                                        </button>
-
-                                        <div className="pagination-info">
-                                            Page {currentPage} of {totalPages}
-                                        </div>
-
-                                        <button
-                                            onClick={() => paginate(currentPage + 1)}
-                                            disabled={currentPage === totalPages}
-                                            className="pagination-button"
-                                        >
-                                            Next
-                                        </button>
-                                        <button
-                                            onClick={() => paginate(totalPages)}
-                                            disabled={currentPage === totalPages}
-                                            className="pagination-button"
-                                        >
-                                            Last
-                                        </button>
+                                        <button onClick={() => paginate(1)} disabled={currentPage === 1} className="pagination-button">First</button>
+                                        <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="pagination-button">Previous</button>
+                                        <div className="pagination-info">Page {currentPage} of {totalPages}</div>
+                                        <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="pagination-button">Next</button>
+                                        <button onClick={() => paginate(totalPages)} disabled={currentPage === totalPages} className="pagination-button">Last</button>
                                     </div>
                                 )}
                             </>
@@ -1501,17 +1510,11 @@ function MarketplacePage() {
                     <p>Join creators and collectors in the vibrant Vitruveo marketplace</p>
                     <div className="cta-buttons">
                         {wallet ? (
-                            <a href="/sell" className="primary-button">
-                                Create a Listing
-                            </a>
+                            <a href="/sell" className="primary-button">Create a Listing</a>
                         ) : (
-                            <button className="primary-button" onClick={connect}>
-                                Connect Wallet
-                            </button>
+                            <button className="primary-button" onClick={connect}>Connect Wallet</button>
                         )}
-                        <a href="/profile" className="secondary-button">
-                            View Your Profile
-                        </a>
+                        <a href="/profile" className="secondary-button">View Your Profile</a>
                     </div>
                 </div>
                 <div className="cta-image">
