@@ -397,7 +397,7 @@
 }
 
 /* --------------------------------
-   ACTIVITY TICKER
+   ACTIVITY TICKER (fixed)
 ---------------------------------*/
 .hp-activity {
     max-width: 1200px;
@@ -410,36 +410,49 @@
     font-weight: 700;
 }
 
+/* Move padding to the viewport, not the animated element */
 .hp-ticker {
+    position: relative;
     overflow: hidden;
     border: 1px solid var(--hp-border);
     border-radius: 12px;
     background: rgba(255,255,255,0.02);
-}
-
-.hp-ticker__track {
-    display: flex;
-    gap: 1rem;
     padding: .75rem;
-    animation: hp-marquee 22s linear infinite;
-    will-change: transform;
+    /* soft fade edges so the loop seam is invisible */
+    mask-image: linear-gradient(to right, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%);
 }
 
+/* the animated strip — must be intrinsic width */
+.hp-ticker__track {
+    display: inline-flex; /* make width = content width */
+    gap: 1rem;
+    /* no padding here! */
+    animation: hp-marquee var(--hp-speed, 22s) linear infinite;
+    will-change: transform;
+    transform: translate3d(0,0,0);
+    white-space: nowrap; /* belt + suspenders */
+}
+
+/* Pause on hover (kept) */
 .hp-ticker:hover .hp-ticker__track {
     animation-play-state: paused;
 }
 
+/* The loop: because we render [..activity, ..activity] we can scroll -50% */
 @keyframes hp-marquee {
     from {
-        transform: translateX(0);
+        transform: translate3d(0, 0, 0);
     }
 
     to {
-        transform: translateX(-50%);
+        transform: translate3d(-50%, 0, 0);
     }
 }
 
+/* Items must not shrink, or widths will change mid-loop */
 .hp-ticker__item {
+    flex: 0 0 auto;
     min-width: 280px;
     display: flex;
     align-items: center;
@@ -453,6 +466,7 @@
 .hp-ticker__img {
     width: 40px;
     height: 40px;
+    flex: 0 0 auto;
     border-radius: 8px;
     background-size: cover;
     background-position: center;
@@ -471,9 +485,24 @@
 }
 
 .hp-mono {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
     color: var(--hp-muted);
 }
+
+/* Slower on small screens so it’s readable */
+@media (max-width: 640px) {
+    .hp-ticker__track {
+        --hp-speed: 28s;
+    }
+}
+
+/* Reduced motion: stop auto-scrolling */
+@media (prefers-reduced-motion: reduce) {
+    .hp-ticker__track {
+        animation: none !important;
+    }
+}
+
 
 /* --------------------------------
    HOW IT WORKS
