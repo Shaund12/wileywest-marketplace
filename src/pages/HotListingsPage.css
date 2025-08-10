@@ -662,3 +662,30 @@
     background: linear-gradient(to bottom,var(--hot-primary),var(--hot-secondary));
     border-radius: 6px
 }
+
+/* Ensure collapsed sections only show first 6 cards even if JS hiccups */
+.collection-section[data-open="false"] .listings-grid.featured .listing-wrapper:nth-child(n+7) {
+    display: none;
+}
+
+/* Make toggle always clickable above card glows/overlays */
+.toggle-btn {
+    position: relative;
+    z-index: 3;
+    pointer-events: auto;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--hot-border);
+    background: rgba(255,255,255,0.06);
+    color: var(--hot-text);
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease;
+}
+
+    .toggle-btn:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.1);
+        border-color: rgba(255,255,255,0.2);
+    }
+

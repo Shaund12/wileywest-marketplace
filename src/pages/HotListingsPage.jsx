@@ -1,4 +1,5 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿// src/pages/HotListingsPage.jsx
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
@@ -97,14 +98,14 @@ export default function HotListingsPage() {
     const [pageLoading, setPageLoading] = useState(true);
     const [collectionsLoading, setCollectionsLoading] = useState(true);
 
-    // normalizedKey -> { name, symbol, type, address (original case), items[] }
+    // normalizedKey -> { name, symbol, type, address (original), items[] }
     const [grouped, setGrouped] = useState({});
     const [order, setOrder] = useState([]); // array of normalized keys
 
     // UI state
     const [search, setSearch] = useState('');
     const [sort, setSort] = useState('count'); // count | name | type
-    const [expanded, setExpanded] = useState(() => new Set()); // stores normalized keys
+    const [expanded, setExpanded] = useState({}); // { [normalizedKey]: true|false }
     const [page, setPage] = useState(1);
     const PAGE_SIZE = 6;
 
@@ -130,7 +131,7 @@ export default function HotListingsPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    /* Fetch collection details (memoized & cached). Uses ORIGINAL address for calls; cached by normalized key. */
+    /* Fetch collection details (memoized & cached) */
     const fetchCollectionDetails = useCallback(
         async (addrOriginal) => {
             if (!addrOriginal) return { name: 'Unknown', symbol: '', type: 'Unknown', address: '' };
@@ -145,25 +146,13 @@ export default function HotListingsPage() {
 
             try {
                 const c = new ethers.Contract(addrOriginal, COLLECTION_ABI, provider);
-                let is721 = false,
-                    is1155 = false;
-                try {
-                    is721 = await c.supportsInterface(IFACE_ERC721);
-                } catch { }
-                if (!is721) {
-                    try {
-                        is1155 = await c.supportsInterface(IFACE_ERC1155);
-                    } catch { }
-                }
+                let is721 = false, is1155 = false;
+                try { is721 = await c.supportsInterface(IFACE_ERC721); } catch { }
+                if (!is721) { try { is1155 = await c.supportsInterface(IFACE_ERC1155); } catch { } }
 
-                let name = '',
-                    symbol = '';
-                try {
-                    name = await c.name();
-                } catch { }
-                try {
-                    symbol = await c.symbol();
-                } catch { }
+                let name = '', symbol = '';
+                try { name = await c.name(); } catch { }
+                try { symbol = await c.symbol(); } catch { }
 
                 const d = {
                     name: name || `Collection ${short(addrOriginal)}`,
@@ -220,9 +209,7 @@ export default function HotListingsPage() {
                 if (alive) setCollectionsLoading(false);
             }
         })();
-        return () => {
-            alive = false;
-        };
+        return () => { alive = false; };
     }, [hotListings, fetchCollectionDetails]);
 
     /* Debounced search + sort + paginate */
@@ -233,11 +220,15 @@ export default function HotListingsPage() {
             const q = query.trim().toLowerCase();
             ord = ord.filter((k) => {
                 const c = grouped[k];
-                return c?.name?.toLowerCase().includes(q) || c?.symbol?.toLowerCase().includes(q) || c?.address?.toLowerCase().includes(q);
+                return (
+                    c?.name?.toLowerCase().includes(q) ||
+                    c?.symbol?.toLowerCase().includes(q) ||
+                    c?.address?.toLowerCase().includes(q)
+                );
             });
         }
         if (sort === 'name') {
-            ord.sort((a, b) => (grouped[a].name || '').localeCompare(grouped[b].name || ''));
+            ord.sort((a, b) => (grouped[a].name || '').localeCompare((grouped[b].name || '')));
         } else if (sort === 'type') {
             const rank = (t) => (t === 'ERC721' ? 0 : t === 'ERC1155' ? 1 : 2);
             ord.sort((a, b) => rank(grouped[a].type) - rank(grouped[b].type));
@@ -250,148 +241,129 @@ export default function HotListingsPage() {
     const totalPages = Math.max(1, Math.ceil(filteredOrder.length / PAGE_SIZE));
     const visibleOrder = filteredOrder.slice(0, page * PAGE_SIZE);
 
-    /* Lazy stats loader for a collection when expanded; keyed by normalized */
-    const loadStats = useCallback(
-        async (k) => {
-            if (!provider || !k) return;
-            setStats((s) => ({ ...s, [k]: { ...(s[k] || {}), loading: true } }));
-            try {
-                const items = grouped[k]?.items || [];
-                if (!items.length) {
-                    setStats((s) => ({ ...s, [k]: { loading: false, floorUSDC: 0, avgUSDC: 0, count: 0 } }));
-                    return;
-                }
-
-                // limit conversion for perf
-                const sample = items.slice(0, 20);
-                const values = await Promise.all(sample.map((it) => convertToUSDCValue(it.pricePerUnit, it.paymentToken, provider).catch(() => 0)));
-                const filtered = values.filter((v) => Number.isFinite(v) && v > 0);
-                const floor = filtered.length ? Math.min(...filtered) : 0;
-                const avg = filtered.length ? filtered.reduce((a, b) => a + b, 0) / filtered.length : 0;
-                setStats((s) => ({ ...s, [k]: { loading: false, floorUSDC: floor, avgUSDC: avg, count: items.length } }));
-            } catch {
-                setStats((s) => ({
-                    ...s,
-                    [k]: { loading: false, floorUSDC: 0, avgUSDC: 0, count: (grouped[k]?.items || []).length },
-                }));
+    /* Lazy stats loader (normalized key) */
+    const loadStats = useCallback(async (k) => {
+        if (!provider || !k) return;
+        setStats((s) => ({ ...s, [k]: { ...(s[k] || {}), loading: true } }));
+        try {
+            const items = grouped[k]?.items || [];
+            if (!items.length) {
+                setStats((s) => ({ ...s, [k]: { loading: false, floorUSDC: 0, avgUSDC: 0, count: 0 } }));
+                return;
             }
-        },
-        [provider, grouped]
-    );
+            const sample = items.slice(0, 20);
+            const values = await Promise.all(
+                sample.map((it) => convertToUSDCValue(it.pricePerUnit, it.paymentToken, provider).catch(() => 0))
+            );
+            const filtered = values.filter((v) => Number.isFinite(v) && v > 0);
+            const floor = filtered.length ? Math.min(...filtered) : 0;
+            const avg = filtered.length ? filtered.reduce((a, b) => a + b, 0) / filtered.length : 0;
+            setStats((s) => ({ ...s, [k]: { loading: false, floorUSDC: floor, avgUSDC: avg, count: items.length } }));
+        } catch {
+            setStats((s) => ({ ...s, [k]: { loading: false, floorUSDC: 0, avgUSDC: 0, count: (grouped[k]?.items || []).length } }));
+        }
+    }, [provider, grouped]);
 
-    const toggleExpand = useCallback(
-        (k) => {
-            setExpanded((prev) => {
-                const n = new Set(prev);
-                if (n.has(k)) {
-                    n.delete(k);
-                } else {
-                    n.add(k);
-                    if (!stats[k]) loadStats(k);
-                }
-                return n;
-            });
-        },
-        [stats, loadStats]
-    );
+    /* Expand/collapse (object map—robust) */
+    const toggleExpand = useCallback((k) => {
+        setExpanded((prev) => {
+            const next = { ...prev, [k]: !prev[k] };
+            // if opening now, kick off stats
+            if (!prev[k]) loadStats(k);
+            return next;
+        });
+    }, [loadStats]);
 
     /* ---------- Render helpers ---------- */
-    const renderCollection = useCallback(
-        (k) => {
-            const col = grouped[k];
-            if (!col) return null;
+    const renderCollection = useCallback((k) => {
+        const col = grouped[k];
+        if (!col) return null;
 
-            const open = expanded.has(k);
-            const items = open ? col.items : col.items.slice(0, 6);
-            const badge = col.symbol || 'Featured';
-            const st = stats[k];
+        const open = !!expanded[k];
+        const items = open ? col.items : col.items.slice(0, 6);
+        const badge = col.symbol || 'Featured';
+        const st = stats[k];
 
-            return (
-                <section key={k} className="collection-section">
-                    <header className="collection-header">
-                        <div className="collection-header-left">
-                            <h2 title={col.name}>{col.name}</h2>
-                            {col.symbol && <span className="collection-symbol">{col.symbol}</span>}
-                            {col.type !== 'Unknown' && <span className="collection-type">{col.type}</span>}
-                            <button
-                                className="copy-addr"
-                                onClick={() => navigator.clipboard?.writeText(col.address)}
-                                title="Copy contract address"
-                                type="button"
-                            >
-                                {short(col.address)}
-                            </button>
-                        </div>
-
-                        <div className="collection-right">
-                            <div className="collection-metrics">
-                                {st?.loading ? (
-                                    <div className="metric shimmer" />
-                                ) : (
-                                    <>
-                                        <div className="metric">
-                                            <span className="metric-label">Floor</span>
-                                            <span className="metric-value">${(st?.floorUSDC ?? 0).toFixed(2)}</span>
-                                        </div>
-                                        <div className="metric">
-                                            <span className="metric-label">Avg</span>
-                                            <span className="metric-value">${(st?.avgUSDC ?? 0).toFixed(2)}</span>
-                                        </div>
-                                        <div className="metric">
-                                            <span className="metric-label">Items</span>
-                                            <span className="metric-value">{st?.count ?? col.items.length}</span>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-
-                            <button
-                                className="toggle-btn"
-                                onClick={() => toggleExpand(k)}
-                                aria-expanded={open}
-                                aria-controls={`section-${k}`}
-                                type="button"
-                            >
-                                {open ? 'Collapse' : 'Expand'}
-                            </button>
-                        </div>
-                    </header>
-
-                    <div id={`section-${k}`} className="listings-grid featured">
-                        {items.map((listing, i) => (
-                            <div className="listing-wrapper" style={{ '--item-index': i }} key={listing?.id ?? `${k}-${listing?.tokenId}-${i}`}>
-                                <div className="hot-badge">
-                                    <span className="fire-emoji">🔥</span> {badge}
-                                </div>
-                                <ListingCard listing={listing} featured />
-                            </div>
-                        ))}
+        return (
+            <section key={k} className="collection-section" data-open={open ? 'true' : 'false'}>
+                <header className="collection-header">
+                    <div className="collection-header-left">
+                        <h2 title={col.name}>{col.name}</h2>
+                        {col.symbol && <span className="collection-symbol">{col.symbol}</span>}
+                        {col.type !== 'Unknown' && <span className="collection-type">{col.type}</span>}
+                        <button
+                            className="copy-addr"
+                            onClick={() => navigator.clipboard?.writeText(col.address)}
+                            title="Copy contract address"
+                            type="button"
+                        >
+                            {short(col.address)}
+                        </button>
                     </div>
 
-                    {!open && col.items.length > 6 && (
-                        <div className="collection-footer">
-                            <button className="hp-btn hp-btn--primary" onClick={() => toggleExpand(k)} type="button">
-                                Show more
-                            </button>
+                    <div className="collection-right">
+                        <div className="collection-metrics">
+                            {st?.loading ? (
+                                <div className="metric shimmer" />
+                            ) : (
+                                <>
+                                    <div className="metric">
+                                        <span className="metric-label">Floor</span>
+                                        <span className="metric-value">${(st?.floorUSDC ?? 0).toFixed(2)}</span>
+                                    </div>
+                                    <div className="metric">
+                                        <span className="metric-label">Avg</span>
+                                        <span className="metric-value">${(st?.avgUSDC ?? 0).toFixed(2)}</span>
+                                    </div>
+                                    <div className="metric">
+                                        <span className="metric-label">Items</span>
+                                        <span className="metric-value">{st?.count ?? col.items.length}</span>
+                                    </div>
+                                </>
+                            )}
                         </div>
-                    )}
-                </section>
-            );
-        },
-        [grouped, expanded, stats, toggleExpand]
-    );
+
+                        <button
+                            className="toggle-btn"
+                            onClick={() => toggleExpand(k)}
+                            aria-expanded={open}
+                            aria-controls={`section-${k}`}
+                            type="button"
+                        >
+                            {open ? 'Collapse' : 'Expand'}
+                        </button>
+                    </div>
+                </header>
+
+                <div id={`section-${k}`} className="listings-grid featured">
+                    {items.map((listing, i) => (
+                        <div className="listing-wrapper" style={{ '--item-index': i }} key={listing?.id ?? `${k}-${listing?.tokenId}-${i}`}>
+                            <div className="hot-badge">
+                                <span className="fire-emoji">🔥</span> {badge}
+                            </div>
+                            <ListingCard listing={listing} featured />
+                        </div>
+                    ))}
+                </div>
+
+                {!open && col.items.length > 6 && (
+                    <div className="collection-footer">
+                        <button className="hp-btn hp-btn--primary" onClick={() => toggleExpand(k)} type="button">
+                            Show more
+                        </button>
+                    </div>
+                )}
+            </section>
+        );
+    }, [grouped, expanded, stats, toggleExpand]);
 
     /* ---------- JSX ---------- */
-    const queryVal = useDebouncedValue(search, 150);
-
     return (
         <div className="hot-listings-container organized">
             <canvas ref={canvasRef} className="particles-bg" aria-hidden />
 
             <div className="page-header">
-                <h1>
-                    <span className="fire-emoji">🔥</span> Premium Listings
-                </h1>
+                <h1><span className="fire-emoji">🔥</span> Premium Listings</h1>
                 <p>Curated collections of exclusive digital assets from verified creators.</p>
 
                 <div className="toolbar">
@@ -400,37 +372,25 @@ export default function HotListingsPage() {
                             type="search"
                             placeholder="Search collections or contract addresses…"
                             value={search}
-                            onChange={(e) => {
-                                setSearch(e.target.value);
-                                setPage(1);
-                            }}
+                            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                             className="toolbar-search"
                             aria-label="Search collections"
                         />
                     </div>
                     <div className="toolbar-right">
-                        <label className="sr-only" htmlFor="sortSel">
-                            Sort
-                        </label>
+                        <label className="sr-only" htmlFor="sortSel">Sort</label>
                         <select
                             id="sortSel"
                             className="toolbar-sort"
                             value={sort}
-                            onChange={(e) => {
-                                setSort(e.target.value);
-                                setPage(1);
-                            }}
+                            onChange={(e) => { setSort(e.target.value); setPage(1); }}
                         >
                             <option value="count">Most items</option>
                             <option value="name">Name (A→Z)</option>
                             <option value="type">Type (ERC721/1155)</option>
                         </select>
-                        <button className="hp-btn" onClick={() => navigate('/marketplace')} type="button">
-                            Explore Marketplace
-                        </button>
-                        <button className="hp-btn hp-btn--primary" onClick={() => navigate('/sell')} type="button">
-                            List Your NFT
-                        </button>
+                        <button className="hp-btn" onClick={() => navigate('/marketplace')} type="button">Explore Marketplace</button>
+                        <button className="hp-btn hp-btn--primary" onClick={() => navigate('/sell')} type="button">List Your NFT</button>
                     </div>
                 </div>
             </div>
