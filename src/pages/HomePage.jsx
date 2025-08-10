@@ -318,7 +318,9 @@ function HomePage() {
                         <h2>Live Activity</h2>
                         <span className="hp-pulse">• live</span>
                     </div>
-                    <div className="hp-ticker">
+
+                    {/* force animation on */}
+                    <div className="hp-ticker" data-animate="true" style={{ '--hp-speed': '22s' }}>
                         <div className="hp-ticker__track">
                             {[...activity, ...activity].map((a, i) => (
                                 <div className="hp-ticker__item" key={`${a.id}-${i}`}>
@@ -337,6 +339,7 @@ function HomePage() {
                     </div>
                 </section>
             )}
+
 
             {/* HOW IT WORKS */}
             <section className="hp-how">

@@ -499,7 +499,7 @@
     }
 }
 /* --------------------------------
-   ACTIVITY TICKER (always animates)
+   ACTIVITY TICKER (fixed)
 ---------------------------------*/
 .hp-activity {
     max-width: 1200px;
@@ -512,7 +512,7 @@
     font-weight: 700;
 }
 
-/* viewport with padding + fade edges, track has NO padding */
+/* viewport with fade edges */
 .hp-ticker {
     position: relative;
     overflow: hidden;
@@ -526,18 +526,22 @@
 
 /* animated strip = intrinsic width of its children */
 .hp-ticker__track {
-    display: inline-flex; /* content defines width */
+    display: inline-flex;
+    width: max-content; /* ensure track width grows to children */
     gap: 1rem;
     white-space: nowrap;
     will-change: transform;
     transform: translate3d(0,0,0);
     animation: hp-marquee var(--hp-speed, 22s) linear infinite;
+    animation-play-state: running;
 }
 
-/* remove pause-on-hover so it actually moves */
-/* (intentionally no :hover rule here) */
+/* FORCE ON, even if some other CSS tries to disable it */
+.hp-ticker[data-animate="true"] .hp-ticker__track {
+    animation: hp-marquee var(--hp-speed, 22s) linear infinite !important;
+}
 
-/* smooth, seamless loop (list is duplicated in JSX) */
+/* seamless loop (array duplicated in JSX) */
 @keyframes hp-marquee {
     from {
         transform: translate3d(0, 0, 0);
@@ -548,7 +552,7 @@
     }
 }
 
-/* items must not shrink or widths will change mid-loop */
+/* items must not shrink */
 .hp-ticker__item {
     flex: 0 0 auto;
     min-width: 280px;
@@ -594,12 +598,13 @@
     }
 }
 
-/* If your OS has “reduce motion”, we’ll still animate but slower (no hard stop) */
+/* Reduced motion: slow it down (do NOT stop) */
 @media (prefers-reduced-motion: reduce) {
     .hp-ticker__track {
         --hp-speed: 40s;
     }
 }
+
 
 
 
