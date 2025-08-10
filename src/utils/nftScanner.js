@@ -1,5 +1,26 @@
 import { ethers } from 'ethers';
 
+// Add missing logging utility functions
+const criticalError = (message, error) => {
+    console.error(`❌ CRITICAL: ${message}`, error);
+};
+
+const debugLog = (message, data) => {
+    if (data) {
+        console.log(`🔍 DEBUG: ${message}`, data);
+    } else {
+        console.log(`🔍 DEBUG: ${message}`);
+    }
+};
+
+const debugWarn = (message, data) => {
+    if (data) {
+        console.warn(`⚠️ WARNING: ${message}`, data);
+    } else {
+        console.warn(`⚠️ WARNING: ${message}`);
+    }
+};
+
 // Add ERC20 ABI for detection
 const ERC20_ABI = [
     'function balanceOf(address owner) view returns (uint256)',
@@ -1294,7 +1315,7 @@ export class NFTScanner {
                     e.message.includes('call revert exception') ||
                     e.message.includes('Internal JSON-RPC error') ||
                     e.code === -32603 || e.code === -32000) {
-                    // Expected RPC errors - just skip this chunk
+                    // Expected RPC errors - skip this chunk
                     console.log(`RPC error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}, skipping...`);
                 } else {
                     console.warn(`Unexpected error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}:`, e.message);
