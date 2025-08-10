@@ -99,16 +99,7 @@ function HomePage() {
             }));
     }, [listings]);
 
-    // Categories
-    const categories = [
-        { id: 'art', label: '🎨 Art' },
-        { id: 'collectibles', label: '🧩 Collectibles' },
-        { id: 'photography', label: '📸 Photography' },
-        { id: 'music', label: '🎵 Music' },
-        { id: 'gaming', label: '🎮 Gaming' },
-        { id: 'sports', label: '🏅 Sports' },
-        { id: 'utility', label: '🛠️ Utility' },
-    ];
+    
 
     // ----- Stats (with resilient fallbacks) -----
     const totalListingsStat = coerceNumber(marketplaceStats?.totalListings);
@@ -284,22 +275,7 @@ function HomePage() {
                 </div>
             </section>
 
-            {/* QUICK CATEGORIES */}
-            <section className="hp-cats">
-                <h2>Browse by Category</h2>
-                <div className="hp-cats__grid">
-                    {categories.map((c) => (
-                        <Link
-                            key={c.id}
-                            to={`/marketplace?cat=${encodeURIComponent(c.id)}`}
-                            className="hp-cat"
-                        >
-                            <span className="hp-cat__icon">{c.label.split(' ')[0]}</span>
-                            <span className="hp-cat__label">{c.label.split(' ').slice(1).join(' ')}</span>
-                        </Link>
-                    ))}
-                </div>
-            </section>
+           
 
             {/* FEATURED */}
             <section className="hp-featured">

@@ -8,10 +8,37 @@
     --hp-accent: #00ff88;
     --hp-accent-2: #7a5cff;
     --hp-danger: #ff5c93;
+    --hp-focus: 0 0 0 3px rgba(0,255,136,0.35);
+    --hp-focus-2: 0 0 0 3px rgba(122,92,255,0.35);
     color: var(--hp-text);
 }
 
-/* HERO */
+/* Light theme opt-in (optional) */
+:root[data-theme="light"] .hp {
+    --hp-bg: #f6f7fb;
+    --hp-bg-soft: #ffffff;
+    --hp-border: rgba(0,0,0,0.1);
+    --hp-text: #0d1016;
+    --hp-muted: #4a516b;
+    --hp-focus: 0 0 0 3px rgba(0,0,0,0.18);
+}
+
+/* Utility: screen reader only */
+.hp .sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 1px, 1px) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* --------------------------------
+   HERO
+---------------------------------*/
 .hp-hero {
     position: relative;
     padding: 5rem 1.25rem 3rem;
@@ -85,13 +112,18 @@
     text-decoration: none;
     display: inline-flex;
     align-items: center;
-    transition: transform .15s ease, background .15s ease, border-color .15s ease;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
 }
 
     .hp-btn:hover {
         transform: translateY(-1px);
         background: rgba(255,255,255,0.06);
         border-color: rgba(255,255,255,0.2);
+    }
+
+    .hp-btn:focus-visible {
+        outline: none;
+        box-shadow: var(--hp-focus);
     }
 
 .hp-btn--primary {
@@ -104,11 +136,24 @@
     background: transparent;
 }
 
+/* Mini stats */
 .hp-mini {
     margin-top: .75rem;
     display: grid;
     gap: .6rem;
     grid-template-columns: repeat(4, minmax(0,1fr));
+}
+
+@media (max-width: 900px) {
+    .hp-mini {
+        grid-template-columns: repeat(2, minmax(0,1fr));
+    }
+}
+
+@media (max-width: 520px) {
+    .hp-mini {
+        grid-template-columns: 1fr;
+    }
 }
 
 .hp-mini__card {
@@ -122,12 +167,78 @@
     color: var(--hp-muted);
     font-size: .8rem;
     margin-bottom: .2rem;
+    display: flex;
+    align-items: center;
+    gap: .4rem;
 }
 
 .hp-mini__value {
     font-weight: 800;
     font-size: 1.1rem;
 }
+
+/* Floor: badge + refresh */
+.hp-mini__card--floor .hp-mini__label {
+    justify-content: space-between;
+}
+
+.hp-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    padding: .15rem .45rem;
+    border-radius: 999px;
+    font-size: .7rem;
+    font-weight: 800;
+    letter-spacing: .02em;
+    border: 1px solid var(--hp-border);
+    background: rgba(255,255,255,0.06);
+    color: var(--hp-text);
+    transform: translateY(-1px);
+}
+
+.hp-badge--stat {
+    background: rgba(122,92,255,0.14);
+    border-color: rgba(122,92,255,0.35);
+    color: #cabdff;
+}
+
+.hp-badge--live {
+    background: rgba(0,255,136,0.12);
+    border-color: rgba(0,255,136,0.35);
+    color: #b6ffe2;
+}
+
+.hp-mini__refresh {
+    appearance: none;
+    border: 1px solid var(--hp-border);
+    background: rgba(255,255,255,0.04);
+    color: var(--hp-text);
+    border-radius: 999px;
+    width: 26px;
+    height: 26px;
+    display: inline-grid;
+    place-items: center;
+    font-size: .9rem;
+    cursor: pointer;
+    margin-left: auto;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+
+    .hp-mini__refresh:hover {
+        transform: rotate(12deg);
+        background: rgba(255,255,255,0.08);
+        border-color: rgba(255,255,255,0.2);
+    }
+
+    .hp-mini__refresh:active {
+        transform: rotate(360deg) scale(0.96);
+    }
+
+    .hp-mini__refresh:focus-visible {
+        outline: none;
+        box-shadow: var(--hp-focus-2);
+    }
 
 .hp-status {
     margin-top: .9rem;
@@ -141,7 +252,9 @@
     background: linear-gradient(90deg, var(--hp-accent), var(--hp-accent-2));
 }
 
-/* CATEGORIES */
+/* --------------------------------
+   CATEGORIES
+---------------------------------*/
 .hp-cats {
     max-width: 1200px;
     margin: 2.2rem auto 1rem;
@@ -181,13 +294,18 @@
     gap: .6rem;
     text-decoration: none;
     color: var(--hp-text);
-    transition: transform .15s ease, border-color .15s ease, background .15s ease;
+    transition: transform .15s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease;
 }
 
     .hp-cat:hover {
         transform: translateY(-2px);
         border-color: rgba(255,255,255,0.2);
         background: rgba(255,255,255,0.06);
+    }
+
+    .hp-cat:focus-visible {
+        outline: none;
+        box-shadow: var(--hp-focus);
     }
 
 .hp-cat__icon {
@@ -198,7 +316,9 @@
     font-weight: 700;
 }
 
-/* FEATURED */
+/* --------------------------------
+   FEATURED
+---------------------------------*/
 .hp-featured {
     max-width: 1200px;
     margin: 2rem auto;
@@ -216,10 +336,13 @@
 .hp-link {
     color: var(--hp-muted);
     text-decoration: none;
+    transition: color .15s ease;
 }
 
-    .hp-link:hover {
+    .hp-link:hover,
+    .hp-link:focus-visible {
         color: var(--hp-text);
+        outline: none;
     }
 
 .hp-featured-grid {
@@ -240,7 +363,9 @@
     }
 }
 
-/* LATEST */
+/* --------------------------------
+   LATEST
+---------------------------------*/
 .hp-latest {
     max-width: 1200px;
     margin: 2rem auto;
@@ -271,7 +396,9 @@
     }
 }
 
-/* ACTIVITY TICKER */
+/* --------------------------------
+   ACTIVITY TICKER
+---------------------------------*/
 .hp-activity {
     max-width: 1200px;
     margin: 2rem auto;
@@ -295,6 +422,11 @@
     gap: 1rem;
     padding: .75rem;
     animation: hp-marquee 22s linear infinite;
+    will-change: transform;
+}
+
+.hp-ticker:hover .hp-ticker__track {
+    animation-play-state: paused;
 }
 
 @keyframes hp-marquee {
@@ -343,7 +475,9 @@
     color: var(--hp-muted);
 }
 
-/* HOW IT WORKS */
+/* --------------------------------
+   HOW IT WORKS
+---------------------------------*/
 .hp-how {
     max-width: 1200px;
     margin: 2.2rem auto;
@@ -394,7 +528,9 @@
     color: var(--hp-muted);
 }
 
-/* CTA */
+/* --------------------------------
+   CTA
+---------------------------------*/
 .hp-cta {
     max-width: 1200px;
     margin: 2.2rem auto 2.8rem;
@@ -413,4 +549,21 @@
     gap: .6rem;
     margin-top: .6rem;
     flex-wrap: wrap;
+}
+
+/* --------------------------------
+   Reduced Motion & A11y
+---------------------------------*/
+@media (prefers-reduced-motion: reduce) {
+    .hp-ticker__track {
+        animation: none !important;
+    }
+
+    .hp-mini__refresh {
+        transition: none !important;
+    }
+
+    .hp-btn, .hp-cat {
+        transition: none !important;
+    }
 }
