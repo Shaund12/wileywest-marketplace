@@ -1,6 +1,7 @@
 // HomePage.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { convertToUSDCValue } from '../utils/tokenUtils';
@@ -62,6 +63,74 @@ const coerceNumber = (val) => {
 };
 
 /* -------------------------------
+   Collection name resolver
+-------------------------------- */
+const ERC721_METADATA_ABI = [
+    'function name() view returns (string)',
+    'function symbol() view returns (string)'
+];
+
+/**
+ * Resolve human-readable collection names for a set of contract addresses.
+ * Caches results in component state to avoid repeat RPCs.
+ */
+function useCollectionNames(addresses = [], provider) {
+    const [names, setNames] = useState({}); // { [lowerAddr]: 'Cool Cats' }
+
+    useEffect(() => {
+        let cancelled = false;
+        if (!provider) return;
+
+        const unique = Array.from(
+            new Set(
+                (addresses || [])
+                    .filter(Boolean)
+                    .map((a) => a.toLowerCase())
+            )
+        );
+
+        // Only fetch missing
+        const missing = unique.filter((a) => !names[a]);
+        if (missing.length === 0) return;
+
+        (async () => {
+            const entries = await Promise.all(missing.map(async (addr) => {
+                try {
+                    const c = new ethers.Contract(addr, ERC721_METADATA_ABI, provider);
+                    let label = '';
+                    try {
+                        label = await c.name();
+                    } catch {
+                        // some contracts only expose symbol
+                        try { label = await c.symbol(); } catch { /* ignore */ }
+                    }
+                    label = (label && String(label).trim()) || null;
+                    return [addr, label];
+                } catch {
+                    return [addr, null];
+                }
+            }));
+
+            if (!cancelled) {
+                setNames((prev) => {
+                    const next = { ...prev };
+                    for (const [addr, label] of entries) {
+                        if (!next[addr]) next[addr] = label || null;
+                    }
+                    return next;
+                });
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [addresses, provider, names]);
+
+    return names;
+}
+
+const shortAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
+
+/* -------------------------------
    HomePage
 -------------------------------- */
 function HomePage() {
@@ -99,7 +168,37 @@ function HomePage() {
             }));
     }, [listings]);
 
-    
+    /* ---------- Trending collections (by listing count) ---------- */
+    const trendingCollections = useMemo(() => {
+        const map = new Map();
+        for (const l of listings || []) {
+            const addr = (l?.nftContract || '').toLowerCase();
+            if (!addr) continue;
+            const entry = map.get(addr) || { address: addr, count: 0, sample: null };
+            entry.count += 1;
+            if (!entry.sample && (l.image || l.imageUrl || l.metadata?.image || l.metadata?.image_url)) {
+                entry.sample = l;
+            }
+            map.set(addr, entry);
+        }
+        return Array.from(map.values())
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 6);
+    }, [listings]);
+
+    // Addresses we need names for (trending + activity)
+    const addressesNeedingNames = useMemo(() => {
+        const s = new Set();
+        for (const t of trendingCollections) s.add(t.address);
+        for (const a of activity) if (a.nftContract) s.add(a.nftContract.toLowerCase());
+        return Array.from(s);
+    }, [trendingCollections, activity]);
+
+    const nameMap = useCollectionNames(addressesNeedingNames, provider);
+    const labelFor = (addr) => {
+        const key = (addr || '').toLowerCase();
+        return nameMap[key] || shortAddr(addr);
+    };
 
     // ----- Stats (with resilient fallbacks) -----
     const totalListingsStat = coerceNumber(marketplaceStats?.totalListings);
@@ -275,8 +374,6 @@ function HomePage() {
                 </div>
             </section>
 
-           
-
             {/* FEATURED */}
             <section className="hp-featured">
                 <div className="hp-section__head">
@@ -284,6 +381,47 @@ function HomePage() {
                     <Link to="/hot-listings" className="hp-link">View all →</Link>
                 </div>
                 {renderFeaturedListings()}
+            </section>
+
+            {/* TRENDING COLLECTIONS */}
+            <section className="hp-trending">
+                <div className="hp-section__head">
+                    <h2>Trending Collections</h2>
+                    <Link to="/collections" className="hp-link">View all →</Link>
+                </div>
+                {!isInitialized ? (
+                    <LoadingSkeleton type="card" count={6} className="grid" />
+                ) : trendingCollections.length === 0 ? (
+                    <EmptyState
+                        icon="🔥"
+                        title="No trending collections yet"
+                        description="As listings pick up, you’ll see hot collections here."
+                        actionText="Explore Marketplace"
+                        onAction={() => (window.location.href = '/marketplace')}
+                    />
+                ) : (
+                    <div className="hp-trending__grid">
+                        {trendingCollections.map((t) => {
+                            const img =
+                                t.sample?.image ||
+                                t.sample?.imageUrl ||
+                                t.sample?.metadata?.image ||
+                                t.sample?.metadata?.image_url ||
+                                '';
+                            return (
+                                <Link to={`/collection/${t.address}`} className="hp-trend" key={t.address}>
+                                    <div className="hp-trend__img" style={{ backgroundImage: `url(${img})` }} />
+                                    <div className="hp-trend__info">
+                                        <strong className="hp-trend__name">{labelFor(t.address)}</strong>
+                                        <span className="hp-trend__meta">
+                                            {t.count} listing{t.count === 1 ? '' : 's'}
+                                        </span>
+                                    </div>
+                                </Link>
+                            );
+                        })}
+                    </div>
+                )}
             </section>
 
             {/* LATEST LISTINGS */}
@@ -330,7 +468,7 @@ function HomePage() {
                                         <span> #{String(a.tokenId)}</span>
                                         <span className="hp-dot">•</span>
                                         <span className="hp-mono">
-                                            {a.nftContract?.slice(0, 6)}…{a.nftContract?.slice(-4)}
+                                            {labelFor(a.nftContract)}
                                         </span>
                                     </div>
                                 </div>
@@ -339,7 +477,6 @@ function HomePage() {
                     </div>
                 </section>
             )}
-
 
             {/* HOW IT WORKS */}
             <section className="hp-how">
