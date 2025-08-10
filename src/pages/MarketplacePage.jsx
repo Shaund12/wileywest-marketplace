@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import { useSupabase } from '../context/SupabaseContext';
 import ListingCard from '../components/ListingCard';
 import MarketplaceStats from '../components/MarketplaceStats';
 import EmptyState from '../components/EmptyState';
@@ -35,7 +36,6 @@ const IPNS_GATEWAYS = [
 ];
 
 const smartImageCache = new Map(); // key -> working URL
-
 const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
 
 function hashString(str) {
@@ -82,21 +82,18 @@ function expandToCandidateUrls(raw) {
     if (!url) return [];
     if (url.startsWith('data:')) return [url];
 
-    // Arweave
     if (url.startsWith('ar://')) return [`https://arweave.net/${url.slice(5)}`];
     if (/^https?:\/\/arweave\.net\//i.test(url)) return [url];
 
-    // ipfs:// and ipns://
     if (url.startsWith('ipfs://')) {
         let rest = url.slice(7).replace(/^ipfs\//i, '');
-        return IPFS_GATEWAYS.map(g => g + rest);
+        return IPFS_GATEWAYS.map((g) => g + rest);
     }
     if (url.startsWith('ipns://')) {
         let rest = url.slice(7).replace(/^ipns\//i, '');
-        return IPNS_GATEWAYS.map(g => g + rest);
+        return IPNS_GATEWAYS.map((g) => g + rest);
     }
 
-    // http(s) with /ipfs/ or /ipns/
     try {
         const u = new URL(url);
         const parts = u.pathname.split('/').filter(Boolean);
@@ -104,24 +101,24 @@ function expandToCandidateUrls(raw) {
         const ipnsIdx = parts.indexOf('ipns');
         if (ipfsIdx !== -1 && parts[ipfsIdx + 1]) {
             const rest = parts.slice(ipfsIdx + 1).join('/');
-            return IPFS_GATEWAYS.map(g => g + rest);
+            return IPFS_GATEWAYS.map((g) => g + rest);
         }
         if (ipnsIdx !== -1 && parts[ipnsIdx + 1]) {
             const rest = parts.slice(ipnsIdx + 1).join('/');
-            return IPNS_GATEWAYS.map(g => g + rest);
+            return IPNS_GATEWAYS.map((g) => g + rest);
         }
         return [url];
     } catch {
-        // If it looks like a bare CID, spray gateways
         if (/^[a-z0-9]+$/i.test(url)) {
-            return IPFS_GATEWAYS.map(g => g + url);
+            return IPFS_GATEWAYS.map((g) => g + url);
         }
         return [url];
     }
 }
 
 function uniq(arr) {
-    const s = new Set(); const out = [];
+    const s = new Set();
+    const out = [];
     for (const x of arr) if (!s.has(x)) { s.add(x); out.push(x); }
     return out;
 }
@@ -179,19 +176,21 @@ function SmartImage({
             return;
         }
 
-        findFirstWorkingImage(candidates).then(u => {
-            if (cancelled) return;
-            smartImageCache.set(key, u);
-            setUrl(u);
-            setFailed(false);
-        }).catch(() => {
-            if (cancelled) return;
-            setUrl(null);
-            setFailed(true);
-        });
+        findFirstWorkingImage(candidates)
+            .then((u) => {
+                if (cancelled) return;
+                smartImageCache.set(key, u);
+                setUrl(u);
+                setFailed(false);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setUrl(null);
+                setFailed(true);
+            });
 
         return () => { cancelled = true; };
-    }, [src, JSON.stringify(srcList)]); // srcList can be dynamic
+    }, [src, JSON.stringify(srcList)]);
 
     const finalSrc = failed || !url
         ? svgFallbackDataUrl({ seed, width, height, title })
@@ -263,7 +262,10 @@ function MarketplacePage() {
         marketplaceStats,
         canceledListings
     } = useMarketplace();
+
     const { wallet, connect, provider } = useWallet();
+    const { cacheListings, isConnected } = useSupabase();
+
     const [searchTerm, setSearchTerm] = useState('');
     const [filteredListings, setFilteredListings] = useState([]);
     const [viewMode, setViewMode] = useState('grid');
@@ -295,6 +297,7 @@ function MarketplacePage() {
     const [itemsPerPage] = useState(12);
     const topRef = useRef(null);
     const hasLoadedRef = useRef(false);
+    const cacheSigRef = useRef('');
 
     // Categories for filtering
     const categories = [
@@ -304,7 +307,7 @@ function MarketplacePage() {
         { id: 'sports', name: 'Sports' },
         { id: 'utility', name: 'Utility' },
         { id: 'music', name: 'Music' },
-        { id: 'gaming', name: 'Gaming' },
+        { id: 'gaming', name: 'Gaming' }
     ];
 
     // Load listings and process data
@@ -316,8 +319,8 @@ function MarketplacePage() {
                     await fetchListings();
                     hasLoadedRef.current = true;
                 } catch (error) {
-                    console.error("[Marketplace] Error fetching listings:", error);
-                    setStatus("Error loading marketplace data");
+                    console.error('[Marketplace] Error fetching listings:', error);
+                    setStatus('Error loading marketplace data');
                 } finally {
                     setIsLoading(false);
                 }
@@ -325,18 +328,54 @@ function MarketplacePage() {
         }
         loadData();
 
+        // optional manual refresh
+        // @ts-ignore
         window.refreshMarketplace = async () => {
             try {
                 setIsLoading(true);
                 await fetchListings();
             } catch (error) {
-                console.error("[Marketplace] Refresh error:", error);
+                console.error('[Marketplace] Refresh error:', error);
             } finally {
                 setIsLoading(false);
             }
         };
         return () => { delete window.refreshMarketplace; };
     }, [isInitialized, fetchListings, setStatus]);
+
+    // Persist NEW/UPDATED listings to Supabase whenever listings state changes
+    useEffect(() => {
+        if (!isConnected) return;
+        if (!Array.isArray(listings) || listings.length === 0) return;
+
+        const active = listings.filter(
+            (l) => l.active && !(canceledListings?.has?.(String(l.id)))
+        );
+        if (active.length === 0) return;
+
+        // lightweight content signature to avoid redundant upserts
+        const sig = JSON.stringify(
+            active.map((l) => [
+                String(l.id),
+                String(l.pricePerUnit ?? ''),
+                String(l.paymentToken ?? ''),
+                String(l.quantity ?? ''),
+                String(l.active ?? '')
+            ])
+        );
+        if (sig === cacheSigRef.current) return;
+        cacheSigRef.current = sig;
+
+        const t = setTimeout(() => {
+            try {
+                cacheListings(active, canceledListings || new Set());
+            } catch (e) {
+                console.warn('Cache listings error:', e);
+            }
+        }, 300);
+
+        return () => clearTimeout(t);
+    }, [isConnected, listings, canceledListings, cacheListings]);
 
     // Process listings and extract metadata with enhanced volume tracking
     useEffect(() => {
@@ -349,8 +388,8 @@ function MarketplacePage() {
                     const pricePromises = [];
                     let hasAnyUSDCRates = false;
 
-                    const activeListings = listings.filter(listing =>
-                        listing.active && !canceledListings.has(listing.id?.toString())
+                    const activeListings = listings.filter(
+                        (listing) => listing.active && !canceledListings.has(listing.id?.toString())
                     );
 
                     for (const listing of activeListings) {
@@ -358,7 +397,11 @@ function MarketplacePage() {
                         if (!collectionMap[collectionAddress]) {
                             let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
                             let collectionDescription = '';
-                            let collectionImage = listing.image || listing.imageUrl || listing.metadata?.image || listing.metadata?.image_url;
+                            let collectionImage =
+                                listing.image ||
+                                listing.imageUrl ||
+                                listing.metadata?.image ||
+                                listing.metadata?.image_url;
                             let collectionWebsite = '';
 
                             if (listing.collectionName && listing.collectionName.trim() !== '' &&
@@ -399,7 +442,7 @@ function MarketplacePage() {
 
                         pricePromises.push(
                             convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider)
-                                .then(usdcPrice => {
+                                .then((usdcPrice) => {
                                     hasAnyUSDCRates = true;
                                     return { listing, usdcPrice, hasRate: true };
                                 })
@@ -425,7 +468,7 @@ function MarketplacePage() {
                         }
                     });
 
-                    Object.values(collectionMap).forEach(collection => {
+                    Object.values(collectionMap).forEach((collection) => {
                         if (collection.items.length > 0) {
                             collection.avgPrice = collection.totalVolume / collection.items.length;
                             if (collection.floorPrice === Infinity) {
@@ -456,19 +499,22 @@ function MarketplacePage() {
                     if (hotListings && hotListings.length > 0) {
                         setFeaturedNFT(hotListings[0]);
                     } else if (activeListings.length > 0) {
-                        const highest = priceResults.reduce((max, cur) => cur.usdcPrice > max.usdcPrice ? cur : max, { usdcPrice: 0, listing: activeListings[0] });
+                        const highest = priceResults.reduce(
+                            (max, cur) => (cur.usdcPrice > max.usdcPrice ? cur : max),
+                            { usdcPrice: 0, listing: activeListings[0] }
+                        );
                         setFeaturedNFT(highest.listing);
                     }
                 } catch (error) {
                     console.error('Error processing listings with enhanced stats:', error);
-                    const activeListings = listings.filter(listing =>
-                        listing.active && !canceledListings.has(listing.id?.toString())
+                    const activeListings = listings.filter(
+                        (listing) => listing.active && !canceledListings.has(listing.id?.toString())
                     );
                     const collectionMap = {};
                     let totalVolume = 0;
                     let lowestPrice = Infinity;
 
-                    activeListings.forEach(listing => {
+                    activeListings.forEach((listing) => {
                         const collectionAddress = listing.nftContract;
                         if (!collectionMap[collectionAddress]) {
                             let collectionName = `Collection ${collectionAddress.slice(0, 8)}...${collectionAddress.slice(-6)}`;
@@ -563,9 +609,9 @@ function MarketplacePage() {
                 );
                 setFeaturedNFTPriceDisplay(priceInfo);
             } catch (error) {
-                const tokenSymbol = featuredNFT.paymentToken ?
-                    (featuredNFT.paymentToken === ethers.ZeroAddress ? 'VTRU' : 'TOKEN') :
-                    'VTRU';
+                const tokenSymbol = featuredNFT.paymentToken
+                    ? (featuredNFT.paymentToken === ethers.ZeroAddress ? 'VTRU' : 'TOKEN')
+                    : 'VTRU';
                 const tokenAmount = formatPrice(featuredNFT.pricePerUnit);
                 setFeaturedNFTPriceDisplay({
                     tokenAmount,
@@ -586,49 +632,56 @@ function MarketplacePage() {
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
             result = result.filter(
-                item =>
-                    (item.name?.toLowerCase().includes(term)) ||
-                    (item.metadata?.name?.toLowerCase().includes(term)) ||
-                    (item.metadata?.description?.toLowerCase().includes(term)) ||
+                (item) =>
+                    item.name?.toLowerCase().includes(term) ||
+                    item.metadata?.name?.toLowerCase().includes(term) ||
+                    item.metadata?.description?.toLowerCase().includes(term) ||
                     item.tokenId.toString().includes(term)
             );
         }
 
         if (selectedCategories.length > 0) {
-            result = result.filter(item => {
-                const category = item.metadata?.properties?.category ||
-                    item.metadata?.attributes?.find(attr => attr.trait_type === 'Category')?.value;
+            result = result.filter((item) => {
+                const category =
+                    item.metadata?.properties?.category ||
+                    item.metadata?.attributes?.find((attr) => attr.trait_type === 'Category')?.value;
                 return category && selectedCategories.includes(String(category).toLowerCase());
             });
         }
 
         if (selectedCollections.length > 0) {
-            result = result.filter(item =>
+            result = result.filter((item) =>
                 selectedCollections.includes(item.nftContract.toLowerCase())
             );
         }
 
         if (priceRange.min !== '') {
             const minWei = ethers.parseEther(priceRange.min.toString());
-            result = result.filter(item => ethers.getBigInt(item.pricePerUnit) >= minWei);
+            result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) >= minWei);
         }
         if (priceRange.max !== '') {
             const maxWei = ethers.parseEther(priceRange.max.toString());
-            result = result.filter(item => ethers.getBigInt(item.pricePerUnit) <= maxWei);
+            result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) <= maxWei);
         }
 
         switch (sortMethod) {
             case 'price_low_to_high':
-                result.sort((a, b) => Number(ethers.getBigInt(a.pricePerUnit) - ethers.getBigInt(b.pricePerUnit)));
+                result.sort((a, b) =>
+                    Number(ethers.getBigInt(a.pricePerUnit) - ethers.getBigInt(b.pricePerUnit))
+                );
                 break;
             case 'price_high_to_low':
-                result.sort((a, b) => Number(ethers.getBigInt(b.pricePerUnit) - ethers.getBigInt(a.pricePerUnit)));
+                result.sort((a, b) =>
+                    Number(ethers.getBigInt(b.pricePerUnit) - ethers.getBigInt(a.pricePerUnit))
+                );
                 break;
             case 'newest':
                 result.sort((a, b) => b.id - a.id);
                 break;
             case 'oldest':
                 result.sort((a, b) => a.id - b.id);
+                break;
+            default:
                 break;
         }
 
@@ -647,21 +700,24 @@ function MarketplacePage() {
 
     const toggleCategory = (categoryId) => {
         if (selectedCategories.includes(categoryId)) {
-            setSelectedCategories(selectedCategories.filter(cat => cat !== categoryId));
+            setSelectedCategories(selectedCategories.filter((cat) => cat !== categoryId));
         } else {
             setSelectedCategories([...selectedCategories, categoryId]);
         }
     };
     const toggleCollection = (collectionAddress) => {
         if (selectedCollections.includes(collectionAddress)) {
-            setSelectedCollections(selectedCollections.filter(col => col !== collectionAddress));
+            setSelectedCollections(selectedCollections.filter((col) => col !== collectionAddress));
         } else {
             setSelectedCollections([...selectedCollections, collectionAddress]);
         }
     };
     const formatPrice = (priceInWei) => {
-        try { return parseFloat(ethers.formatEther(priceInWei)).toFixed(4); }
-        catch { return '0'; }
+        try {
+            return parseFloat(ethers.formatEther(priceInWei)).toFixed(4);
+        } catch {
+            return '0';
+        }
     };
 
     return (
@@ -1025,7 +1081,7 @@ function MarketplacePage() {
                             <div className="filter-group">
                                 <h3>Categories</h3>
                                 <div className="filter-options">
-                                    {categories.map(category => (
+                                    {categories.map((category) => (
                                         <label key={category.id} className="filter-option">
                                             <input
                                                 type="checkbox"
@@ -1041,7 +1097,7 @@ function MarketplacePage() {
                             <div className="filter-group">
                                 <h3>Collections</h3>
                                 <div className="filter-options scrollable">
-                                    {collections.slice(0, 10).map(collection => (
+                                    {collections.slice(0, 10).map((collection) => (
                                         <label key={collection.address} className="filter-option collection-filter">
                                             <input
                                                 type="checkbox"
@@ -1082,7 +1138,7 @@ function MarketplacePage() {
                                         type="number"
                                         placeholder="Min"
                                         value={priceRange.min}
-                                        onChange={e => setPriceRange({ ...priceRange, min: e.target.value })}
+                                        onChange={(e) => setPriceRange({ ...priceRange, min: e.target.value })}
                                         min="0"
                                         step="0.001"
                                     />
@@ -1091,7 +1147,7 @@ function MarketplacePage() {
                                         type="number"
                                         placeholder="Max"
                                         value={priceRange.max}
-                                        onChange={e => setPriceRange({ ...priceRange, max: e.target.value })}
+                                        onChange={(e) => setPriceRange({ ...priceRange, max: e.target.value })}
                                         min="0"
                                         step="0.001"
                                     />
@@ -1121,57 +1177,31 @@ function MarketplacePage() {
                                 className="loading"
                             />
                         ) : isLoading ? (
-                            <LoadingSkeleton
-                                type="card"
-                                count={6}
-                                className="grid"
-                            />
+                            <LoadingSkeleton type="card" count={6} className="grid" />
                         ) : currentItems.length > 0 ? (
                             <>
                                 <div className={`listings-${viewMode}`}>
-                                    {currentItems.map(listing => (
-                                        <ListingCard
-                                            key={listing.id}
-                                            listing={listing}
-                                            viewMode={viewMode}
-                                        />
+                                    {currentItems.map((listing) => (
+                                        <ListingCard key={listing.id} listing={listing} viewMode={viewMode} />
                                     ))}
                                 </div>
 
                                 {/* Pagination */}
                                 {totalPages > 1 && (
                                     <div className="pagination">
-                                        <button
-                                            onClick={() => paginate(1)}
-                                            disabled={currentPage === 1}
-                                            className="pagination-button"
-                                        >
+                                        <button onClick={() => paginate(1)} disabled={currentPage === 1} className="pagination-button">
                                             First
                                         </button>
-                                        <button
-                                            onClick={() => paginate(currentPage - 1)}
-                                            disabled={currentPage === 1}
-                                            className="pagination-button"
-                                        >
+                                        <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="pagination-button">
                                             Previous
                                         </button>
 
-                                        <div className="pagination-info">
-                                            Page {currentPage} of {totalPages}
-                                        </div>
+                                        <div className="pagination-info">Page {currentPage} of {totalPages}</div>
 
-                                        <button
-                                            onClick={() => paginate(currentPage + 1)}
-                                            disabled={currentPage === totalPages}
-                                            className="pagination-button"
-                                        >
+                                        <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="pagination-button">
                                             Next
                                         </button>
-                                        <button
-                                            onClick={() => paginate(totalPages)}
-                                            disabled={currentPage === totalPages}
-                                            className="pagination-button"
-                                        >
+                                        <button onClick={() => paginate(totalPages)} disabled={currentPage === totalPages} className="pagination-button">
                                             Last
                                         </button>
                                     </div>
@@ -1179,14 +1209,24 @@ function MarketplacePage() {
                             </>
                         ) : (
                             <EmptyState
-                                icon={searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                    priceRange.min !== '' || priceRange.max !== '' ? "🔍" : "🛍️"}
-                                title={searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                    priceRange.min !== '' || priceRange.max !== '' ? "No Results Found" : "No NFTs Available"}
-                                description={searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                    priceRange.min !== '' || priceRange.max !== '' ?
-                                    "Try adjusting your filters or search criteria to find what you're looking for." :
-                                    "There are currently no active listings in the marketplace. Check back soon or be the first to list your NFT!"}
+                                icon={
+                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                        ? '🔍'
+                                        : '🛍️'
+                                }
+                                title={
+                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                        ? 'No Results Found'
+                                        : 'No NFTs Available'
+                                }
+                                description={
+                                    searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                        ? "Try adjusting your filters or search criteria to find what you're looking for."
+                                        : 'There are currently no active listings in the marketplace. Check back soon or be the first to list your NFT!'
+                                }
                                 actionText="Refresh Marketplace"
                                 onAction={() => {
                                     setSearchTerm('');
@@ -1195,11 +1235,17 @@ function MarketplacePage() {
                                     setPriceRange({ min: '', max: '' });
                                     fetchListings();
                                 }}
-                                secondaryActionText={!(searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                    priceRange.min !== '' || priceRange.max !== '') ? "List Your NFT" : "Clear Filters"}
+                                secondaryActionText={
+                                    !(
+                                        searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                    ) ? 'List Your NFT' : 'Clear Filters'
+                                }
                                 onSecondaryAction={() => {
-                                    if (searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
-                                        priceRange.min !== '' || priceRange.max !== '') {
+                                    if (
+                                        searchTerm || selectedCategories.length > 0 || selectedCollections.length > 0 ||
+                                        priceRange.min !== '' || priceRange.max !== ''
+                                    ) {
                                         setSearchTerm('');
                                         setSelectedCategories([]);
                                         setSelectedCollections([]);
@@ -1233,8 +1279,7 @@ function MarketplacePage() {
                     </div>
                 </div>
                 <div className="cta-image">
-                    {/* Put blockdust-logo.png in /public root */}
-                    <img src="src//blockdust-logo.png" alt="BlockDust NFT Marketplace" />
+                    <img src="src/assets/blockdust-logo.png" alt="BlockDust NFT Marketplace" />
                 </div>
             </section>
         </div>

@@ -1,21 +1,14 @@
-import React, {
-    createContext,
-    useContext,
-    useEffect,
-    useState,
-    useRef,
-    useCallback
-} from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 const SupabaseContext = createContext();
 
 // Cache configuration
 const CACHE_CONFIG = {
-    LISTINGS_TTL: 5 * 60 * 1000,  // 5 minutes for listings
-    PROFILE_TTL: 10 * 60 * 1000,  // 10 minutes for profile data
-    SALES_TTL: 60 * 60 * 1000,  // 1 hour for sales history
-    MAX_CACHE_SIZE: 1000          // Maximum number of cached items
+    LISTINGS_TTL: 5 * 60 * 1000, // 5 minutes for listings
+    PROFILE_TTL: 10 * 60 * 1000, // 10 minutes for profile data
+    SALES_TTL: 60 * 60 * 1000,   // 1 hour for sales history
+    MAX_CACHE_SIZE: 1000,        // Maximum number of cached items
 };
 
 export function SupabaseProvider({ children }) {
@@ -28,7 +21,7 @@ export function SupabaseProvider({ children }) {
         errors: 0
     });
 
-    // In-memory cache for fast reads
+    // In-memory cache for frequently accessed data
     const cache = useRef(new Map());
     const subscriptions = useRef(new Map());
 
@@ -51,6 +44,10 @@ export function SupabaseProvider({ children }) {
                 setIsConnected(true);
                 console.log('✅ Supabase client initialized for caching');
 
+                // for quick console testing if you want:
+                // @ts-ignore
+                window.supabase = client;
+
                 // Test the connection
                 testSupabaseConnection(client);
             } else {
@@ -67,13 +64,10 @@ export function SupabaseProvider({ children }) {
     const testSupabaseConnection = async (client) => {
         try {
             console.log('🧪 Testing Supabase connection...');
-            const { error } = await client
-                .from('marketplace_listings')
-                .select('listing_id')
-                .limit(1);
+            const { error } = await client.from('marketplace_listings').select('id').limit(1);
             if (error) {
                 console.warn('⚠️ Supabase connection test failed:', error.message);
-                console.log('📝 Ensure tables exist and RLS policies are configured.');
+                console.log('📝 Ensure tables exist and RLS policies allow inserts/updates with anon key');
             } else {
                 console.log('✅ Supabase connection test successful');
             }
@@ -82,30 +76,21 @@ export function SupabaseProvider({ children }) {
         }
     };
 
-    // Wait for Supabase client
+    // Helper to ensure Supabase ready
     const ensureSupabaseReady = () =>
         new Promise((resolve) => {
             if (supabase && isConnected) return resolve(true);
-            const check = () => (supabase && isConnected ? resolve(true) : setTimeout(check, 100));
-            setTimeout(check, 100);
+            const checkReady = () => (supabase && isConnected ? resolve(true) : setTimeout(checkReady, 100));
+            setTimeout(checkReady, 100);
         });
 
-    // Cache helpers
+    // Cache utilities
     const getCacheKey = (type, id) => `${type}:${id}`;
 
-    const ttlForType = (type) => {
-        switch ((type || '').toLowerCase()) {
-            case 'listings': return CACHE_CONFIG.LISTINGS_TTL;
-            case 'profile': return CACHE_CONFIG.PROFILE_TTL;
-            case 'sales': return CACHE_CONFIG.SALES_TTL;
-            default: return CACHE_CONFIG.LISTINGS_TTL;
-        }
-    };
-
     const isExpired = (item) => {
-        if (!item?.timestamp) return true;
+        if (!item.timestamp) return true;
         const now = Date.now();
-        const ttl = ttlForType(item.type);
+        const ttl = CACHE_CONFIG[`${item.type.toUpperCase()}_TTL`] || CACHE_CONFIG.LISTINGS_TTL;
         return now - item.timestamp > ttl;
     };
 
@@ -117,8 +102,6 @@ export function SupabaseProvider({ children }) {
         try {
             cache.current.set(key, { data, type, timestamp: Date.now() });
             updateCacheStats('updates');
-
-            // Limit memory usage
             if (cache.current.size > CACHE_CONFIG.MAX_CACHE_SIZE) {
                 const oldestKey = cache.current.keys().next().value;
                 cache.current.delete(oldestKey);
@@ -143,7 +126,7 @@ export function SupabaseProvider({ children }) {
                 return null;
             }
             updateCacheStats('hits');
-            // console.log('🎯 Cache hit:', key);
+            // console.log(`🎯 Cache hit: ${key}`);
             return item.data;
         } catch (error) {
             console.warn('Cache get error:', error);
@@ -154,41 +137,40 @@ export function SupabaseProvider({ children }) {
 
     const clearCache = (pattern) => {
         try {
-            if (!pattern) {
+            if (pattern) {
+                for (const key of cache.current.keys()) {
+                    if (key.includes(pattern)) cache.current.delete(key);
+                }
+                console.log(`🧹 Cleared cache pattern: ${pattern}`);
+            } else {
                 cache.current.clear();
                 console.log('🧹 Cleared all cache');
-                return;
             }
-            for (const key of cache.current.keys()) {
-                if (key.includes(pattern)) cache.current.delete(key);
-            }
-            console.log(`🧹 Cleared cache pattern: ${pattern}`);
         } catch (error) {
             console.warn('Cache clear error:', error);
         }
     };
 
-    /**
-     * Cache marketplace listings to Supabase (chunked upserts, BigInt-safe).
-     * Optionally pass canceledIds (Set<string|number>) to set active=false.
-     */
+    // ========== LISTINGS CACHE (DB) ==========
     const cacheListings = useCallback(
-        async (listings, canceledIds = new Set()) => {
+        async (listings, canceledSet = new Set()) => {
             try {
                 await ensureSupabaseReady();
                 if (!supabase) {
                     console.log('⚠️ Supabase not available - skipping listings cache');
                     return;
                 }
-                if (!listings || listings.length === 0) {
+                if (!Array.isArray(listings) || listings.length === 0) {
                     console.log('⚠️ No listings to cache');
                     return;
                 }
 
-                console.log(`💾 Caching ${listings.length} listings to Supabase (chunked)...`);
+                const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+                const normAddr = (x) => (x ? String(x).toLowerCase() : null);
+                const str = (x, d = '0') => (x === undefined || x === null ? d : String(x));
 
-                // Normalize every field (strings for ids/prices, lower-case addresses)
-                const dbListings = listings.map((l) => {
+                const rows = listings.map((l) => {
+                    const isCanceled = canceledSet?.has?.(String(l.id));
                     const img =
                         l.image ||
                         l.imageUrl ||
@@ -196,29 +178,18 @@ export function SupabaseProvider({ children }) {
                         l.metadata?.image_url ||
                         null;
 
-                    const qty =
-                        typeof l.quantity === 'bigint'
-                            ? l.quantity.toString()
-                            : l.quantity ?? 1;
-
-                    const ppu =
-                        typeof l.pricePerUnit === 'bigint'
-                            ? l.pricePerUnit.toString()
-                            : l.pricePerUnit != null
-                                ? String(l.pricePerUnit)
-                                : '0';
-
-                    const listingId = String(l.id);
-                    const isCanceled = canceledIds?.has?.(listingId) || canceledIds?.has?.(l.id);
-
                     return {
-                        listing_id: listingId,
-                        seller: l.seller ?? null,
-                        nft_contract: (l.nftContract || '').toLowerCase(),
-                        token_id: String(l.tokenId),
-                        quantity: qty,
-                        price_per_unit: ppu,
-                        payment_token: l.paymentToken ?? null,
+                        listing_id: str(l.id, '').trim(),
+                        seller: normAddr(l.seller) || normAddr(l.owner) || ZERO_ADDR, // NOT NULL
+                        nft_contract: normAddr(l.nftContract) || '',                  // NOT NULL
+                        token_id: str(l.tokenId, '').trim(),                          // NOT NULL
+                        quantity:
+                            typeof l.quantity === 'bigint' ? l.quantity.toString() : str(l.quantity, '1'),
+                        price_per_unit:
+                            typeof l.pricePerUnit === 'bigint'
+                                ? l.pricePerUnit.toString()
+                                : str(l.pricePerUnit, '0'),
+                        payment_token: normAddr(l.paymentToken) || ZERO_ADDR,         // NOT NULL
                         is_erc1155: !!l.isERC1155,
                         active: isCanceled ? false : !!l.active,
                         metadata: l.metadata || {},
@@ -229,37 +200,55 @@ export function SupabaseProvider({ children }) {
                     };
                 });
 
-                // Upsert in chunks to avoid payload limits
-                const CHUNK = 500;
-                for (let i = 0; i < dbListings.length; i += CHUNK) {
-                    const slice = dbListings.slice(i, i + CHUNK);
-                    const { error } = await supabase
-                        .from('marketplace_listings')
-                        .upsert(slice, {
-                            onConflict: 'listing_id',
-                            ignoreDuplicates: false
-                        });
-                    if (error) throw error;
-                }
-
-                // Additionally mark any canceled IDs inactive (covers rows not present in `listings`)
-                if (canceledIds && canceledIds.size > 0) {
-                    const ids = [...canceledIds].map(String);
-                    const { error: updErr } = await supabase
-                        .from('marketplace_listings')
-                        .update({ active: false, updated_at: new Date().toISOString() })
-                        .in('listing_id', ids);
-                    if (updErr) throw updErr;
-                }
-
-                // Refresh memory cache
-                setCache('all_listings', listings, 'listings');
-                listings.forEach((l) =>
-                    setCache(getCacheKey('listing', String(l.id)), l, 'listings')
+                // Filter invalid rows to avoid NOT NULL violations
+                const toSave = rows.filter(
+                    (r) =>
+                        r.listing_id &&
+                        r.seller &&
+                        r.nft_contract &&
+                        r.token_id &&
+                        r.quantity !== '' &&
+                        r.price_per_unit !== '' &&
+                        r.payment_token
                 );
 
-                console.log(`✅ Cached ${listings.length} listings to DB & memory`);
-                updateCacheStats('updates');
+                if (toSave.length === 0) {
+                    console.warn('⚠️ No valid rows to upsert (required fields missing). Example:', rows[0]);
+                    return;
+                }
+
+                console.log(`💾 Upserting ${toSave.length} listings to Supabase...`);
+
+                // Chunked upserts (avoid payload too large)
+                const CHUNK = 500;
+                for (let i = 0; i < toSave.length; i += CHUNK) {
+                    const chunk = toSave.slice(i, i + CHUNK);
+                    const { data, error } = await supabase
+                        .from('marketplace_listings')
+                        .upsert(chunk, { onConflict: 'listing_id', ignoreDuplicates: false });
+
+                    if (error) {
+                        console.warn('❌ Database cache error:', error);
+                        console.warn('🔍 Error details:', {
+                            message: error.message,
+                            details: error.details,
+                            hint: error.hint,
+                            code: error.code
+                        });
+                        updateCacheStats('errors');
+                    } else {
+                        console.log(`✅ Cached ${chunk.length} listings [${i + 1}-${i + chunk.length}]`);
+                        // also cache in memory
+                        chunk.forEach((dbRow) => {
+                            const id = dbRow.listing_id;
+                            const key = getCacheKey('listing', id);
+                            setCache(key, dbRow, 'listings');
+                        });
+                    }
+                }
+
+                // maintain an in-memory "all" snapshot for quick reads
+                setCache('all_listings', listings, 'listings');
             } catch (error) {
                 console.warn('❌ Error caching listings:', error);
                 updateCacheStats('errors');
@@ -269,11 +258,10 @@ export function SupabaseProvider({ children }) {
     );
 
     const getCachedListings = useCallback(async () => {
-        // Memory first
-        const mem = getCache('all_listings');
-        if (mem) return mem;
-
-        if (!supabase) return [];
+        if (!supabase) {
+            const cachedData = getCache('all_listings');
+            return cachedData || [];
+        }
 
         try {
             console.log('🔍 Fetching cached listings from Supabase...');
@@ -289,9 +277,8 @@ export function SupabaseProvider({ children }) {
                 return [];
             }
 
-            console.log(`📦 Retrieved ${data.length} cached listings from DB`);
+            console.log(`📦 Retrieved ${data.length} cached listings from database`);
 
-            // Map back to app shape (keep pricePerUnit as string for BigInt safety)
             const listings = data.map((item) => ({
                 id: Number(item.listing_id),
                 seller: item.seller,
@@ -319,16 +306,14 @@ export function SupabaseProvider({ children }) {
         }
     }, [supabase]);
 
+    // ========== PROFILE CACHE ==========
     const cacheProfileData = useCallback(
         async (address, profileData) => {
             if (!supabase || !address) return;
-
             try {
                 console.log(`💾 Caching profile data for ${address}...`);
-                const lower = address.toLowerCase();
-
-                const record = {
-                    wallet_address: lower,
+                const profileRecord = {
+                    wallet_address: String(address).toLowerCase(),
                     nfts: profileData.nfts || [],
                     listings: profileData.listings || [],
                     balance: profileData.balance || '0',
@@ -337,14 +322,15 @@ export function SupabaseProvider({ children }) {
 
                 const { error } = await supabase
                     .from('user_profiles')
-                    .upsert(record, { onConflict: 'wallet_address', ignoreDuplicates: false });
+                    .upsert(profileRecord, { onConflict: 'wallet_address', ignoreDuplicates: false });
 
                 if (error) {
                     console.warn('Profile cache error:', error);
                     updateCacheStats('errors');
                 } else {
                     console.log(`✅ Cached profile for ${address}`);
-                    setCache(getCacheKey('profile', lower), profileData, 'profile');
+                    const key = getCacheKey('profile', String(address).toLowerCase());
+                    setCache(key, profileData, 'profile');
                 }
             } catch (error) {
                 console.warn('Error caching profile:', error);
@@ -357,9 +343,8 @@ export function SupabaseProvider({ children }) {
     const getCachedProfile = useCallback(
         async (address) => {
             if (!address) return null;
-
-            const key = getCacheKey('profile', address.toLowerCase());
-            const mem = getCache(key);
+            const memKey = getCacheKey('profile', String(address).toLowerCase());
+            const mem = getCache(memKey);
             if (mem) return mem;
 
             if (!supabase) return null;
@@ -369,7 +354,7 @@ export function SupabaseProvider({ children }) {
                 const { data, error } = await supabase
                     .from('user_profiles')
                     .select('*')
-                    .eq('wallet_address', address.toLowerCase())
+                    .eq('wallet_address', String(address).toLowerCase())
                     .maybeSingle();
 
                 if (error) {
@@ -377,7 +362,6 @@ export function SupabaseProvider({ children }) {
                     updateCacheStats('misses');
                     return null;
                 }
-
                 if (!data) {
                     console.log(`📭 No cached profile found for ${address}`);
                     updateCacheStats('misses');
@@ -389,8 +373,7 @@ export function SupabaseProvider({ children }) {
                     listings: data.listings || [],
                     balance: data.balance || '0'
                 };
-
-                setCache(key, profileData, 'profile');
+                setCache(memKey, profileData, 'profile');
                 console.log(`📦 Retrieved cached profile for ${address}`);
                 return profileData;
             } catch (error) {
@@ -402,6 +385,7 @@ export function SupabaseProvider({ children }) {
         [supabase]
     );
 
+    // ========== SALES CACHE ==========
     const cacheSalesHistory = useCallback(
         async (salesHistory) => {
             try {
@@ -410,47 +394,42 @@ export function SupabaseProvider({ children }) {
                     console.log('⚠️ Supabase not available - skipping sales history cache');
                     return;
                 }
-                if (!salesHistory || salesHistory.length === 0) {
+                if (!Array.isArray(salesHistory) || salesHistory.length === 0) {
                     console.log('⚠️ No sales history to cache');
                     return;
                 }
 
-                console.log(`💾 Caching ${salesHistory.length} sales to Supabase...`);
+                console.log(`💾 Caching ${salesHistory.length} sales transactions to Supabase...`);
 
-                const dbSales = salesHistory.map((s) => ({
-                    listing_id: s.listingId != null ? String(s.listingId) : null,
+                const rows = salesHistory.map((s) => ({
+                    listing_id: String(s.listingId ?? ''),
                     buyer: s.buyer,
                     seller: s.seller || null,
-                    quantity: typeof s.quantity === 'bigint' ? s.quantity.toString() : s.quantity ?? 1,
-                    total_price:
-                        typeof s.totalPrice === 'bigint'
-                            ? s.totalPrice.toString()
-                            : s.totalPrice != null
-                                ? String(s.totalPrice)
-                                : '0',
+                    quantity: String(s.quantity ?? '1'),
+                    total_price: String(s.totalPrice ?? '0'),
                     payment_token: s.paymentToken || null,
                     transaction_hash: s.transactionHash,
-                    block_number: s.blockNumber ?? null,
+                    block_number: s.blockNumber || null,
                     timestamp: s.timestamp,
                     sale_type: s.type || 'sale'
                 }));
 
-                // Upsert by unique transaction_hash
                 const CHUNK = 500;
-                for (let i = 0; i < dbSales.length; i += CHUNK) {
-                    const slice = dbSales.slice(i, i + CHUNK);
+                for (let i = 0; i < rows.length; i += CHUNK) {
+                    const chunk = rows.slice(i, i + CHUNK);
                     const { error } = await supabase
                         .from('sales_history')
-                        .upsert(slice, {
-                            onConflict: 'transaction_hash',
-                            ignoreDuplicates: true
-                        });
-                    if (error) throw error;
+                        .upsert(chunk, { onConflict: 'transaction_hash', ignoreDuplicates: true });
+
+                    if (error) {
+                        console.warn('❌ Database sales cache error:', error);
+                        updateCacheStats('errors');
+                    } else {
+                        console.log(`✅ Cached ${chunk.length} sales [${i + 1}-${i + chunk.length}]`);
+                    }
                 }
 
                 setCache('sales_history', salesHistory, 'sales');
-                console.log(`✅ Cached ${salesHistory.length} sales to DB & memory`);
-                updateCacheStats('updates');
             } catch (error) {
                 console.warn('❌ Error caching sales history:', error);
                 updateCacheStats('errors');
@@ -479,19 +458,19 @@ export function SupabaseProvider({ children }) {
                 return [];
             }
 
-            console.log(`📦 Loaded ${data.length} sales from DB cache`);
+            console.log(`📦 Loaded ${data.length} sales from Supabase cache`);
 
-            const sales = data.map((r) => ({
-                listingId: r.listing_id != null ? Number(r.listing_id) : null,
-                buyer: r.buyer,
-                seller: r.seller,
-                quantity: r.quantity,
-                totalPrice: r.total_price,
-                paymentToken: r.payment_token,
-                transactionHash: r.transaction_hash,
-                blockNumber: r.block_number,
-                timestamp: r.timestamp,
-                type: r.sale_type
+            const sales = data.map((item) => ({
+                listingId: item.listing_id,
+                buyer: item.buyer,
+                seller: item.seller,
+                quantity: item.quantity,
+                totalPrice: item.total_price,
+                paymentToken: item.payment_token,
+                transactionHash: item.transaction_hash,
+                blockNumber: item.block_number,
+                timestamp: item.timestamp,
+                type: item.sale_type
             }));
 
             setCache('sales_history', sales, 'sales');
@@ -503,21 +482,21 @@ export function SupabaseProvider({ children }) {
         }
     }, [supabase]);
 
-    // Real-time subscriptions (invalidate memory caches)
+    // Real-time subscriptions
     const subscribeToListings = (callback) => {
         if (!supabase) return null;
         try {
-            console.log('🔄 Subscribing to listings changes...');
+            console.log('🔄 Setting up real-time subscription for listings...');
             const subscription = supabase
                 .channel('marketplace_listings')
                 .on(
                     'postgres_changes',
                     { event: '*', schema: 'public', table: 'marketplace_listings' },
                     (payload) => {
-                        console.log('📡 Listing change:', payload);
+                        console.log('📡 Real-time listing update:', payload);
                         clearCache('listing');
                         clearCache('all_listings');
-                        callback && callback(payload);
+                        if (callback) callback(payload);
                     }
                 )
                 .subscribe();
@@ -534,16 +513,16 @@ export function SupabaseProvider({ children }) {
         (callback) => {
             if (!supabase) return null;
             try {
-                console.log('🔄 Subscribing to profiles changes...');
+                console.log('🔄 Setting up real-time subscription for profiles...');
                 const subscription = supabase
                     .channel('user_profiles')
                     .on(
                         'postgres_changes',
                         { event: '*', schema: 'public', table: 'user_profiles' },
                         (payload) => {
-                            console.log('📡 Profile change:', payload);
+                            console.log('📡 Real-time profile update:', payload);
                             clearCache('profile');
-                            if (callback) setTimeout(() => callback(payload), 1000); // light throttle
+                            if (callback) setTimeout(() => callback(payload), 1000);
                         }
                     )
                     .subscribe();
@@ -561,10 +540,10 @@ export function SupabaseProvider({ children }) {
     // Cleanup subscriptions on unmount
     useEffect(() => {
         return () => {
-            subscriptions.current.forEach((sub, key) => {
+            subscriptions.current.forEach((subscription, key) => {
+                console.log(`🔌 Unsubscribing from ${key}`);
                 try {
-                    console.log(`🔌 Unsubscribing from ${key}`);
-                    sub.unsubscribe();
+                    subscription.unsubscribe();
                 } catch { }
             });
             subscriptions.current.clear();
@@ -574,32 +553,30 @@ export function SupabaseProvider({ children }) {
     const value = {
         supabase,
         isConnected,
-
         cacheStats,
+
+        // Cache ops
         setCache,
         getCache,
         clearCache,
 
+        // DB ops
         cacheListings,
         getCachedListings,
-
         cacheProfileData,
         getCachedProfile,
-
         cacheSalesHistory,
         getCachedSalesHistory,
 
+        // Realtime
         subscribeToListings,
         subscribeToProfiles,
 
+        // Utils
         ensureSupabaseReady
     };
 
-    return (
-        <SupabaseContext.Provider value={value}>
-            {children}
-        </SupabaseContext.Provider>
-    );
+    return <SupabaseContext.Provider value={value}>{children}</SupabaseContext.Provider>;
 }
 
 export function useSupabase() {
