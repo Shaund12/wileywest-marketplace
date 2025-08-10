@@ -115,7 +115,7 @@ export default function Footer() {
                         <SocialLink href="https://x.com/" label="X / Twitter">
                             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M22 5.8 13.9 16.4 21.4 24H18L12.9 18.8 8.1 24H2l8.7-10.2L3 0h4l5.1 5.6L16.7 0H22l-7.7 9z" /></svg>
                         </SocialLink>
-                        <SocialLink href="https://discord.gg/" label="Discord">
+                        <SocialLink href="https://discord.gg/dRGmv5PgQE" label="Discord">
                             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M20 0c1.1 0 2 .9 2 2v22l-2.6-2.2-1.4-1.3-1.5-1.4.6 2.4H4c-1.1 0-2-.9-2-2V2C2 .9 2.9 0 4 0h16zm-5.2 6.8c-.7-.3-1.5-.6-2.3-.7l-.3.6c-.8-.1-1.6-.1-2.4 0l-.3-.6c-.8.2-1.6.5-2.3.7C6 9 5.6 11.1 5.7 13.3c1 .8 2 1.4 3.1 1.9.2-.3.5-.6.8-.9-1.7-.5-2.4-1.5-2.4-1.5s.1.1.3.2c0 0 0 0 0 0 .1.1.1.1.2.1.6.3 1.1.5 1.6.7.7.3 1.5.5 2.3.5.8 0 1.6-.2 2.3-.5.5-.2 1.1-.4 1.7-.7 0 0-.7 1-2.4 1.5.3.3.5.6.8.9 1.1-.4 2.1-1.1 3.1-1.9.2-2.3-.2-4.3-1.4-6.5zM9.3 12.8c-.6 0-1.1-.5-1.1-1.1 0-.6.5-1.1 1.1-1.1.6 0 1.1.5 1.1 1.1 0 .6-.5 1.1-1.1 1.1zm5.4 0c-.6 0-1.1-.5-1.1-1.1 0-.6.5-1.1 1.1-1.1.6 0 1.1.5 1.1 1.1 0 .6-.5 1.1-1.1 1.1z" /></svg>
                         </SocialLink>
                         <SocialLink href="https://github.com/" label="GitHub">
@@ -191,7 +191,6 @@ export default function Footer() {
                     <details className="bd-col" open>
                         <summary><h4>Resources</h4></summary>
                         <a href={EXPLORER_URL} target="_blank" rel="noopener noreferrer">Vitruveo Explorer <ExternalIcon /></a>
-                        <a href="https://docs.blockdust.xyz" target="_blank" rel="noopener noreferrer">Docs <ExternalIcon /></a>
                         <a href="https://status.supabase.com" target="_blank" rel="noopener noreferrer">Supabase Status <ExternalIcon /></a>
                     </details>
 

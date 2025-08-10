@@ -1,5 +1,4 @@
 ﻿/* ULTRA PREMIUM HOT LISTINGS PAGE */
-/* ============================== */
 
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Inter:wght@300;400;500;700&display=swap');
 
@@ -13,7 +12,7 @@
     --hot-card-bg: rgba(15, 17, 26, 0.85);
 }
 
-/* Main Container with Animated Background */
+/* Container + background */
 .hot-listings-container {
     position: relative;
     padding-bottom: 120px;
@@ -22,31 +21,23 @@
     overflow-x: hidden;
 }
 
-/* Background Particle Canvas */
 .particles-bg {
     position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
+    inset: 0;
     z-index: -1;
-    opacity: 0.6;
+    opacity: 0.55;
 }
 
-/* Background Gradient Overlay */
 .hot-listings-container::before {
     content: '';
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
     background: radial-gradient(circle at 20% 30%, rgba(85, 51, 255, 0.15) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(255, 51, 102, 0.15) 0%, transparent 50%);
     z-index: -1;
     pointer-events: none;
 }
 
-/* Premium Header with 3D Effect */
+/* Header */
 .hot-listings-container .page-header {
     position: relative;
     background: linear-gradient(135deg, rgba(30, 32, 69, 0.8) 0%, rgba(15, 17, 26, 0.9) 100%);
@@ -62,45 +53,39 @@
     z-index: 1;
 }
 
-    /* Animated Glow Effect */
     .hot-listings-container .page-header::after {
         content: '';
         position: absolute;
-        top: -100%;
-        left: -100%;
-        right: -100%;
-        bottom: -100%;
+        inset: -100%;
         background: radial-gradient(circle at center, rgba(255, 51, 102, 0.15), transparent 60%), radial-gradient(circle at 70% 60%, rgba(85, 51, 255, 0.15), transparent 60%);
         z-index: -1;
         animation: headerGlow 10s infinite alternate ease-in-out;
     }
 
-    /* Animated Pattern Overlay */
     .hot-listings-container .page-header::before {
         content: '';
         position: absolute;
-        top: 0;
-        left: 0;
         width: 200%;
         height: 200%;
+        top: 0;
+        left: 0;
         background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%235533ff' fill-opacity='0.1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
-        opacity: 0.5;
+        opacity: .5;
         z-index: -1;
         animation: patternMove 60s linear infinite;
     }
 
-    /* Futuristic Header Text */
     .hot-listings-container .page-header h1 {
         font-family: 'Orbitron', sans-serif;
         font-weight: 900;
-        font-size: 3.5rem;
+        font-size: 3.2rem;
         letter-spacing: -0.02em;
-        margin-bottom: 15px;
+        margin-bottom: 12px;
         text-transform: uppercase;
         background-image: var(--hot-gradient);
         background-size: 300% 300%;
-        background-clip: text;
         -webkit-background-clip: text;
+        background-clip: text;
         -webkit-text-fill-color: transparent;
         text-shadow: var(--hot-text-shadow);
         animation: gradientShift 5s infinite alternate ease-in-out;
@@ -108,55 +93,119 @@
     }
 
     .hot-listings-container .page-header p {
-        font-size: 1.3rem;
+        font-size: 1.2rem;
         max-width: 700px;
-        color: rgba(255, 255, 255, 0.8);
+        color: rgba(255,255,255,.85);
         font-weight: 300;
         line-height: 1.6;
         transform: translateZ(20px);
-        text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
     }
 
-/* Animated Fire Emoji */
+/* Emoji pulse */
 .fire-emoji {
     display: inline-block;
     filter: drop-shadow(0 0 10px rgba(255, 51, 102, 0.8));
     animation: firePulse 1.5s infinite alternate;
-    transform-origin: center;
 }
 
-/* 3D Grid Container with Staggered Animation */
-.hot-listings-container .listings-grid.featured {
+/* Collections */
+.collections-container {
+    position: relative;
+}
+
+.collection-section {
+    margin-bottom: 48px;
+}
+
+.collection-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 10px;
+}
+
+.collection-header-left {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    flex-wrap: wrap;
+}
+
+.collection-header h2 {
+    margin: 0;
+    font-family: 'Orbitron', sans-serif;
+    font-size: 1.3rem;
+    letter-spacing: .3px;
+}
+
+.collection-symbol {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: .25rem .5rem;
+    border-radius: 999px;
+    font-size: .8rem;
+}
+
+.collection-type {
+    background: rgba(85, 51, 255, 0.18);
+    border: 1px solid rgba(85, 51, 255, 0.35);
+    padding: .25rem .5rem;
+    border-radius: 999px;
+    font-size: .8rem;
+}
+
+.collection-count {
+    color: rgba(255,255,255,.75);
+    font-size: .9rem;
+}
+
+.copy-addr {
+    appearance: none;
+    border: 1px dashed rgba(255,255,255,0.2);
+    background: transparent;
+    color: rgba(255,255,255,.85);
+    padding: .25rem .5rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: .8rem;
+}
+
+    .copy-addr:hover {
+        border-style: solid;
+    }
+
+/* Grid + card motion */
+.listings-grid.featured {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 40px;
-    padding: 40px 0;
+    gap: 36px;
+    padding: 28px 0;
     perspective: 2000px;
 }
 
-/* Listing Wrapper for 3D Card Effects */
 .listing-wrapper {
     position: relative;
     perspective: 2000px;
     transform-style: preserve-3d;
     opacity: 0;
-    animation: cardReveal 0.8s forwards cubic-bezier(0.23, 1, 0.32, 1);
-    animation-delay: calc(var(--item-index, 0) * 0.1s);
+    animation: cardReveal .8s forwards cubic-bezier(.23,1,.32,1);
+    animation-delay: calc(var(--item-index, 0) * .09s);
 }
 
-/* Premium Hot Badge */
+/* Hot badge */
 .hot-badge {
     position: absolute;
-    top: -15px;
-    right: 20px;
+    top: -14px;
+    right: 18px;
     background: linear-gradient(45deg, var(--hot-primary), var(--hot-accent));
-    color: white;
-    padding: 8px 16px;
+    color: #fff;
+    padding: 7px 14px;
     border-radius: 30px;
-    font-size: 0.9rem;
+    font-size: .9rem;
     font-weight: 700;
-    letter-spacing: 0.05em;
-    box-shadow: 0 5px 20px rgba(255, 51, 102, 0.6);
+    letter-spacing: .05em;
+    box-shadow: 0 5px 20px rgba(255, 51, 102, .6);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -165,50 +214,19 @@
     animation: hotBadgePulse 2s infinite alternate;
 }
 
-/* Holographic Trend Indicator */
-.trend-indicator {
-    position: absolute;
-    bottom: 20px;
-    right: 20px;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #22cc88;
-    padding: 8px 16px;
-    border-radius: 30px;
-    font-size: 0.9rem;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    z-index: 5;
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-    transform: translateZ(30px);
-}
-
-    .trend-indicator.up {
-        color: #22cc88;
-    }
-
-    .trend-indicator.down {
-        color: #ff3366;
-    }
-
-/* 3D Card Transformation */
+/* ListingCard featured skin hooks */
 .hot-listings-container .listing-card.featured {
     background: var(--hot-card-bg);
     border-radius: 20px;
     overflow: hidden;
     transform-style: preserve-3d;
     transform: translateZ(0);
-    transition: all 0.6s cubic-bezier(0.165, 0.84, 0.44, 1);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-    will-change: transform, box-shadow;
+    transition: all .6s cubic-bezier(.165,.84,.44,1);
+    box-shadow: 0 10px 30px rgba(0,0,0,.2);
     position: relative;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255,255,255,.05);
 }
 
-    /* Holographic Border Effect */
     .hot-listings-container .listing-card.featured::before {
         content: '';
         position: absolute;
@@ -219,22 +237,20 @@
         z-index: -1;
         animation: borderGlow 8s linear infinite;
         opacity: 0;
-        transition: opacity 0.5s ease;
+        transition: opacity .45s ease;
     }
 
-    /* Hover Effects */
     .hot-listings-container .listing-card.featured:hover {
-        transform: translateY(-20px) rotateX(5deg) scale(1.03);
-        box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(85, 51, 255, 0.4);
+        transform: translateY(-18px) rotateX(4deg) scale(1.025);
+        box-shadow: 0 30px 60px rgba(0,0,0,.5), 0 0 40px rgba(85, 51, 255, .4);
     }
 
         .hot-listings-container .listing-card.featured:hover::before {
             opacity: 1;
         }
 
-    /* Dynamic Image Container with Parallax */
     .hot-listings-container .listing-card.featured .listing-image {
-        height: 350px;
+        height: 340px;
         position: relative;
         overflow: hidden;
         transform-style: preserve-3d;
@@ -243,11 +259,8 @@
         .hot-listings-container .listing-card.featured .listing-image::before {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(to bottom, transparent 0%, transparent 70%, rgba(15, 17, 26, 0.8) 100%);
+            inset: 0;
+            background: linear-gradient(to bottom, transparent 0%, transparent 70%, rgba(15,17,26,.85) 100%);
             z-index: 1;
         }
 
@@ -255,93 +268,82 @@
             width: 100%;
             height: 100%;
             object-fit: cover;
-            transition: all 1s cubic-bezier(0.165, 0.84, 0.44, 1);
+            transition: all 1s cubic-bezier(.165,.84,.44,1);
             transform: translateZ(0);
         }
 
     .hot-listings-container .listing-card.featured:hover .listing-image img {
-        transform: scale(1.1) translateZ(0);
-        filter: brightness(1.1) contrast(1.1);
+        transform: scale(1.08);
+        filter: brightness(1.08) contrast(1.08);
     }
 
-    /* Ultra Modern Listing Details */
     .hot-listings-container .listing-card.featured .listing-details {
-        padding: 30px;
-        background: linear-gradient(to bottom, rgba(26, 28, 37, 0.95) 0%, rgba(15, 17, 26, 0.98) 100%);
+        padding: 26px;
+        background: linear-gradient(to bottom, rgba(26,28,37,.95) 0%, rgba(15,17,26,.98) 100%);
         position: relative;
-        transform-style: preserve-3d;
     }
 
     .hot-listings-container .listing-card.featured .listing-info h3 {
         font-family: 'Orbitron', sans-serif;
-        font-size: 1.4rem;
+        font-size: 1.2rem;
         font-weight: 700;
-        margin-bottom: 10px;
-        background: linear-gradient(to right, #ffffff, #ccccff);
+        margin: 0 0 8px;
+        background: linear-gradient(to right, #fff, #d9ddff);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        letter-spacing: -0.01em;
     }
 
-    /* Futuristic Price Display */
     .hot-listings-container .listing-card.featured .listing-price {
-        margin: 20px 0;
+        margin: 14px 0;
         display: flex;
         align-items: center;
-        position: relative;
-        transform: translateZ(10px);
     }
 
     .hot-listings-container .listing-card.featured .price-amount {
-        font-size: 2rem;
+        font-size: 1.8rem;
         font-weight: 800;
         background: linear-gradient(to right, var(--hot-primary), var(--hot-secondary));
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        text-shadow: 0 0 20px rgba(255, 51, 102, 0.4);
+        text-shadow: 0 0 20px rgba(255, 51, 102, .35);
     }
 
     .hot-listings-container .listing-card.featured .price-currency {
         margin-left: 8px;
-        font-size: 1.1rem;
-        color: rgba(255, 255, 255, 0.8);
-        font-weight: 500;
-        background: rgba(85, 51, 255, 0.2);
+        font-size: 1rem;
+        color: rgba(255,255,255,.8);
+        font-weight: 600;
+        background: rgba(85,51,255,.2);
         padding: 5px 10px;
         border-radius: 30px;
-        box-shadow: 0 0 10px rgba(85, 51, 255, 0.3);
+        box-shadow: 0 0 10px rgba(85,51,255,.3);
     }
 
-    /* Neo-Brutalist Buy Button */
     .hot-listings-container .listing-card.featured .buy-button {
         width: 100%;
-        padding: 16px 20px;
+        padding: 14px 18px;
         border-radius: 12px;
         font-family: 'Orbitron', sans-serif;
         font-size: 1rem;
-        font-weight: 700;
-        letter-spacing: 0.05em;
+        font-weight: 800;
+        letter-spacing: .05em;
         text-transform: uppercase;
         background: linear-gradient(90deg, var(--hot-primary), var(--hot-secondary));
         background-size: 200% 200%;
-        color: white;
+        color: #fff;
         border: none;
         position: relative;
         overflow: hidden;
-        box-shadow: 0 10px 25px rgba(85, 51, 255, 0.4);
-        transition: all 0.4s cubic-bezier(0.165, 0.84, 0.44, 1);
-        transform: translateZ(20px);
+        box-shadow: 0 10px 25px rgba(85,51,255,.4);
+        transition: all .4s cubic-bezier(.165,.84,.44,1);
         animation: buttonGradient 5s ease infinite;
-        z-index: 2;
     }
 
-        /* Buy Button Hover Effect */
         .hot-listings-container .listing-card.featured .buy-button:hover {
-            transform: translateY(-5px) translateZ(20px);
-            box-shadow: 0 15px 35px rgba(85, 51, 255, 0.6);
+            transform: translateY(-4px);
+            box-shadow: 0 15px 35px rgba(85,51,255,.6);
         }
 
-        /* Buy Button Glow Effect */
         .hot-listings-container .listing-card.featured .buy-button::before {
             content: '';
             position: absolute;
@@ -349,68 +351,39 @@
             left: -100%;
             width: 50%;
             height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,.3), transparent);
             transform: skewX(-25deg);
             animation: buttonShine 3s infinite;
         }
 
-/* Empty State with Particles */
+/* Empty state */
 .no-listings {
     position: relative;
     text-align: center;
-    padding: 120px 20px;
-    background-color: rgba(15, 17, 26, 0.7);
+    padding: 100px 20px;
+    background: rgba(15, 17, 26, 0.7);
     backdrop-filter: blur(10px);
     border-radius: 20px;
     border: 1px solid var(--hot-primary);
-    color: var(--text-light);
+    color: rgba(255,255,255,.9);
     overflow: hidden;
-    box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 15px 40px rgba(0,0,0,.3);
 }
 
     .no-listings::before {
         content: '';
         position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: linear-gradient(135deg, rgba(85, 51, 255, 0.05) 0%, rgba(255, 51, 102, 0.05) 100%);
+        inset: 0;
+        background: linear-gradient(135deg, rgba(85,51,255,.05) 0%, rgba(255,51,102,.05) 100%);
         z-index: -1;
         animation: noListingGlow 5s infinite alternate;
     }
-
-    .no-listings p {
-        font-size: 1.6rem;
-        margin-bottom: 30px;
-        color: #ffffff;
-        font-weight: 300;
-    }
-
-    .no-listings .primary-button {
-        font-family: 'Orbitron', sans-serif;
-        padding: 14px 30px;
-        font-size: 1rem;
-        background: linear-gradient(90deg, var(--hot-primary), var(--hot-secondary));
-        color: white;
-        border: none;
-        border-radius: 10px;
-        letter-spacing: 0.05em;
-        text-transform: uppercase;
-        transition: all 0.3s ease;
-        box-shadow: 0 8px 20px rgba(85, 51, 255, 0.4);
-    }
-
-        .no-listings .primary-button:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 12px 30px rgba(85, 51, 255, 0.6);
-        }
 
 /* Animations */
 @keyframes cardReveal {
     from {
         opacity: 0;
-        transform: translateY(50px) scale(0.9);
+        transform: translateY(50px) scale(.92);
     }
 
     to {
@@ -422,24 +395,24 @@
 @keyframes firePulse {
     0% {
         transform: scale(1) rotate(0deg);
-        filter: drop-shadow(0 0 5px rgba(255, 51, 102, 0.6));
+        filter: drop-shadow(0 0 5px rgba(255, 51, 102, .6));
     }
 
     100% {
-        transform: scale(1.3) rotate(15deg);
-        filter: drop-shadow(0 0 20px rgba(255, 51, 102, 0.9));
+        transform: scale(1.25) rotate(15deg);
+        filter: drop-shadow(0 0 18px rgba(255, 51, 102, .9));
     }
 }
 
 @keyframes hotBadgePulse {
     0% {
-        box-shadow: 0 5px 15px rgba(255, 51, 102, 0.4);
+        box-shadow: 0 5px 15px rgba(255, 51, 102, .4);
         transform: translateZ(50px) scale(1);
     }
 
     100% {
-        box-shadow: 0 5px 25px rgba(255, 51, 102, 0.8);
-        transform: translateZ(50px) scale(1.1);
+        box-shadow: 0 5px 25px rgba(255, 51, 102, .8);
+        transform: translateZ(50px) scale(1.08);
     }
 }
 
@@ -455,7 +428,7 @@
 
 @keyframes headerGlow {
     0% {
-        transform: rotate(0deg);
+        transform: rotate(0);
     }
 
     100% {
@@ -465,11 +438,11 @@
 
 @keyframes patternMove {
     0% {
-        transform: translateX(0) translateY(0);
+        transform: translate(0,0);
     }
 
     100% {
-        transform: translateX(-50%) translateY(-50%);
+        transform: translate(-50%,-50%);
     }
 }
 
@@ -513,7 +486,7 @@
 
 @keyframes noListingGlow {
     0% {
-        opacity: 0.5;
+        opacity: .5;
     }
 
     100% {
@@ -521,15 +494,15 @@
     }
 }
 
-/* Responsive Styles */
+/* Responsive */
 @media (max-width: 1200px) {
     .hot-listings-container .listings-grid.featured {
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-        gap: 30px;
+        gap: 28px;
     }
 
     .hot-listings-container .page-header h1 {
-        font-size: 3rem;
+        font-size: 2.8rem;
     }
 }
 
@@ -540,13 +513,13 @@
     }
 
         .hot-listings-container .page-header h1 {
-            font-size: 2.5rem;
+            font-size: 2.2rem;
         }
 
     .hot-listings-container .listings-grid.featured {
         grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-        gap: 25px;
-        padding: 20px 0;
+        gap: 22px;
+        padding: 18px 0;
     }
 
     .hot-listings-container .listing-card.featured .listing-image {
@@ -554,18 +527,18 @@
     }
 }
 
-@media (max-width: 580px) {
+@media (max-width: 560px) {
     .hot-listings-container .page-header {
-        padding: 30px 20px;
+        padding: 28px 20px;
     }
 
         .hot-listings-container .page-header h1 {
-            font-size: 2rem;
+            font-size: 1.9rem;
         }
 
     .hot-listings-container .listings-grid.featured {
         grid-template-columns: 1fr;
-        gap: 30px;
+        gap: 26px;
     }
 
     .hot-listings-container .listing-card.featured:hover {
@@ -573,16 +546,16 @@
     }
 }
 
-/* Custom Scrollbar */
+/* Scrollbar (WebKit) */
 .hot-listings-container::-webkit-scrollbar {
     width: 10px;
 }
 
 .hot-listings-container::-webkit-scrollbar-track {
-    background: rgba(15, 17, 26, 0.8);
+    background: rgba(15,17,26,.85);
 }
 
 .hot-listings-container::-webkit-scrollbar-thumb {
     background: linear-gradient(to bottom, var(--hot-primary), var(--hot-secondary));
-    border-radius: 5px;
+    border-radius: 6px;
 }
