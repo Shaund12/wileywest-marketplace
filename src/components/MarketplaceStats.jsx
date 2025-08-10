@@ -1,53 +1,229 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 import { scopedClass } from '../utils/nftUtils';
 import './marketplace.css';
 
+/**
+ * Tiny utilities
+ */
+const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+const fmtUSD = (v) => (typeof v === 'number' ? (v < 0.01 ? v.toFixed(6) : v.toFixed(2)) : '0.00');
+const shortAddr = (a) => (a ? `${a.slice(0, 6)}...${a.slice(-4)}` : '—');
+const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+/**
+ * Mini sparkline (inline SVG)
+ */
+function Sparkline({ points = [], height = 36, strokeWidth = 2, className = '' }) {
+    const H = height;
+    const W = Math.max(points.length * 8, 80); // scale with data
+    if (!points.length) {
+        return <svg width={W} height={H} className={className} aria-hidden="true" />;
+    }
+    const min = Math.min(...points);
+    const max = Math.max(...points);
+    const span = max - min || 1;
+    const dx = W / (points.length - 1 || 1);
+    const path = points
+        .map((p, i) => {
+            const x = i * dx;
+            const y = H - ((p - min) / span) * (H - strokeWidth) - strokeWidth / 2;
+            return `${i ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`;
+        })
+        .join(' ');
+    const last = points[points.length - 1];
+    const first = points[0];
+    const up = last >= first;
+
+    return (
+        <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} className={className} role="img" aria-label="Trend sparkline">
+            <defs>
+                <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={up ? '#16a34a' : '#ef4444'} stopOpacity="0.9" />
+                    <stop offset="100%" stopColor={up ? '#16a34a' : '#ef4444'} stopOpacity="0.2" />
+                </linearGradient>
+            </defs>
+            <path d={path} fill="none" stroke="url(#sparkGrad)" strokeWidth={strokeWidth} vectorEffect="non-scaling-stroke" />
+        </svg>
+    );
+}
+
+/**
+ * Tiny bar chart (for hourly/daily volume)
+ */
+function Bars({ data = [], height = 64, className = '', maxBars = 24, labelPrefix = '' }) {
+    const H = height;
+    const arr = data.slice(0, maxBars);
+    const max = Math.max(1, ...arr);
+    return (
+        <div className={`bars ${className}`} role="img" aria-label="Volume bars">
+            {arr.map((v, i) => {
+                const h = Math.max((v / max) * 100, 3);
+                return (
+                    <div key={i} className="bar" title={`${labelPrefix}${i}: $${fmtUSD(v)}`}>
+                        <div className="bar-fill" style={{ height: `${h}%` }} />
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+/**
+ * Skeletons
+ */
+function StatSkeleton() {
+    return (
+        <div className={scopedClass('stat-card', 'MarketplaceStats')}>
+            <div className="sk-title" />
+            <div className="sk-value" />
+            <div className="sk-sub" />
+        </div>
+    );
+}
+
+/**
+ * CSV Exporter for transactionHistory
+ */
+function downloadCSV(filename, rows) {
+    const csv = rows.map((r) => r.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
 function MarketplaceStats() {
-    const { marketplaceStats, refreshBlockchainData, salesHistory, status } = useMarketplace();
+    const { marketplaceStats = {}, refreshBlockchainData, salesHistory = [], status = '' } = useMarketplace();
+
+    // UI State
     const [activeTab, setActiveTab] = useState('overview');
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [autoRefresh, setAutoRefresh] = useState(false);
+    const [refreshEvery, setRefreshEvery] = useState(60); // seconds
+    const [nextTick, setNextTick] = useState(refreshEvery);
+    const tickRef = useRef(null);
+    const lastRefreshRef = useRef(0);
 
+    // destructure with safety
     const {
-        totalSales,
-        actualSoldVolume,
-        currentListingVolume,
-        // Enhanced time-based metrics
-        volume1h,
-        volume6h,
-        volume12h,
-        volume24h,
-        volume7d,
-        volume30d,
-        volumeAllTime,
-        sales1h,
-        sales6h,
-        sales12h,
-        sales24h,
-        sales7d,
-        sales30d,
-        // Advanced analytics
-        avgPrice,
-        highestPrice,
-        lowestPrice,
-        marketCap,
-        liquidityRatio,
-        marketVelocity24h,
-        marketVelocity7d,
-        growthRate24h,
-        growthRate7d,
-        marketHealthScore,
-        turnoverRate,
-        uniqueBuyers,
-        hourlyVolume,
-        dailyVolume,
-        priceHistory,
-        transactionHistory,
-        topTokens,
-        mostActiveSellers
+        totalSales = 0,
+        actualSoldVolume = 0,
+        currentListingVolume = 0,
+        // time-based metrics
+        volume1h = 0,
+        volume6h = 0,
+        volume12h = 0,
+        volume24h = 0,
+        volume7d = 0,
+        volume30d = 0,
+        volumeAllTime = 0,
+        sales1h = 0,
+        sales6h = 0,
+        sales12h = 0,
+        sales24h = 0,
+        sales7d = 0,
+        sales30d = 0,
+        // advanced
+        avgPrice = 0,
+        highestPrice = 0,
+        lowestPrice = 0,
+        marketCap = 0,
+        liquidityRatio = 0,
+        marketVelocity24h = 0,
+        marketVelocity7d = 0,
+        growthRate24h = 0,
+        growthRate7d = 0,
+        marketHealthScore = 0,
+        turnoverRate = 0,
+        uniqueBuyers = 0,
+        hourlyVolume = [],
+        dailyVolume = [],
+        priceHistory = [],
+        transactionHistory = [],
+        topTokens = [],
+        mostActiveSellers = [],
     } = marketplaceStats;
 
+    /**
+     * Derived analytics (memoized)
+     */
+    const recentPrices = useMemo(() => priceHistory?.slice(0, 30) || [], [priceHistory]);
+    const trendUp24h = useMemo(() => (sales24h || 0) >= ((sales7d || 0) / 7 || 0), [sales24h, sales7d]);
+    const velocityHourlyVs24h = useMemo(() => {
+        if (!volume24h) return null;
+        return (volume1h / (volume24h / 24)) * 100;
+    }, [volume1h, volume24h]);
+
+    const velocityDailyVs7d = useMemo(() => {
+        if (!volume7d) return null;
+        return (volume24h / (volume7d / 7)) * 100;
+    }, [volume24h, volume7d]);
+
+    const velocityWeeklyVs30d = useMemo(() => {
+        if (!volume30d) return null;
+        return (volume7d / (volume30d / 30)) * 100;
+    }, [volume7d, volume30d]);
+
+    const marketPenetration = useMemo(() => {
+        const denom = volumeAllTime || actualSoldVolume || 0;
+        return denom ? (currentListingVolume / denom) * 100 : null;
+    }, [currentListingVolume, volumeAllTime, actualSoldVolume]);
+
+    const recentPriceStats = useMemo(() => {
+        if (!recentPrices.length) return { hi: 0, lo: 0, vol: 0 };
+        const arr = recentPrices.map((p) => Number(p.price || 0)).filter((n) => !Number.isNaN(n));
+        if (!arr.length) return { hi: 0, lo: 0, vol: 0 };
+        const hi = Math.max(...arr);
+        const lo = Math.min(...arr);
+        const vol = lo > 0 ? (hi / lo - 1) * 100 : 0;
+        return { hi, lo, vol };
+    }, [recentPrices]);
+
+    /**
+     * Refresh handlers
+     */
+    const doRefresh = useCallback(async () => {
+        if (!refreshBlockchainData) return;
+        setIsRefreshing(true);
+        try {
+            await refreshBlockchainData();
+            lastRefreshRef.current = nowSeconds();
+        } catch (e) {
+            console.error('Error refreshing blockchain data:', e);
+        } finally {
+            setIsRefreshing(false);
+            setNextTick(refreshEvery);
+        }
+    }, [refreshBlockchainData, refreshEvery]);
+
+    useEffect(() => {
+        if (!autoRefresh) {
+            if (tickRef.current) clearInterval(tickRef.current);
+            setNextTick(refreshEvery);
+            return;
+        }
+        setNextTick((s) => (s ? s : refreshEvery));
+        tickRef.current = setInterval(() => {
+            setNextTick((t) => {
+                if (t <= 1) {
+                    // fire refresh if not already refreshing
+                    if (!isRefreshing) doRefresh();
+                    return refreshEvery;
+                }
+                return t - 1;
+            });
+        }, 1000);
+        return () => tickRef.current && clearInterval(tickRef.current);
+    }, [autoRefresh, refreshEvery, doRefresh, isRefreshing]);
+
+    /**
+     * Tab list with keyboard support
+     */
     const tabs = [
         { id: 'overview', label: 'Overview' },
         { id: 'volume', label: 'Volume Analytics' },
@@ -55,163 +231,231 @@ function MarketplaceStats() {
         { id: 'trends', label: 'Market Trends' },
         { id: 'transactions', label: 'Transaction History' },
         { id: 'tokens', label: 'Top Tokens' },
-        { id: 'sellers', label: 'Active Sellers' }
+        { id: 'sellers', label: 'Active Sellers' },
     ];
 
-    const formatAddress = (address) => {
-        if (!address) return 'Unknown';
-        return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    const onTabKeyDown = (e, idx) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+        e.preventDefault();
+        const next = e.key === 'ArrowRight' ? (idx + 1) % tabs.length : (idx - 1 + tabs.length) % tabs.length;
+        setActiveTab(tabs[next].id);
     };
 
-    const formatPrice = (value) => {
-        if (typeof value === 'number') {
-            return value < 0.01 ? value.toFixed(6) : value.toFixed(2);
-        }
-        return '0.00';
+    /**
+     * Export transactions to CSV
+     */
+    const exportTxCsv = () => {
+        if (!transactionHistory?.length) return;
+        const rows = [
+            ['Buyer', 'Total Price (raw)', 'Pretty Amount', 'Token', 'Timestamp', 'ISO Date'],
+            ...transactionHistory.map((tx) => [
+                tx.buyer,
+                tx.totalPrice,
+                formatTokenAmount(tx.totalPrice, tx.paymentToken),
+                getTokenSymbol(tx.paymentToken),
+                tx.timestamp || '',
+                tx.formattedTimestamp || (tx.timestamp ? new Date(tx.timestamp * 1000).toISOString() : ''),
+            ]),
+        ];
+        downloadCSV(`blockdust-transactions-${Date.now()}.csv`, rows);
     };
 
-    const handleRefresh = async () => {
-        if (refreshBlockchainData) {
-            setIsRefreshing(true);
-            try {
-                await refreshBlockchainData();
-                console.log("Marketplace stats refreshed from blockchain");
-            } catch (error) {
-                console.error("Error refreshing blockchain data:", error);
-            } finally {
-                setIsRefreshing(false);
-            }
-        }
+    const copy = async (text) => {
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch { }
     };
+
+    const loading = (status && (/Fetching|Scanning|Processing/i).test(status)) || false;
+    const showNoDataNotice = salesHistory.length === 0 && !/demo mode/i.test(status || '');
 
     return (
         <div className={scopedClass('container', 'MarketplaceStats')}>
+            {/* Header */}
             <div className={scopedClass('header', 'MarketplaceStats')}>
-                <h2 className={scopedClass('title', 'MarketplaceStats')}>BlockDust Marketplace Statistics</h2>
-                <button
-                    className={`${scopedClass('refresh-button', 'MarketplaceStats')} ${isRefreshing ? scopedClass('refreshing', 'MarketplaceStats') : ''}`}
-                    onClick={handleRefresh}
-                    disabled={isRefreshing}
-                >
-                    {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
-                </button>
+                <div className={scopedClass('title-wrap', 'MarketplaceStats')}>
+                    <h2 className={scopedClass('title', 'MarketplaceStats')}>BlockDust Marketplace Statistics</h2>
+                    <div className="subtitle">
+                        <span className="pill">live</span>
+                        <span className="dot" />
+                        <span className="muted">Auto refresh</span>
+                        <label className="switch">
+                            <input
+                                type="checkbox"
+                                checked={autoRefresh}
+                                onChange={(e) => setAutoRefresh(e.target.checked)}
+                                aria-label="Toggle auto refresh"
+                            />
+                            <span className="slider" />
+                        </label>
+                        <select
+                            className="small-select"
+                            value={refreshEvery}
+                            onChange={(e) => setRefreshEvery(clamp(Number(e.target.value) || 60, 10, 600))}
+                            disabled={!autoRefresh}
+                            aria-label="Auto refresh interval"
+                        >
+                            <option value={15}>15s</option>
+                            <option value={30}>30s</option>
+                            <option value={60}>60s</option>
+                            <option value={120}>2m</option>
+                            <option value={300}>5m</option>
+                        </select>
+                        {autoRefresh && <span className="countdown">in {nextTick}s</span>}
+                    </div>
+                </div>
+
+                <div className={scopedClass('actions', 'MarketplaceStats')}>
+                    <button
+                        className={`${scopedClass('refresh-button', 'MarketplaceStats')} ${isRefreshing ? scopedClass('refreshing', 'MarketplaceStats') : ''
+                            }`}
+                        onClick={doRefresh}
+                        disabled={isRefreshing}
+                    >
+                        {isRefreshing ? '🔄 Refreshing...' : '🔄 Refresh'}
+                    </button>
+                    {activeTab === 'transactions' && transactionHistory?.length > 0 && (
+                        <button className="secondary-button" onClick={exportTxCsv}>⬇️ Export CSV</button>
+                    )}
+                </div>
             </div>
 
-            {/* Show data status */}
-            {salesHistory.length === 0 && !status.includes('demo mode') && (
+            {/* Data notices */}
+            {showNoDataNotice && (
                 <div className="data-status-notice">
-                    <p>📊 No transaction data found. Try refreshing to fetch the latest blockchain events from the complete marketplace history.</p>
-                    <button className="refresh-data-button" onClick={handleRefresh} disabled={isRefreshing}>
+                    <p>📊 No transaction data found yet. Scan the full chain to backfill marketplace history.</p>
+                    <button className="refresh-data-button" onClick={doRefresh} disabled={isRefreshing}>
                         {isRefreshing ? 'Scanning Blockchain...' : '🔍 Scan All Blockchain History'}
                     </button>
                 </div>
             )}
 
-            {/* Show loading status */}
-            {status && (status.includes('Fetching') || status.includes('Scanning') || status.includes('Processing')) && (
+            {status && (/Fetching|Scanning|Processing/i).test(status) && (
                 <div className="loading-status-notice">
                     <p>🔄 {status}</p>
                 </div>
             )}
 
-            {/* Tab Navigation */}
-            <div className={scopedClass('tabs', 'MarketplaceStats')}>
-                {tabs.map(tab => (
+            {/* Tabs */}
+            <div className={scopedClass('tabs', 'MarketplaceStats')} role="tablist" aria-label="Marketplace Stats Tabs">
+                {tabs.map((tab, i) => (
                     <button
                         key={tab.id}
-                        className={`${scopedClass('tab-button', 'MarketplaceStats')} ${activeTab === tab.id ? scopedClass('tab-button--active', 'MarketplaceStats') : ''}`}
+                        role="tab"
+                        aria-selected={activeTab === tab.id}
+                        tabIndex={activeTab === tab.id ? 0 : -1}
+                        className={`${scopedClass('tab-button', 'MarketplaceStats')} ${activeTab === tab.id ? scopedClass('tab-button--active', 'MarketplaceStats') : ''
+                            }`}
                         onClick={() => setActiveTab(tab.id)}
+                        onKeyDown={(e) => onTabKeyDown(e, i)}
                     >
                         {tab.label}
                         {tab.id === 'transactions' && salesHistory.length > 0 && (
                             <span className={scopedClass('tab-badge', 'MarketplaceStats')}>{salesHistory.length}</span>
                         )}
-                        {tab.id === 'volume' && totalSales > 0 && (
+                        {tab.id === 'volume' && (totalSales > 0) && (
                             <span className={scopedClass('tab-badge', 'MarketplaceStats')}>📊</span>
                         )}
                     </button>
                 ))}
             </div>
 
-            {/* Tab Content */}
+            {/* Content */}
             <div className={scopedClass('content', 'MarketplaceStats')}>
+                {/* OVERVIEW */}
                 {activeTab === 'overview' && (
                     <div className="overview-stats">
                         <div className={scopedClass('stats-grid', 'MarketplaceStats')}>
-                            <div className={`${scopedClass('stat-card', 'MarketplaceStats')} ${scopedClass('stat-card--highlight', 'MarketplaceStats')}`}>
-                                <h3>🔥 1h Volume</h3>
-                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>${formatPrice(volume1h || 0)}</p>
-                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>{sales1h || 0} sales last hour</span>
-                            </div>
-                            <div className={`${scopedClass('stat-card', 'MarketplaceStats')} ${scopedClass('stat-card--highlight', 'MarketplaceStats')}`}>
-                                <h3>🔥 24h Volume</h3>
-                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>${formatPrice(volume24h || 0)}</p>
-                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>{sales24h || 0} sales in last 24 hours</span>
-                            </div>
-                            <div className={scopedClass('stat-card', 'MarketplaceStats')}>
-                                <h3>📈 Total Volume (All Time)</h3>
-                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>${formatPrice(volumeAllTime || actualSoldVolume || 0)}</p>
-                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>{totalSales} total transactions</span>
-                            </div>
-                            <div className={scopedClass('stat-card', 'MarketplaceStats')}>
-                                <h3>💰 Current Listings</h3>
-                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>${formatPrice(currentListingVolume)}</p>
-                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>Available for purchase</span>
-                            </div>
-                            <div className={scopedClass('stat-card', 'MarketplaceStats')}>
-                                <h3>📊 Average Sale</h3>
-                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>
-                                    ${formatPrice(avgPrice || 0)}
-                                </p>
-                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>Per transaction</span>
-                            </div>
-                            <div className={scopedClass('stat-card', 'MarketplaceStats')}>
-                                <h3>🏆 Market Health</h3>
-                                <p className={scopedClass('stat-value', 'MarketplaceStats')}>{formatPrice(marketHealthScore || 0)}/100</p>
-                                <span className={scopedClass('stat-label', 'MarketplaceStats')}>
-                                    {marketHealthScore >= 75 ? '🟢 Excellent' :
-                                        marketHealthScore >= 50 ? '🟡 Good' :
-                                            marketHealthScore >= 25 ? '🟠 Fair' : '🔴 Poor'}
-                                </span>
-                            </div>
+                            {loading ? (
+                                <>
+                                    <StatSkeleton />
+                                    <StatSkeleton />
+                                    <StatSkeleton />
+                                    <StatSkeleton />
+                                    <StatSkeleton />
+                                    <StatSkeleton />
+                                </>
+                            ) : (
+                                <>
+                                    <div className={`${scopedClass('stat-card', 'MarketplaceStats')} ${scopedClass('stat-card--highlight', 'MarketplaceStats')}`}>
+                                        <div className="stat-top">
+                                            <h3>🔥 1h Volume</h3>
+                                            <span className={`delta ${volume1h >= (volume24h / 24 || 0) ? 'up' : 'down'}`}>
+                                                {volume24h ? (((volume1h / (volume24h / 24)) - 1) * 100).toFixed(1) : '0.0'}%
+                                            </span>
+                                        </div>
+                                        <p className={scopedClass('stat-value', 'MarketplaceStats')}>${fmtUSD(volume1h)}</p>
+                                        <span className={scopedClass('stat-label', 'MarketplaceStats')}>{sales1h} sales last hour</span>
+                                        <Sparkline points={[...hourlyVolume.slice(0, 12)].reverse()} />
+                                    </div>
+
+                                    <div className={`${scopedClass('stat-card', 'MarketplaceStats')} ${scopedClass('stat-card--highlight', 'MarketplaceStats')}`}>
+                                        <div className="stat-top">
+                                            <h3>🔥 24h Volume</h3>
+                                            <span className={`delta ${trendUp24h ? 'up' : 'down'}`}>
+                                                {velocityDailyVs7d ? (velocityDailyVs7d - 100).toFixed(1) : '0.0'}%
+                                            </span>
+                                        </div>
+                                        <p className={scopedClass('stat-value', 'MarketplaceStats')}>${fmtUSD(volume24h)}</p>
+                                        <span className={scopedClass('stat-label', 'MarketplaceStats')}>{sales24h} sales in last 24h</span>
+                                        <Bars data={hourlyVolume} labelPrefix="" />
+                                    </div>
+
+                                    <div className={scopedClass('stat-card', 'MarketplaceStats')}>
+                                        <h3>📈 Total Volume</h3>
+                                        <p className={scopedClass('stat-value', 'MarketplaceStats')}>${fmtUSD(volumeAllTime || actualSoldVolume)}</p>
+                                        <span className={scopedClass('stat-label', 'MarketplaceStats')}>{totalSales} total transactions</span>
+                                        <Sparkline points={(dailyVolume || []).slice(0, 30).reverse()} />
+                                    </div>
+
+                                    <div className={scopedClass('stat-card', 'MarketplaceStats')}>
+                                        <h3>💰 Listings Value</h3>
+                                        <p className={scopedClass('stat-value', 'MarketplaceStats')}>${fmtUSD(currentListingVolume)}</p>
+                                        <span className={scopedClass('stat-label', 'MarketplaceStats')}>Available to buy</span>
+                                        <span className="sub-pill">Penetration: {marketPenetration ? `${marketPenetration.toFixed(1)}%` : 'N/A'}</span>
+                                    </div>
+
+                                    <div className={scopedClass('stat-card', 'MarketplaceStats')}>
+                                        <h3>📊 Average Sale</h3>
+                                        <p className={scopedClass('stat-value', 'MarketplaceStats')}>${fmtUSD(avgPrice)}</p>
+                                        <span className={scopedClass('stat-label', 'MarketplaceStats')}>Per transaction</span>
+                                        <Sparkline points={recentPrices.map((p) => p.price)} />
+                                    </div>
+
+                                    <div className={scopedClass('stat-card', 'MarketplaceStats')}>
+                                        <h3>🏆 Market Health</h3>
+                                        <p className={scopedClass('stat-value', 'MarketplaceStats')}>{fmtUSD(marketHealthScore)}/100</p>
+                                        <span className={`health-badge ${marketHealthScore >= 75 ? 'good' : marketHealthScore >= 50 ? 'ok' : marketHealthScore >= 25 ? 'warn' : 'bad'
+                                            }`}>
+                                            {marketHealthScore >= 75 ? 'Excellent' : marketHealthScore >= 50 ? 'Good' : marketHealthScore >= 25 ? 'Fair' : 'Poor'}
+                                        </span>
+                                    </div>
+                                </>
+                            )}
                         </div>
 
-                        {/* Enhanced Volume Summary */}
+                        {/* Volume by period */}
                         <div className="volume-summary">
                             <h3>📅 Volume by Time Period</h3>
                             <div className="volume-periods">
-                                <div className="period-item">
-                                    <span className="period-label">1 Hour:</span>
-                                    <span className="period-value">${formatPrice(volume1h || 0)} ({sales1h || 0} sales)</span>
-                                </div>
-                                <div className="period-item">
-                                    <span className="period-label">6 Hours:</span>
-                                    <span className="period-value">${formatPrice(volume6h || 0)} ({sales6h || 0} sales)</span>
-                                </div>
-                                <div className="period-item">
-                                    <span className="period-label">12 Hours:</span>
-                                    <span className="period-value">${formatPrice(volume12h || 0)} ({sales12h || 0} sales)</span>
-                                </div>
-                                <div className="period-item">
-                                    <span className="period-label">24 Hours:</span>
-                                    <span className="period-value">${formatPrice(volume24h || 0)} ({sales24h || 0} sales)</span>
-                                </div>
-                                <div className="period-item">
-                                    <span className="period-label">7 Days:</span>
-                                    <span className="period-value">${formatPrice(volume7d || 0)} ({sales7d || 0} sales)</span>
-                                </div>
-                                <div className="period-item">
-                                    <span className="period-label">30 Days:</span>
-                                    <span className="period-value">${formatPrice(volume30d || 0)} ({sales30d || 0} sales)</span>
-                                </div>
-                                <div className="period-item">
-                                    <span className="period-label">All Time:</span>
-                                    <span className="period-value">${formatPrice(volumeAllTime || actualSoldVolume || 0)} ({totalSales} sales)</span>
-                                </div>
+                                {[
+                                    ['1 Hour', volume1h, sales1h],
+                                    ['6 Hours', volume6h, sales6h],
+                                    ['12 Hours', volume12h, sales12h],
+                                    ['24 Hours', volume24h, sales24h],
+                                    ['7 Days', volume7d, sales7d],
+                                    ['30 Days', volume30d, sales30d],
+                                    ['All Time', volumeAllTime || actualSoldVolume, totalSales],
+                                ].map(([label, vol, s]) => (
+                                    <div key={label} className="period-item">
+                                        <span className="period-label">{label}:</span>
+                                        <span className="period-value">${fmtUSD(vol || 0)} ({s || 0} sales)</span>
+                                    </div>
+                                ))}
                             </div>
                         </div>
 
-                        {/* Quick Analytics Summary */}
+                        {/* Quick insights */}
                         <div className="quick-analytics">
                             <h3>🚀 Quick Insights</h3>
                             <div className="insight-items">
@@ -221,260 +465,111 @@ function MarketplaceStats() {
                                 </div>
                                 <div className="insight-item">
                                     <span className="insight-label">🏆 Highest Sale:</span>
-                                    <span className="insight-value">${formatPrice(highestPrice || 0)}</span>
+                                    <span className="insight-value">${fmtUSD(highestPrice || 0)}</span>
                                 </div>
                                 <div className="insight-item">
                                     <span className="insight-label">💎 Floor Price:</span>
-                                    <span className="insight-value">${formatPrice(lowestPrice || 0)}</span>
+                                    <span className="insight-value">${fmtUSD(lowestPrice || 0)}</span>
                                 </div>
                                 <div className="insight-item">
                                     <span className="insight-label">⚡ Market Velocity:</span>
-                                    <span className="insight-value">{formatPrice((marketVelocity24h || 0) * 100)}%</span>
+                                    <span className="insight-value">{fmtUSD((marketVelocity24h || 0) * 100)}%</span>
                                 </div>
                             </div>
                         </div>
                     </div>
                 )}
 
+                {/* VOLUME ANALYTICS */}
                 {activeTab === 'volume' && (
                     <div className="volume-analytics">
                         <h3>📊 Comprehensive Volume Analytics</h3>
 
                         <div className="volume-metrics-grid">
-                            <div className="volume-metric-card">
-                                <h4>⚡ 1 Hour Activity</h4>
-                                <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Volume:</span>
-                                        <span className="metric-value">${formatPrice(volume1h || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Sales:</span>
-                                        <span className="metric-value">{sales1h || 0} transactions</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Avg Sale:</span>
-                                        <span className="metric-value">
-                                            ${(sales1h || 0) > 0 ? formatPrice((volume1h || 0) / (sales1h || 1)) : '0.00'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="volume-metric-card">
-                                <h4>🔥 6 Hour Activity</h4>
-                                <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Volume:</span>
-                                        <span className="metric-value">${formatPrice(volume6h || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Sales:</span>
-                                        <span className="metric-value">{sales6h || 0} transactions</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Avg Sale:</span>
-                                        <span className="metric-value">
-                                            ${(sales6h || 0) > 0 ? formatPrice((volume6h || 0) / (sales6h || 1)) : '0.00'}
-                                        </span>
+                            {[
+                                ['⚡ 1 Hour Activity', volume1h, sales1h, 1],
+                                ['🔥 6 Hour Activity', volume6h, sales6h, 6],
+                                ['🔥 12 Hour Activity', volume12h, sales12h, 12],
+                                ['🔥 24 Hour Activity', volume24h, sales24h, 24, true],
+                                ['📅 7 Day Activity', volume7d, sales7d, 7 * 24],
+                                ['🗓️ 30 Day Activity', volume30d, sales30d, 30 * 24],
+                            ].map(([title, vol, s, hours, highlight]) => (
+                                <div key={title} className={`volume-metric-card ${highlight ? 'highlight' : ''}`}>
+                                    <h4>{title}</h4>
+                                    <div className="metric-details">
+                                        <div className="metric-row"><span>Volume:</span><span className="metric-value">${fmtUSD(vol || 0)}</span></div>
+                                        <div className="metric-row"><span>Sales:</span><span className="metric-value">{s || 0} transactions</span></div>
+                                        <div className="metric-row">
+                                            <span>Avg Sale:</span>
+                                            <span className="metric-value">
+                                                ${(s || 0) > 0 ? fmtUSD((vol || 0) / (s || 1)) : '0.00'}
+                                            </span>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-
-                            <div className="volume-metric-card">
-                                <h4>🔥 12 Hour Activity</h4>
-                                <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Volume:</span>
-                                        <span className="metric-value">${formatPrice(volume12h || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Sales:</span>
-                                        <span className="metric-value">{sales12h || 0} transactions</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Avg Sale:</span>
-                                        <span className="metric-value">
-                                            ${(sales12h || 0) > 0 ? formatPrice((volume12h || 0) / (sales12h || 1)) : '0.00'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="volume-metric-card highlight">
-                                <h4>🔥 24 Hour Activity</h4>
-                                <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Volume:</span>
-                                        <span className="metric-value">${formatPrice(volume24h || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Sales:</span>
-                                        <span className="metric-value">{sales24h || 0} transactions</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Avg Sale:</span>
-                                        <span className="metric-value">
-                                            ${(sales24h || 0) > 0 ? formatPrice((volume24h || 0) / (sales24h || 1)) : '0.00'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="volume-metric-card">
-                                <h4>📅 7 Day Activity</h4>
-                                <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Volume:</span>
-                                        <span className="metric-value">${formatPrice(volume7d || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Sales:</span>
-                                        <span className="metric-value">{sales7d || 0} transactions</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Avg Sale:</span>
-                                        <span className="metric-value">
-                                            ${(sales7d || 0) > 0 ? formatPrice((volume7d || 0) / (sales7d || 1)) : '0.00'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="volume-metric-card">
-                                <h4>🗓️ 30 Day Activity</h4>
-                                <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Volume:</span>
-                                        <span className="metric-value">${formatPrice(volume30d || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Sales:</span>
-                                        <span className="metric-value">{sales30d || 0} transactions</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Avg Sale:</span>
-                                        <span className="metric-value">
-                                            ${(sales30d || 0) > 0 ? formatPrice((volume30d || 0) / (sales30d || 1)) : '0.00'}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
+                            ))}
                         </div>
 
-                        {/* Enhanced Volume Comparison */}
                         <div className="volume-comparison">
                             <h4>📈 Volume Trends & Performance</h4>
                             <div className="comparison-items">
                                 <div className="comparison-item">
                                     <span className="comparison-label">Hourly Velocity (1h vs 24h avg):</span>
-                                    <span className="comparison-value">
-                                        {volume24h > 0 ?
-                                            `${((volume1h || 0) / ((volume24h || 0) / 24) * 100).toFixed(1)}%` :
-                                            'N/A'
-                                        }
-                                    </span>
+                                    <span className="comparison-value">{velocityHourlyVs24h ? `${velocityHourlyVs24h.toFixed(1)}%` : 'N/A'}</span>
                                 </div>
                                 <div className="comparison-item">
                                     <span className="comparison-label">Daily Velocity (24h vs 7d avg):</span>
-                                    <span className="comparison-value">
-                                        {volume7d > 0 ?
-                                            `${((volume24h || 0) / ((volume7d || 0) / 7) * 100).toFixed(1)}%` :
-                                            'N/A'
-                                        }
-                                    </span>
+                                    <span className="comparison-value">{velocityDailyVs7d ? `${velocityDailyVs7d.toFixed(1)}%` : 'N/A'}</span>
                                 </div>
                                 <div className="comparison-item">
                                     <span className="comparison-label">Weekly Velocity (7d vs 30d avg):</span>
-                                    <span className="comparison-value">
-                                        {volume30d > 0 ?
-                                            `${((volume7d || 0) / ((volume30d || 0) / 30) * 100).toFixed(1)}%` :
-                                            'N/A'
-                                        }
-                                    </span>
+                                    <span className="comparison-value">{velocityWeeklyVs30d ? `${velocityWeeklyVs30d.toFixed(1)}%` : 'N/A'}</span>
                                 </div>
                                 <div className="comparison-item">
                                     <span className="comparison-label">Market Penetration (listings vs sold):</span>
-                                    <span className="comparison-value">
-                                        {(volumeAllTime || actualSoldVolume) > 0 ?
-                                            `${(currentListingVolume / (volumeAllTime || actualSoldVolume || 1) * 100).toFixed(1)}%` :
-                                            'N/A'
-                                        }
-                                    </span>
+                                    <span className="comparison-value">{marketPenetration !== null ? `${marketPenetration.toFixed(1)}%` : 'N/A'}</span>
                                 </div>
                             </div>
                         </div>
                     </div>
                 )}
 
+                {/* ADVANCED */}
                 {activeTab === 'advanced' && (
                     <div className="advanced-analytics">
                         <h3>🎯 Advanced Market Analytics</h3>
-
                         <div className="advanced-metrics-grid">
                             <div className="advanced-metric-card">
                                 <h4>💎 Price Analytics</h4>
                                 <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Average Price:</span>
-                                        <span className="metric-value">${formatPrice(avgPrice || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Highest Sale:</span>
-                                        <span className="metric-value">${formatPrice(highestPrice || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Floor Price:</span>
-                                        <span className="metric-value">${formatPrice(lowestPrice || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Price Range:</span>
-                                        <span className="metric-value">
-                                            ${formatPrice((highestPrice || 0) - (lowestPrice || 0))}
-                                        </span>
-                                    </div>
+                                    <div className="metric-row"><span>Average Price:</span><span className="metric-value">${fmtUSD(avgPrice)}</span></div>
+                                    <div className="metric-row"><span>Highest Sale:</span><span className="metric-value">${fmtUSD(highestPrice)}</span></div>
+                                    <div className="metric-row"><span>Floor Price:</span><span className="metric-value">${fmtUSD(lowestPrice)}</span></div>
+                                    <div className="metric-row"><span>Price Range:</span><span className="metric-value">${fmtUSD((highestPrice || 0) - (lowestPrice || 0))}</span></div>
                                 </div>
                             </div>
 
                             <div className="advanced-metric-card">
                                 <h4>📊 Market Dynamics</h4>
                                 <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Market Cap:</span>
-                                        <span className="metric-value">${formatPrice(marketCap || 0)}</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Liquidity Ratio:</span>
-                                        <span className="metric-value">{formatPrice((liquidityRatio || 0) * 100)}%</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Turnover Rate:</span>
-                                        <span className="metric-value">{formatPrice(turnoverRate || 0)}%</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Unique Buyers:</span>
-                                        <span className="metric-value">{uniqueBuyers || 0}</span>
-                                    </div>
+                                    <div className="metric-row"><span>Market Cap:</span><span className="metric-value">${fmtUSD(marketCap)}</span></div>
+                                    <div className="metric-row"><span>Liquidity Ratio:</span><span className="metric-value">{fmtUSD((liquidityRatio || 0) * 100)}%</span></div>
+                                    <div className="metric-row"><span>Turnover Rate:</span><span className="metric-value">{fmtUSD(turnoverRate)}%</span></div>
+                                    <div className="metric-row"><span>Unique Buyers:</span><span className="metric-value">{uniqueBuyers || 0}</span></div>
                                 </div>
                             </div>
 
                             <div className="advanced-metric-card">
                                 <h4>⚡ Market Velocity</h4>
                                 <div className="metric-details">
+                                    <div className="metric-row"><span>24h Velocity:</span><span className="metric-value">{fmtUSD((marketVelocity24h || 0) * 100)}%</span></div>
+                                    <div className="metric-row"><span>7d Velocity:</span><span className="metric-value">{fmtUSD((marketVelocity7d || 0) * 100)}%</span></div>
                                     <div className="metric-row">
-                                        <span>24h Velocity:</span>
-                                        <span className="metric-value">{formatPrice((marketVelocity24h || 0) * 100)}%</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>7d Velocity:</span>
-                                        <span className="metric-value">{formatPrice((marketVelocity7d || 0) * 100)}%</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Market Momentum:</span>
+                                        <span>Momentum:</span>
                                         <span className="metric-value">
-                                            {(marketVelocity24h || 0) > 1 ? '🚀 Accelerating' :
-                                                (marketVelocity24h || 0) > 0.5 ? '📈 Growing' :
-                                                    (marketVelocity24h || 0) > 0.1 ? '➡️ Stable' : '📉 Declining'}
+                                            {(marketVelocity24h || 0) > 1.5 ? '🚀 High' :
+                                                (marketVelocity24h || 0) > 1 ? '📈 Moderate' :
+                                                    (marketVelocity24h || 0) > 0.5 ? '➡️ Stable' : '📉 Low'}
                                         </span>
                                     </div>
                                 </div>
@@ -483,61 +578,47 @@ function MarketplaceStats() {
                             <div className="advanced-metric-card highlight">
                                 <h4>🏆 Market Health Score</h4>
                                 <div className="metric-details">
-                                    <div className="metric-row">
-                                        <span>Overall Health:</span>
-                                        <span className="metric-value">{formatPrice(marketHealthScore || 0)}/100</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Health Rating:</span>
+                                    <div className="metric-row"><span>Overall Health:</span><span className="metric-value">{fmtUSD(marketHealthScore)}/100</span></div>
+                                    <div className="metric-row"><span>Rating:</span>
                                         <span className="metric-value">
                                             {marketHealthScore >= 75 ? '🟢 Excellent' :
                                                 marketHealthScore >= 50 ? '🟡 Good' :
                                                     marketHealthScore >= 25 ? '🟠 Fair' : '🔴 Poor'}
                                         </span>
                                     </div>
-                                    <div className="metric-row">
-                                        <span>Growth Rate (24h):</span>
-                                        <span className="metric-value">{formatPrice(growthRate24h || 0)}%</span>
-                                    </div>
-                                    <div className="metric-row">
-                                        <span>Growth Rate (7d):</span>
-                                        <span className="metric-value">{formatPrice(growthRate7d || 0)}%</span>
-                                    </div>
+                                    <div className="metric-row"><span>Growth (24h):</span><span className="metric-value">{fmtUSD(growthRate24h)}%</span></div>
+                                    <div className="metric-row"><span>Growth (7d):</span><span className="metric-value">{fmtUSD(growthRate7d)}%</span></div>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Market Insights */}
                         <div className="market-insights">
                             <h4>🔍 Market Insights</h4>
                             <div className="insight-cards">
                                 <div className="insight-card">
                                     <h5>📈 Trading Activity</h5>
                                     <p>
-                                        {(sales24h || 0) > (sales7d || 0) / 7 ?
-                                            `Trading activity is ${((sales24h || 0) / ((sales7d || 0) / 7 || 1) * 100).toFixed(0)}% above average` :
-                                            `Trading activity is ${(100 - (sales24h || 0) / ((sales7d || 0) / 7 || 1) * 100).toFixed(0)}% below average`
-                                        }
+                                        {(sales24h || 0) > (sales7d || 0) / 7
+                                            ? `Trading activity is ${(((sales24h || 0) / (((sales7d || 0) / 7) || 1)) * 100).toFixed(0)}% above avg`
+                                            : `Trading activity is ${(100 - (((sales24h || 0) / (((sales7d || 0) / 7) || 1)) * 100)).toFixed(0)}% below avg`}
                                     </p>
                                 </div>
                                 <div className="insight-card">
                                     <h5>💰 Volume Trend</h5>
                                     <p>
-                                        {(volume24h || 0) > (volume7d || 0) / 7 ?
-                                            `Volume is trending ${((volume24h || 0) / ((volume7d || 0) / 7 || 1)).toFixed(1)}x above the weekly average` :
-                                            `Volume is ${(((volume7d || 0) / 7 || 1) / (volume24h || 1)).toFixed(1)}x below the weekly average`
-                                        }
+                                        {(volume24h || 0) > (volume7d || 0) / 7
+                                            ? `Volume is ${((volume24h || 0) / (((volume7d || 0) / 7) || 1)).toFixed(1)}x above weekly avg`
+                                            : `Volume is ${(((((volume7d || 0) / 7) || 1) / (volume24h || 1))).toFixed(1)}x below weekly avg`}
                                     </p>
                                 </div>
                                 <div className="insight-card">
                                     <h5>🎯 Market Position</h5>
                                     <p>
-                                        {(liquidityRatio || 0) > 0.5 ?
-                                            'High liquidity market with strong available inventory' :
-                                            (liquidityRatio || 0) > 0.2 ?
-                                                'Balanced market with moderate liquidity' :
-                                                'High demand market with limited available inventory'
-                                        }
+                                        {(liquidityRatio || 0) > 0.5
+                                            ? 'High liquidity market with strong inventory'
+                                            : (liquidityRatio || 0) > 0.2
+                                                ? 'Balanced market with moderate liquidity'
+                                                : 'High demand market with limited inventory'}
                                     </p>
                                 </div>
                             </div>
@@ -545,11 +626,11 @@ function MarketplaceStats() {
                     </div>
                 )}
 
+                {/* TRENDS */}
                 {activeTab === 'trends' && (
                     <div className="market-trends">
                         <h3>📈 Market Trends & Patterns</h3>
 
-                        {/* Growth Rates */}
                         <div className="trends-section">
                             <h4>🚀 Growth Analysis</h4>
                             <div className="trends-grid">
@@ -558,13 +639,9 @@ function MarketplaceStats() {
                                     <div className="trend-value">
                                         {salesHistory.length > 0 ? (
                                             <span className={`growth-indicator ${(growthRate24h || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                                {(growthRate24h || 0) >= 0 ? '📈' : '📉'} {formatPrice(Math.abs(growthRate24h || 0))}%
+                                                {(growthRate24h || 0) >= 0 ? '📈' : '📉'} {fmtUSD(Math.abs(growthRate24h || 0))}%
                                             </span>
-                                        ) : (
-                                            <span className="unavailable-metric">
-                                                📊 Insufficient data
-                                            </span>
-                                        )}
+                                        ) : <span className="unavailable-metric">📊 Insufficient data</span>}
                                     </div>
                                     <p>{salesHistory.length > 0 ? 'Compared to previous 24h period' : 'Requires transaction history'}</p>
                                 </div>
@@ -574,13 +651,9 @@ function MarketplaceStats() {
                                     <div className="trend-value">
                                         {salesHistory.length > 0 ? (
                                             <span className={`growth-indicator ${(growthRate7d || 0) >= 0 ? 'positive' : 'negative'}`}>
-                                                {(growthRate7d || 0) >= 0 ? '📈' : '📉'} {formatPrice(Math.abs(growthRate7d || 0))}%
+                                                {(growthRate7d || 0) >= 0 ? '📈' : '📉'} {fmtUSD(Math.abs(growthRate7d || 0))}%
                                             </span>
-                                        ) : (
-                                            <span className="unavailable-metric">
-                                                📊 Insufficient data
-                                            </span>
-                                        )}
+                                        ) : <span className="unavailable-metric">📊 Insufficient data</span>}
                                     </div>
                                     <p>{salesHistory.length > 0 ? 'Compared to previous 7d period' : 'Requires transaction history'}</p>
                                 </div>
@@ -594,71 +667,36 @@ function MarketplaceStats() {
                                                     (marketVelocity24h || 0) > 1 ? '📈 Moderate' :
                                                         (marketVelocity24h || 0) > 0.5 ? '➡️ Stable' : '📉 Low'}
                                             </span>
-                                        ) : (
-                                            <span className="unavailable-metric">
-                                                📊 No data available
-                                            </span>
-                                        )}
+                                        ) : <span className="unavailable-metric">📊 No data available</span>}
                                     </div>
                                     <p>{salesHistory.length > 0 ? 'Current trading momentum' : 'Based on transaction activity'}</p>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Volume Distribution */}
-                        {hourlyVolume && hourlyVolume.length > 0 && (
+                        {hourlyVolume?.length > 0 && (
                             <div className="trends-section">
                                 <h4>⏰ 24h Volume Distribution</h4>
-                                <div className="volume-distribution">
-                                    <div className="volume-bars">
-                                        {hourlyVolume.slice(0, 24).map((vol, index) => (
-                                            <div key={index} className="volume-bar">
-                                                <div
-                                                    className="bar-fill"
-                                                    style={{
-                                                        height: `${Math.max((vol / Math.max(...hourlyVolume) * 100), 2)}%`
-                                                    }}
-                                                    title={`${index}h ago: $${formatPrice(vol)}`}
-                                                ></div>
-                                                <span className="bar-label">{index}h</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    <p>Volume distribution over the last 24 hours</p>
-                                </div>
+                                <Bars data={hourlyVolume} className="volume-bars" labelPrefix="" maxBars={24} />
+                                <p>Volume distribution over the last 24 hours</p>
                             </div>
                         )}
 
-                        {/* Price Trends */}
-                        {priceHistory && priceHistory.length > 0 && (
+                        {recentPrices.length > 0 && (
                             <div className="trends-section">
                                 <h4>💰 Recent Price Activity</h4>
                                 <div className="price-trends">
                                     <div className="price-stats">
-                                        <div className="price-stat">
-                                            <span className="stat-label">Recent High:</span>
-                                            <span className="stat-value">${formatPrice(Math.max(...priceHistory.slice(0, 10).map(p => p.price)))}</span>
-                                        </div>
-                                        <div className="price-stat">
-                                            <span className="stat-label">Recent Low:</span>
-                                            <span className="stat-value">${formatPrice(Math.min(...priceHistory.slice(0, 10).map(p => p.price)))}</span>
-                                        </div>
-                                        <div className="price-stat">
-                                            <span className="stat-label">Price Volatility:</span>
-                                            <span className="stat-value">
-                                                {priceHistory.length > 1 ?
-                                                    `${((Math.max(...priceHistory.slice(0, 10).map(p => p.price)) / Math.min(...priceHistory.slice(0, 10).map(p => p.price)) - 1) * 100).toFixed(1)}%` :
-                                                    'N/A'
-                                                }
-                                            </span>
-                                        </div>
+                                        <div className="price-stat"><span className="stat-label">Recent High:</span><span className="stat-value">${fmtUSD(recentPriceStats.hi)}</span></div>
+                                        <div className="price-stat"><span className="stat-label">Recent Low:</span><span className="stat-value">${fmtUSD(recentPriceStats.lo)}</span></div>
+                                        <div className="price-stat"><span className="stat-label">Price Volatility:</span><span className="stat-value">{fmtUSD(recentPriceStats.vol)}%</span></div>
                                     </div>
                                     <div className="recent-sales">
                                         <h5>📊 Recent Sales Pattern</h5>
-                                        {priceHistory.slice(0, 5).map((sale, index) => (
-                                            <div key={index} className="recent-sale">
-                                                <span className="sale-price">${formatPrice(sale.price)}</span>
-                                                <span className="sale-time">{new Date(sale.timestamp).toLocaleString()}</span>
+                                        {recentPrices.slice(0, 8).map((sale, i) => (
+                                            <div key={i} className="recent-sale">
+                                                <span className="sale-price">${fmtUSD(sale.price)}</span>
+                                                <span className="sale-time">{new Date((sale.timestamp || Date.now())).toLocaleString()}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -668,27 +706,47 @@ function MarketplaceStats() {
                     </div>
                 )}
 
+                {/* TRANSACTIONS */}
                 {activeTab === 'transactions' && (
                     <div className="transaction-history">
-                        <h3>Recent Transactions</h3>
-                        {transactionHistory.length > 0 ? (
-                            <div className="transactions-table">
-                                <div className="table-header">
-                                    <span>Buyer</span>
-                                    <span>Price</span>
-                                    <span>Token</span>
-                                    <span>Date</span>
+                        <div className="transactions-header">
+                            <h3>Recent Transactions</h3>
+                            <div className="row-actions">
+                                <button className="secondary-button" onClick={doRefresh} disabled={isRefreshing}>
+                                    {isRefreshing ? 'Refreshing…' : 'Refresh'}
+                                </button>
+                                {transactionHistory?.length > 0 && (
+                                    <button className="secondary-button" onClick={exportTxCsv}>⬇️ Export CSV</button>
+                                )}
+                            </div>
+                        </div>
+
+                        {transactionHistory?.length > 0 ? (
+                            <div className="transactions-table" role="table" aria-label="Transactions">
+                                <div className="table-header" role="row">
+                                    <span role="columnheader">Buyer</span>
+                                    <span role="columnheader">Price</span>
+                                    <span role="columnheader">Token</span>
+                                    <span role="columnheader">Date</span>
+                                    <span role="columnheader">Action</span>
                                 </div>
-                                {transactionHistory.map((tx, index) => (
-                                    <div key={index} className="table-row">
-                                        <span className="buyer-address">{formatAddress(tx.buyer)}</span>
-                                        <span className="price-amount">
+                                {transactionHistory.map((tx, idx) => (
+                                    <div key={idx} className="table-row" role="row">
+                                        <span className="buyer-address" role="cell" title={tx.buyer}>
+                                            {shortAddr(tx.buyer)}
+                                        </span>
+                                        <span className="price-amount" role="cell">
                                             {formatTokenAmount(tx.totalPrice, tx.paymentToken)}
                                         </span>
-                                        <span className="token-symbol">
+                                        <span className="token-symbol" role="cell">
                                             {getTokenSymbol(tx.paymentToken)}
                                         </span>
-                                        <span className="transaction-date">{tx.formattedTimestamp}</span>
+                                        <span className="transaction-date" role="cell">
+                                            {tx.formattedTimestamp || (tx.timestamp ? new Date((tx.timestamp) * 1000).toLocaleString() : '—')}
+                                        </span>
+                                        <span className="row-actions-cell" role="cell">
+                                            <button className="icon-btn" title="Copy buyer address" onClick={() => copy(tx.buyer)}>📋</button>
+                                        </span>
                                     </div>
                                 ))}
                             </div>
@@ -696,7 +754,7 @@ function MarketplaceStats() {
                             <div className="no-data">
                                 <p>🔍 No transactions found</p>
                                 <p>Recent purchases may take a few minutes to appear. Try refreshing the data.</p>
-                                <button className="refresh-data-button" onClick={handleRefresh} disabled={isRefreshing}>
+                                <button className="refresh-data-button" onClick={doRefresh} disabled={isRefreshing}>
                                     {isRefreshing ? 'Refreshing...' : 'Refresh Transaction Data'}
                                 </button>
                             </div>
@@ -704,50 +762,48 @@ function MarketplaceStats() {
                     </div>
                 )}
 
+                {/* TOKENS */}
                 {activeTab === 'tokens' && (
                     <div className="top-tokens">
                         <h3>Top Payment Tokens</h3>
-                        {topTokens.length > 0 ? (
+                        {topTokens?.length > 0 ? (
                             <div className="tokens-list">
                                 {topTokens.map((token, index) => (
                                     <div key={index} className="token-item">
                                         <div className="token-rank">#{index + 1}</div>
                                         <div className="token-info">
                                             <span className="token-symbol">{getTokenSymbol(token.token)}</span>
-                                            <span className="token-volume">${formatPrice(token.volume)} volume</span>
+                                            <span className="token-volume">${fmtUSD(token.volume)}</span>
                                             <span className="token-sales">{token.sales} sales</span>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <div className="no-data">
-                                <p>No token data available yet</p>
-                            </div>
+                            <div className="no-data"><p>No token data available yet</p></div>
                         )}
                     </div>
                 )}
 
+                {/* SELLERS */}
                 {activeTab === 'sellers' && (
                     <div className="active-sellers">
                         <h3>Most Active Sellers</h3>
-                        {mostActiveSellers.length > 0 ? (
+                        {mostActiveSellers?.length > 0 ? (
                             <div className="sellers-list">
                                 {mostActiveSellers.map((seller, index) => (
                                     <div key={index} className="seller-item">
                                         <div className="seller-rank">#{index + 1}</div>
                                         <div className="seller-info">
-                                            <span className="seller-address">{formatAddress(seller.address)}</span>
+                                            <span className="seller-address" title={seller.address}>{shortAddr(seller.address)}</span>
                                             <span className="seller-listings">{seller.listingsCount} active listings</span>
-                                            <span className="seller-volume">${formatPrice(seller.totalVolume)} total</span>
+                                            <span className="seller-volume">${fmtUSD(seller.totalVolume)}</span>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <div className="no-data">
-                                <p>No seller data available yet</p>
-                            </div>
+                            <div className="no-data"><p>No seller data available yet</p></div>
                         )}
                     </div>
                 )}
