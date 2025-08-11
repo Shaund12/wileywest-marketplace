@@ -1,4 +1,4 @@
-/* ===== ULTRA PREMIUM SELL PAGE STYLING ===== */
+﻿/* ===== ULTRA PREMIUM SELL PAGE STYLING ===== */
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Inter:wght@300;400;500;700&display=swap');
 
 :root {
@@ -1475,4 +1475,313 @@ button:disabled {
     flex-shrink: 0;
     margin-top: 2px;
     color: #3498db;
+}
+
+/* ==========================================================================
+   ULTRA PREMIUM ADD-ONS (drop-in utilities)
+   Paste at the very end of SellPage.css so these win specificity.
+   ========================================================================== */
+
+/* ---- Tunables ----------------------------------------------------------- */
+:root {
+    /* Subtle noise strength (0 → 0.08 is a good range) */
+    --noise-opacity: .035;
+}
+
+/* ---- 1) Gradient Border Glow (utility) --------------------------------- */
+.glow-card {
+    position: relative;
+    border-radius: 20px;
+    isolation: isolate; /* keep effects contained */
+}
+
+    .glow-card::before,
+    .glow-card::after {
+        content: "";
+        position: absolute;
+        inset: -1px; /* border thickness */
+        border-radius: inherit;
+        background: conic-gradient( from 0deg, var(--sell-primary), var(--sell-secondary), var(--sell-accent), var(--sell-primary) );
+        z-index: -1;
+        animation: glow-rotate 10s linear infinite;
+    }
+
+    .glow-card::after {
+        filter: blur(14px);
+        opacity: .35;
+    }
+
+@keyframes glow-rotate {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Convert the conic fill into a thin border (modern mask technique) */
+@supports (-webkit-mask: none) or (mask: none) {
+    .glow-card::before {
+        padding: 1px; /* border width */
+        background-clip: padding-box;
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask-composite: exclude;
+    }
+}
+
+/* ---- 2) Ambient Film-Grain Noise (super subtle depth) ------------------ */
+/* Uses an inline SVG feTurbulence noise texture, blended softly. */
+.sell-container::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    opacity: var(--noise-opacity);
+    mix-blend-mode: soft-light;
+    background-image: url("data:image/svg+xml;utf8,\
+<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'>\
+<filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/>\
+<feColorMatrix type='saturate' values='0'/></filter>\
+<rect width='100%%' height='100%%' filter='url(%23n)' opacity='0.9'/>\
+</svg>");
+    background-size: 280px 280px;
+}
+
+/* ---- 3) Cursor-Parallax Background (override base gradient) ------------- */
+/* If you already set .sell-container::before earlier, this will override it. */
+/* It reacts to CSS vars --mx/--my (0..1). Without JS, fallbacks keep it pretty. */
+.sell-container::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    background: radial-gradient( 600px 420px at calc(var(--mx, .20) * 100%) calc(var(--my, .30) * 100%), rgba(85, 51, 255, 0.18) 0%, transparent 60% ), radial-gradient( 760px 520px at calc(var(--mx, .80) * 100%) calc(var(--my, .80) * 100%), rgba(255, 51, 102, 0.18) 0%, transparent 60% );
+    transition: background-position 120ms ease-out;
+}
+
+/* ---- 4) Subtle 3D tilt (apply to cards/images you want) ----------------- */
+.tilt-3d {
+    transform-style: preserve-3d;
+    perspective: 1000px;
+    transition: transform .5s cubic-bezier(.165,.84,.44,1), box-shadow .5s;
+}
+
+    .tilt-3d:hover {
+        transform: rotateX(4deg) rotateY(-4deg) translateZ(0);
+        box-shadow: 0 30px 60px rgba(0,0,0,.35), 0 0 30px rgba(85,51,255,.25);
+    }
+
+@media (pointer: coarse) {
+    .tilt-3d:hover {
+        transform: none;
+    }
+}
+
+/* ---- 5) Sparkle sweep + magnetic hover for primary CTA ------------------ */
+.primary-button {
+    position: relative;
+    overflow: hidden;
+    will-change: transform;
+}
+
+    .primary-button::after {
+        content: "";
+        position: absolute;
+        inset: 0 -120%;
+        background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,.25) 12%, transparent 24%);
+        transform: translateX(-100%);
+        transition: transform .8s cubic-bezier(.22,.61,.36,1);
+    }
+
+    .primary-button:hover::after {
+        transform: translateX(100%);
+    }
+
+    .primary-button:hover {
+        transform: translateY(-3px);
+    }
+
+/* ---- 6) Skeleton shimmer (use .skeleton + size helpers) ---------------- */
+.skeleton {
+    position: relative;
+    background: linear-gradient(90deg, rgba(255,255,255,.06), rgba(255,255,255,.10), rgba(255,255,255,.06));
+    background-size: 200% 100%;
+    animation: shimmer 1.3s infinite linear;
+    border-radius: 12px;
+}
+
+@keyframes shimmer {
+    to {
+        background-position: -200% 0;
+    }
+}
+
+.skeleton.text {
+    height: 14px;
+}
+
+.skeleton.title {
+    height: 22px;
+}
+
+.skeleton.block {
+    height: 160px;
+}
+
+/* ---- 7) Premium focus rings & a11y upgrades ---------------------------- */
+:where(button, .input, .token-dropdown, .add-token-button, .primary-button, .secondary-button):focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(85, 51, 255, 0.35), 0 0 0 1px rgba(255,255,255,.12) inset;
+    filter: saturate(1.05);
+}
+
+/* High-contrast user pref tweaks */
+@media (prefers-contrast: more) {
+    :root {
+        --noise-opacity: .02;
+    }
+
+    .primary-button {
+        box-shadow: 0 0 0 2px #fff;
+    }
+}
+
+/* ---- 8) Stepper / progress (hook up --progress inline from React) ------ */
+.sell-progress {
+    max-width: 1400px;
+    margin: 0 auto 24px;
+    padding: 0 20px;
+}
+
+.progress-track {
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.08);
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-fill {
+    width: var(--progress, 0%);
+    height: 100%;
+    background: var(--sell-gradient);
+    box-shadow: 0 0 18px rgba(85,51,255,.35);
+    transition: width .4s ease;
+}
+
+.progress-labels {
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+    margin-top: 10px;
+    font-size: .85rem;
+    color: rgba(255,255,255,.65);
+}
+
+    .progress-labels span.active {
+        color: #fff;
+        font-weight: 600;
+    }
+
+/* ---- 9) Chips / pills (status & token tags) ---------------------------- */
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: .4rem;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: .85rem;
+    font-weight: 600;
+    background: rgba(255,255,255,.06);
+    border: 1px solid var(--sell-border);
+}
+
+    .chip.success {
+        background: rgba(34,204,136,.14);
+        color: #caffea;
+        border-color: rgba(34,204,136,.35);
+    }
+
+    .chip.warn {
+        background: rgba(255,170,51,.12);
+        color: #ffe8c2;
+        border-color: rgba(255,170,51,.35);
+    }
+
+    .chip.error {
+        background: rgba(255,51,102,.12);
+        color: #ffc9d6;
+        border-color: rgba(255,51,102,.35);
+    }
+
+/* ---- 10) Tab "intent" hover (pairs with your existing active styles) --- */
+.preview-tabs button {
+    --peek: 0;
+    background: linear-gradient(90deg, rgba(85,51,255,.08) 0 0) no-repeat;
+    background-size: calc(var(--peek) * 100%) 100%;
+    transition: background-size .25s ease, color .25s ease, background-color .25s ease;
+}
+
+    .preview-tabs button:hover {
+        --peek: 1;
+    }
+
+/* ---- 11) Lightweight confetti (toggle .confetti on success for ~1s) ---- */
+.confetti {
+    position: relative;
+    overflow: hidden;
+}
+
+    .confetti::before, .confetti::after {
+        content: "";
+        position: absolute;
+        inset: -10%;
+        background: radial-gradient(4px 4px at 20% 30%, #ff3366 98%, transparent) 0 0/12% 12%, radial-gradient(4px 4px at 40% 70%, #33ccff 98%, transparent) 0 0/14% 14%, radial-gradient(4px 4px at 80% 40%, #22cc88 98%, transparent) 0 0/16% 16%, radial-gradient(4px 4px at 60% 20%, #ffaa33 98%, transparent) 0 0/18% 18%;
+        animation: confetti-fall 900ms ease forwards;
+        pointer-events: none;
+    }
+
+    .confetti::after {
+        filter: blur(1px);
+        opacity: .8;
+    }
+
+@keyframes confetti-fall {
+    from {
+        transform: translateY(-20%);
+        opacity: 0;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    to {
+        transform: translateY(20%);
+        opacity: 0;
+    }
+}
+
+/* ---- 12) Reduced Motion respect (keep motion tasteful) ----------------- */
+@media (prefers-reduced-motion: reduce) {
+    .glow-card::before,
+    .glow-card::after,
+    .primary-button::after,
+    .skeleton,
+    .progress-fill {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    .sell-container::before {
+        transition: none !important;
+    }
+
+    .primary-button:hover {
+        transform: none !important;
+    }
+
+    .tilt-3d:hover {
+        transform: none !important;
+    }
 }

@@ -331,6 +331,17 @@ function SellPage() {
     const { wallet, connect, provider, signer } = useWallet();
     const [searchParams] = useSearchParams();
     const priceIntervalRef = useRef(null);
+    const sellContainerRef = useRef(null);
+
+    // Cursor parallax tracking for background effect
+    const [mousePosition, setMousePosition] = useState({ x: 0.2, y: 0.3 });
+    
+    // Listing creation success state for confetti effect
+    const [listingSuccess, setListingSuccess] = useState(false);
+
+    // Progress tracking for the stepper
+    const [sellProgress, setSellProgress] = useState(0);
+    const [activeStep, setActiveStep] = useState('details');
 
     const [formData, setFormData] = useState({
         nftContract: searchParams.get('contract') || '',
@@ -366,6 +377,43 @@ function SellPage() {
     const [fees] = useState({ marketplaceFee: 2.5, creatorRoyalty: 5.0, networkFee: 0.001 });
 
     const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
+
+    // Cursor parallax effect
+    useEffect(() => {
+        const handleMouseMove = (e) => {
+            if (!sellContainerRef.current) return;
+            const rect = sellContainerRef.current.getBoundingClientRect();
+            const x = (e.clientX - rect.left) / rect.width;
+            const y = (e.clientY - rect.top) / rect.height;
+            setMousePosition({ x, y });
+            
+            // Update CSS variables for parallax effect
+            sellContainerRef.current.style.setProperty('--mx', x.toFixed(2));
+            sellContainerRef.current.style.setProperty('--my', y.toFixed(2));
+        };
+
+        document.addEventListener('mousemove', handleMouseMove);
+        return () => document.removeEventListener('mousemove', handleMouseMove);
+    }, []);
+
+    // Update progress based on form completion
+    useEffect(() => {
+        if (metadata) {
+            if (formData.price && formData.paymentToken !== '') {
+                setSellProgress(90);
+                setActiveStep('pricing');
+            } else if (ownershipVerified) {
+                setSellProgress(60);
+                setActiveStep('listing');
+            } else {
+                setSellProgress(30);
+                setActiveStep('details');
+            }
+        } else {
+            setSellProgress(formData.nftContract && formData.tokenId ? 15 : 0);
+            setActiveStep('details');
+        }
+    }, [metadata, formData, ownershipVerified]);
 
     // Cleanup
     useEffect(() => {
@@ -409,7 +457,7 @@ function SellPage() {
         }
     };
 
-    // Submit -> approval then create listing
+    // Submit -> approval then create listing (with success animation)
     const handleSubmit = async (e) => {
         e.preventDefault();
 
@@ -473,6 +521,16 @@ function SellPage() {
                 priceInWei,
                 formData.paymentToken
             );
+            
+            // Show success animation with confetti
+            setListingSuccess(true);
+            setSellProgress(100);
+            
+            // Reset confetti after animation completes
+            setTimeout(() => {
+                setListingSuccess(false);
+            }, 3000);
+            
         } catch (error) {
             setStatus(`Error: ${error.message || 'Could not create listing'}`);
         }
@@ -970,13 +1028,25 @@ function SellPage() {
     };
 
     /* =========================
-       UI
+       UI with enhanced styling
        ========================= */
     return (
-        <div className="sell-container">
+        <div className="sell-container" ref={sellContainerRef}>
             <div className="page-header">
                 <h1>Sell Your NFT</h1>
                 <p>Create a listing for your digital asset</p>
+            </div>
+
+            {/* Progress Stepper */}
+            <div className="sell-progress">
+                <div className="progress-track">
+                    <div className="progress-fill" style={{ '--progress': `${sellProgress}%` }}></div>
+                </div>
+                <div className="progress-labels">
+                    <span className={activeStep === 'details' ? 'active' : ''}>NFT Details</span>
+                    <span className={activeStep === 'listing' ? 'active' : ''}>Listing Info</span>
+                    <span className={activeStep === 'pricing' ? 'active' : ''}>Review & Submit</span>
+                </div>
             </div>
 
             {/* Price Ticker with Uniswap Price Data */}
@@ -1024,7 +1094,7 @@ function SellPage() {
 
             <div className="sell-layout">
                 <div className="sell-form">
-                    <div className="card">
+                    <div className={`card glow-card ${listingSuccess ? 'confetti' : ''}`}>
                         <form onSubmit={handleSubmit}>
                             <div className="form-section">
                                 <h3>NFT Details</h3>
@@ -1060,6 +1130,13 @@ function SellPage() {
                                         Fetch NFT Data
                                     </button>
                                 )}
+                                
+                                {loading && (
+                                    <div className="form-group">
+                                        <div className="skeleton text"></div>
+                                        <div className="skeleton block"></div>
+                                    </div>
+                                )}
                             </div>
 
                             {nftType && (
@@ -1080,7 +1157,9 @@ function SellPage() {
                                                 max={balance}
                                                 required
                                             />
-                                            <div className="input-info">Available: {balance}</div>
+                                            <div className="input-info">
+                                                Available: <span className="chip">{balance}</span>
+                                            </div>
                                         </div>
                                         {nftType === 'ERC721' && <div className="small">ERC-721 NFTs are unique and quantity will be 1</div>}
                                     </div>
@@ -1108,6 +1187,7 @@ function SellPage() {
                                         </div>
                                     </div>
 
+                                    {/* Payment token selector with enhanced UI */}
                                     <div className="form-group">
                                         <div className="payment-header">
                                             <label>Payment Token</label>
@@ -1308,12 +1388,24 @@ function SellPage() {
                                 )}
                             </div>
 
-                            {status && <div className={`status-message ${String(status).includes('Warning') ? 'warning' : ''}`}>{status}</div>}
+                            {status && (
+                                <div className={`status-message ${String(status).includes('Warning') ? 'warning' : ''}`}>
+                                    {status.includes('Error') ? (
+                                        <span className="chip error">{status}</span>
+                                    ) : status.includes('Warning') ? (
+                                        <span className="chip warn">{status}</span>
+                                    ) : status.includes('Success') ? (
+                                        <span className="chip success">{status}</span>
+                                    ) : (
+                                        status
+                                    )}
+                                </div>
+                            )}
                         </form>
                     </div>
                 </div>
 
-                {/* Preview */}
+                {/* Preview with 3D tilt effect */}
                 <div className="nft-preview">
                     {loading ? (
                         <div className="preview-loading">
@@ -1321,7 +1413,7 @@ function SellPage() {
                             <p>Loading NFT data...</p>
                         </div>
                     ) : metadata ? (
-                        <div className="premium-preview">
+                        <div className="premium-preview tilt-3d">
                             <div className="preview-header">
                                 <div className="preview-badge">{nftType || 'NFT'}</div>
                                 {ownershipVerified && (
