@@ -689,3 +689,307 @@
         border-color: rgba(255,255,255,0.2);
     }
 
+/* =========================================================
+   HOT LISTINGS — ENHANCEMENT PACK
+   (append to the end of HotListingsPage.css)
+   ========================================================= */
+
+/* A11y helper (local in case the global one isn’t loaded) */
+.hot-listings-container .sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 1px, 1px) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+/* ---------- PAGE HEADER TOOLBAR ---------- */
+.hot-listings-container .toolbar {
+    margin-top: 18px;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    transform: translateZ(20px);
+}
+
+.hot-listings-container .toolbar-left,
+.hot-listings-container .toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+/* Search */
+.hot-listings-container .toolbar-search {
+    min-width: 280px;
+    max-width: 520px;
+    width: clamp(240px, 40vw, 520px);
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--hot-border);
+    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.04));
+    color: var(--hot-text);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
+    transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
+}
+
+    .hot-listings-container .toolbar-search::placeholder {
+        color: var(--hot-text-muted);
+    }
+
+    .hot-listings-container .toolbar-search:hover {
+        background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.05));
+        transform: translateY(-1px);
+    }
+
+    .hot-listings-container .toolbar-search:focus-visible {
+        outline: none;
+        box-shadow: var(--focus);
+    }
+
+/* Sort select (custom-looking native select) */
+.hot-listings-container .toolbar-sort {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    padding: 12px 42px 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--hot-border);
+    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.04)), linear-gradient(90deg, transparent calc(100% - 36px), rgba(255,255,255,.06) calc(100% - 36px));
+    color: var(--hot-text);
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color .15s ease, box-shadow .15s ease, background .15s ease, transform .15s ease;
+    min-width: 190px;
+}
+
+    .hot-listings-container .toolbar-sort:hover {
+        transform: translateY(-1px);
+    }
+
+    .hot-listings-container .toolbar-sort:focus-visible {
+        outline: none;
+        box-shadow: var(--focus);
+    }
+
+/* little caret */
+.hot-listings-container .toolbar-sort {
+    background-image: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.04)), linear-gradient(90deg, transparent calc(100% - 36px), rgba(255,255,255,.06) calc(100% - 36px)), url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23c8cee0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' xmlns='http://www.w3.org/2000/svg'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+    background-repeat: no-repeat, no-repeat, no-repeat;
+    background-position: left top, right top, calc(100% - 12px) 50%;
+}
+
+/* Unify hp buttons in this page (don’t affect global) */
+.hot-listings-container .hp-btn {
+    appearance: none;
+    border: 1px solid var(--hot-border);
+    background: rgba(255,255,255,0.06);
+    color: var(--hot-text);
+    padding: .7rem 1rem;
+    border-radius: 12px;
+    font-weight: 800;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    transition: transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+
+    .hot-listings-container .hp-btn:hover {
+        transform: translateY(-2px);
+        background: rgba(255,255,255,0.1);
+        border-color: rgba(255,255,255,0.2);
+    }
+
+    .hot-listings-container .hp-btn:focus-visible {
+        outline: none;
+        box-shadow: var(--focus);
+    }
+
+.hot-listings-container .hp-btn--primary {
+    border: none;
+    background: linear-gradient(90deg, var(--hot-primary), var(--hot-secondary));
+    color: #fff;
+    box-shadow: 0 10px 25px rgba(85,51,255,.35);
+}
+
+/* ---------- COLLECTION HEADER RIGHT SIDE ---------- */
+.hot-listings-container .collection-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+/* Metrics group */
+.hot-listings-container .collection-metrics {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid var(--hot-divider);
+    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.02));
+    min-width: 260px;
+}
+
+.hot-listings-container .metric {
+    display: grid;
+    gap: 2px;
+}
+
+    .hot-listings-container .metric .metric-label {
+        font-size: .72rem;
+        color: var(--hot-text-muted);
+        letter-spacing: .02em;
+    }
+
+    .hot-listings-container .metric .metric-value {
+        font-size: .98rem;
+        font-weight: 800;
+        color: var(--hot-text);
+    }
+
+    /* Shimmer placeholder for metrics while loading */
+    .hot-listings-container .metric.shimmer {
+        position: relative;
+        height: 34px;
+        border-radius: 8px;
+        overflow: hidden;
+        background: linear-gradient(90deg, rgba(255,255,255,.06), rgba(255,255,255,.08), rgba(255,255,255,.06));
+        background-size: 200% 100%;
+        animation: hotMetricShimmer 1.4s infinite;
+    }
+
+@keyframes hotMetricShimmer {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* ---------- COLLECTION FOOTER / SHOW MORE ---------- */
+.hot-listings-container .collection-footer {
+    display: flex;
+    justify-content: center;
+    margin-top: 6px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--hot-divider);
+}
+
+/* ---------- LOAD MORE (pagination-by-chunk) ---------- */
+.hot-listings-container .load-more {
+    display: flex;
+    justify-content: center;
+    margin: 22px 0 10px;
+}
+
+    .hot-listings-container .load-more .hp-btn--primary {
+        padding: .8rem 1.1rem;
+    }
+
+/* ---------- COPY ADDRESS tooltip-y feedback ---------- */
+.hot-listings-container .copy-addr {
+    position: relative;
+}
+
+    .hot-listings-container .copy-addr:active::after,
+    .hot-listings-container .copy-addr:focus-visible::after {
+        content: 'Copied!';
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%);
+        white-space: nowrap;
+        font-size: .7rem;
+        padding: 4px 8px;
+        border-radius: 8px;
+        background: rgba(0,0,0,.35);
+        color: #fff;
+        border: 1px solid var(--hot-border);
+    }
+
+/* ---------- LIGHT THEME TWEAKS ---------- */
+:root[data-theme="light"] .hot-listings-container .toolbar-search,
+:root[data-theme="light"] .hot-listings-container .toolbar-sort {
+    background: linear-gradient(180deg, rgba(0,0,0,.04), rgba(0,0,0,.02));
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.02);
+}
+
+:root[data-theme="light"] .hot-listings-container .collection-metrics {
+    background: linear-gradient(180deg, rgba(0,0,0,.03), rgba(0,0,0,.02));
+}
+
+/* ---------- RESPONSIVE POLISH FOR TOOLBAR/METRICS ---------- */
+@media (max-width: 920px) {
+    .hot-listings-container .collection-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .hot-listings-container .collection-right {
+        width: 100%;
+        justify-content: space-between;
+    }
+}
+
+@media (max-width: 640px) {
+    .hot-listings-container .toolbar {
+        gap: 10px;
+    }
+
+    .hot-listings-container .toolbar-left,
+    .hot-listings-container .toolbar-right {
+        width: 100%;
+        justify-content: stretch;
+    }
+
+    .hot-listings-container .toolbar-right {
+        gap: 10px;
+    }
+
+    .hot-listings-container .toolbar-search {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .hot-listings-container .toolbar-sort {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .hot-listings-container .collection-metrics {
+        width: 100%;
+        grid-auto-flow: row;
+        grid-template-columns: repeat(3, minmax(0,1fr));
+    }
+}
+
+/* ---------- INPUTS & BUTTONS: ACCESSIBLE FOCUS ---------- */
+.hot-listings-container input[type="search"],
+.hot-listings-container select,
+.hot-listings-container button,
+.hot-listings-container .hp-btn,
+.hot-listings-container .toggle-btn {
+    outline: none;
+}
+
+    .hot-listings-container input[type="search"]:focus-visible,
+    .hot-listings-container select:focus-visible,
+    .hot-listings-container button:focus-visible,
+    .hot-listings-container .hp-btn:focus-visible,
+    .hot-listings-container .toggle-btn:focus-visible {
+        box-shadow: var(--focus);
+    }
