@@ -179,18 +179,19 @@ class RouteErrorBoundary extends React.Component {
 function TitleSetter() {
     const { pathname } = useLocation();
     useEffect(() => {
+        const siteName = 'BlockDust';
         const map = [
-            { test: /^\/$/, title: 'WileyW€$T NFT Marketplace' },
-            { test: /^\/marketplace/, title: 'Marketplace • WileyW€$T' },
-            { test: /^\/hot-listings/, title: 'Hot Listings • WileyW€$T' },
-            { test: /^\/sell/, title: 'Sell NFT • WileyW€$T' },
-            { test: /^\/profile/, title: 'Your Profile • WileyW€$T' },
-            { test: /^\/collections\/[0-9a-zA-Z]+/, title: 'Collection • WileyW€$T' },
-            { test: /^\/terms/, title: 'Terms • WileyW€$T' },
-            { test: /^\/privacy/, title: 'Privacy • WileyW€$T' },
+            { test: /^\/$/, title: `${siteName} ✦ Neon NFT Marketplace` },
+            { test: /^\/marketplace/, title: `Marketplace • ${siteName} ✦` },
+            { test: /^\/hot-listings/, title: `🔥 Hot Listings • ${siteName}` },
+            { test: /^\/sell/, title: `List & Sell • ${siteName}` },
+            { test: /^\/profile/, title: `Your Profile • ${siteName}` },
+            { test: /^\/collections\/[0-9a-zA-Z]+/, title: `Collection • ${siteName}` },
+            { test: /^\/terms/, title: `Terms • ${siteName}` },
+            { test: /^\/privacy/, title: `Privacy • ${siteName}` },
         ];
         const found = map.find(m => m.test.test(pathname));
-        document.title = found ? found.title : 'WileyW€$T';
+        document.title = found ? found.title : siteName;
     }, [pathname]);
     return null;
 }
