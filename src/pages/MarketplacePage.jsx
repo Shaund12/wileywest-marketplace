@@ -254,6 +254,11 @@ const RefreshIcon = () => (
         <path d="m3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
     </svg>
 );
+const DeepIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 2l3 5h-6l3-5zm0 20l-3-5h6l-3 5zM2 12l5-3v6l-5-3zm20 0l-5 3V9l5 3z" />
+    </svg>
+);
 const SearchIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="11" cy="11" r="8"></circle>
@@ -291,18 +296,15 @@ const nowMs = () => Date.now();
 function coerceMs(v) {
     if (v == null) return NaN;
     if (typeof v === 'number') {
-        // seconds vs ms
         return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
     }
     if (typeof v === 'string') {
-        // try integer seconds, then Date.parse
         const n = Number(v);
         if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
         const d = Date.parse(v);
         return Number.isNaN(d) ? NaN : d;
     }
     if (v && typeof v === 'object') {
-        // support { seconds } shape sometimes seen in DBs
         if (typeof v.seconds === 'number') return Math.round(v.seconds * 1000);
         if (typeof v.toString === 'function') {
             const n = Number(v.toString());
@@ -310,6 +312,23 @@ function coerceMs(v) {
         }
     }
     return NaN;
+}
+
+/* =========================
+   UI Prefs persistence
+   ========================= */
+const PREFS_KEY = 'marketplace_ui_prefs_v1';
+
+function loadPrefs() {
+    try {
+        const raw = localStorage.getItem(PREFS_KEY);
+        return raw ? JSON.parse(raw) : {};
+    } catch {
+        return {};
+    }
+}
+function savePrefs(next) {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
 }
 
 function MarketplacePage() {
@@ -327,15 +346,17 @@ function MarketplacePage() {
     const { wallet, connect, provider } = useWallet();
     const { cacheListings, isConnected } = useSupabase();
 
-    const [searchTerm, setSearchTerm] = useState('');
+    const prefs = useRef(loadPrefs());
+
+    const [searchTerm, setSearchTerm] = useState(prefs.current.searchTerm || '');
     const [filteredListings, setFilteredListings] = useState([]);
-    const [viewMode, setViewMode] = useState('grid');
-    const [sortMethod, setSortMethod] = useState('newest');
+    const [viewMode, setViewMode] = useState(prefs.current.viewMode || 'grid');
+    const [sortMethod, setSortMethod] = useState(prefs.current.sortMethod || 'newest');
     const [isLoading, setIsLoading] = useState(true);
     const [isFiltersOpen, setIsFiltersOpen] = useState(false);
-    const [selectedCategories, setSelectedCategories] = useState([]);
-    const [selectedCollections, setSelectedCollections] = useState([]);
-    const [priceRange, setPriceRange] = useState({ min: '', max: '' });
+    const [selectedCategories, setSelectedCategories] = useState(prefs.current.selectedCategories || []);
+    const [selectedCollections, setSelectedCollections] = useState(prefs.current.selectedCollections || []);
+    const [priceRange, setPriceRange] = useState(prefs.current.priceRange || { min: '', max: '' });
     const [featuredNFT, setFeaturedNFT] = useState(null);
     const [featuredNFTPriceDisplay, setFeaturedNFTPriceDisplay] = useState({
         tokenAmount: '...',
@@ -355,11 +376,18 @@ function MarketplacePage() {
         hasUSDCRates: true,
     });
     const [currentPage, setCurrentPage] = useState(1);
-    const [itemsPerPage] = useState(12);
-    const [trendMode, setTrendMode] = useState('volume'); // 'volume' | 'hot' | 'new'
+    const [itemsPerPage, setItemsPerPage] = useState(prefs.current.itemsPerPage || 12);
+    const [trendMode, setTrendMode] = useState(prefs.current.trendMode || 'volume'); // 'volume' | 'hot' | 'new'
+    const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(Boolean(prefs.current.autoRefreshEnabled));
+    const [autoRefreshMs, setAutoRefreshMs] = useState(prefs.current.autoRefreshMs || 60000);
+    const [autoLoadNext, setAutoLoadNext] = useState(Boolean(prefs.current.autoLoadNext));
+    const [nextRefreshAt, setNextRefreshAt] = useState(null);
+
     const topRef = useRef(null);
     const hasLoadedRef = useRef(false);
     const cacheSigRef = useRef('');
+    const searchInputRef = useRef(null);
+    const sentinelRef = useRef(null);
 
     // 24h cutoff for "hot"
     const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -374,6 +402,35 @@ function MarketplacePage() {
         { id: 'music', name: 'Music' },
         { id: 'gaming', name: 'Gaming' },
     ];
+
+    // Persist UI prefs
+    useEffect(() => {
+        savePrefs({
+            searchTerm,
+            viewMode,
+            sortMethod,
+            selectedCategories,
+            selectedCollections,
+            priceRange,
+            itemsPerPage,
+            trendMode,
+            autoRefreshEnabled,
+            autoRefreshMs,
+            autoLoadNext,
+        });
+    }, [
+        searchTerm,
+        viewMode,
+        sortMethod,
+        selectedCategories,
+        selectedCollections,
+        priceRange,
+        itemsPerPage,
+        trendMode,
+        autoRefreshEnabled,
+        autoRefreshMs,
+        autoLoadNext,
+    ]);
 
     /* ----------------------------
        Resolve collection names (addresses on screen + featured/filters)
@@ -405,6 +462,89 @@ function MarketplacePage() {
     );
 
     /* ----------------------------
+       Deep rescan support (clear caches + scan from genesis)
+       ---------------------------- */
+    const clearLocalCaches = useCallback(() => {
+        try {
+            const keysToClear = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (!key) continue;
+                if (
+                    key.startsWith('nft_cache_') ||
+                    key === 'nft_contract_cache' ||
+                    key === 'nft_metadata_cache' ||
+                    key === 'known_erc20_tokens' ||
+                    key.toLowerCase().includes('listing') ||
+                    key.toLowerCase().includes('marketplace')
+                ) {
+                    keysToClear.push(key);
+                }
+            }
+            keysToClear.forEach(k => localStorage.removeItem(k));
+            localStorage.setItem('NFT_SCAN_MODE', 'comprehensive');
+            localStorage.setItem('MARKETPLACE_FULL_RESCAN_AT', String(Date.now()));
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    const deepRescan = useCallback(async () => {
+        try {
+            setIsLoading(true);
+            setStatus && setStatus('Force refreshing listings (deep rescan)...');
+            clearLocalCaches();
+            const maybeOptions = { force: true, deep: true, fullRescan: true, fromBlock: 0, clearCache: true };
+            try {
+                await fetchListings(maybeOptions);
+            } catch {
+                await fetchListings(true);
+            }
+        } catch (error) {
+            console.error('[Marketplace] Deep rescan error:', error);
+            setStatus && setStatus('Error force refreshing listings');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [fetchListings, clearLocalCaches, setStatus]);
+
+    /* ----------------------------
+       Auto-refresh + keyboard shortcuts
+       ---------------------------- */
+    useEffect(() => {
+        if (!autoRefreshEnabled) return;
+        let active = true;
+        const tick = async () => {
+            if (!active) return;
+            setNextRefreshAt(Date.now() + autoRefreshMs);
+            try {
+                await fetchListings(true);
+            } catch (e) {
+                console.warn('[Marketplace] Auto-refresh failed:', e);
+            } finally {
+                if (active) {
+                    setTimeout(tick, autoRefreshMs);
+                }
+            }
+        };
+        const id = setTimeout(tick, autoRefreshMs);
+        return () => { active = false; clearTimeout(id); };
+    }, [autoRefreshEnabled, autoRefreshMs, fetchListings]);
+
+    useEffect(() => {
+        const onKey = (e) => {
+            if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
+            if (e.key === '/') { e.preventDefault(); searchInputRef.current?.focus(); }
+            if (e.key.toLowerCase() === 'r') { fetchListings(true); }
+            if (e.key.toLowerCase() === 'd') { deepRescan(); }
+            if (e.key.toLowerCase() === 'g') { setViewMode('grid'); }
+            if (e.key.toLowerCase() === 'l') { setViewMode('list'); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [fetchListings, deepRescan]);
+
+    /* ----------------------------
        Load listings
        ---------------------------- */
     useEffect(() => {
@@ -424,12 +564,16 @@ function MarketplacePage() {
         }
         loadData();
 
-        // optional manual refresh
+        // optional manual refresh shortcuts for debugging
         // @ts-ignore
-        window.refreshMarketplace = async () => {
+        window.refreshMarketplace = async (mode = 'soft') => {
             try {
                 setIsLoading(true);
-                await fetchListings();
+                if (mode === 'deep') {
+                    await deepRescan();
+                } else {
+                    await fetchListings(true);
+                }
             } catch (error) {
                 console.error('[Marketplace] Refresh error:', error);
             } finally {
@@ -437,7 +581,7 @@ function MarketplacePage() {
             }
         };
         return () => { delete window.refreshMarketplace; };
-    }, [isInitialized, fetchListings, setStatus]);
+    }, [isInitialized, fetchListings, setStatus, deepRescan]);
 
     /* ----------------------------
        Persist listings to Supabase cache (deduped)
@@ -835,15 +979,31 @@ function MarketplacePage() {
         }
 
         setFilteredListings(result);
+        setCurrentPage(1); // reset paging on filter/sort change
     }, [listings, searchTerm, sortMethod, selectedCategories, selectedCollections, priceRange]);
 
-    const indexOfLastItem = currentPage * itemsPerPage;
-    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-    const currentItems = filteredListings.slice(indexOfFirstItem, indexOfLastItem);
+    // Infinite paging sentinel
+    useEffect(() => {
+        if (!autoLoadNext) return;
+        const el = sentinelRef.current;
+        if (!el) return;
+        const io = new IntersectionObserver((entries) => {
+            const entry = entries[0];
+            if (entry.isIntersecting) {
+                setCurrentPage((p) => p + 1);
+            }
+        }, { root: null, rootMargin: '0px', threshold: 1.0 });
+        io.observe(el);
+        return () => io.disconnect();
+    }, [autoLoadNext]);
+
     const totalPages = Math.ceil(filteredListings.length / itemsPerPage);
+    const indexOfLastItem = Math.min(currentPage, totalPages || 1) * itemsPerPage;
+    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+    const currentItems = filteredListings.slice(0, autoLoadNext ? indexOfLastItem : Math.max(0, indexOfLastItem - itemsPerPage), autoLoadNext ? undefined : indexOfLastItem); // for auto-load, show accumulated
 
     const paginate = (pageNumber) => {
-        setCurrentPage(pageNumber);
+        setCurrentPage(Math.max(1, Math.min(pageNumber, totalPages || 1)));
         topRef.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
@@ -860,6 +1020,12 @@ function MarketplacePage() {
         } else {
             setSelectedCollections([...selectedCollections, collectionAddress]);
         }
+    };
+    const clearAllFilters = () => {
+        setSearchTerm('');
+        setSelectedCategories([]);
+        setSelectedCollections([]);
+        setPriceRange({ min: '', max: '' });
     };
     const formatPrice = (priceInWei) => {
         try { return parseFloat(ethers.formatEther(priceInWei)).toFixed(4); } catch { return '0'; }
@@ -893,7 +1059,6 @@ function MarketplacePage() {
     const trendingSorted = useMemo(() => {
         const arr = [...collections];
         if (trendMode === 'hot') {
-            // Sort by 24h volume desc, then 24h listing count desc, then total volume
             arr.sort((a, b) => {
                 const rv = (b.recentVolume || 0) - (a.recentVolume || 0);
                 if (rv !== 0) return rv;
@@ -902,7 +1067,6 @@ function MarketplacePage() {
                 return (b.totalVolume || 0) - (a.totalVolume || 0);
             });
         } else if (trendMode === 'new') {
-            // Sort by most recent activity (lastTs) desc, then number of items, then total volume
             arr.sort((a, b) => {
                 const lt = (b.lastTs || 0) - (a.lastTs || 0);
                 if (lt !== 0) return lt;
@@ -911,13 +1075,26 @@ function MarketplacePage() {
                 return (b.totalVolume || 0) - (a.totalVolume || 0);
             });
         } else {
-            // trendMode === 'volume'  (default Trending)
             arr.sort((a, b) => (b.totalVolume || 0) - (a.totalVolume || 0));
         }
         return arr;
     }, [collections, trendMode]);
 
     const onClickTrendMode = (mode) => setTrendMode(mode);
+
+    const anyActiveFilter =
+        !!searchTerm ||
+        selectedCategories.length > 0 ||
+        selectedCollections.length > 0 ||
+        priceRange.min !== '' ||
+        priceRange.max !== '';
+
+    const formatCountdown = () => {
+        if (!autoRefreshEnabled || !nextRefreshAt) return '';
+        const ms = Math.max(0, nextRefreshAt - Date.now());
+        const s = Math.ceil(ms / 1000);
+        return `Auto in ${s}s`;
+    };
 
     return (
         <div className="marketplace-container" ref={topRef}>
@@ -1261,22 +1438,55 @@ function MarketplacePage() {
                             className="refresh-button"
                             onClick={() => fetchListings(true)}
                             disabled={isLoading}
-                            title="Refresh listings from blockchain"
+                            title="Refresh listings from blockchain (R)"
                         >
                             <RefreshIcon />
                             {isLoading ? 'Loading...' : 'Refresh'}
                         </button>
                         <button
+                            className="refresh-button deep"
+                            onClick={deepRescan}
+                            disabled={isLoading}
+                            title="Force deep rescan (clears caches, scans from genesis) (D)"
+                        >
+                            <DeepIcon />
+                            {isLoading ? 'Scanning...' : 'Deep Rescan'}
+                        </button>
+                        <label className="filter-button" title="Auto refresh every interval">
+                            <input
+                                type="checkbox"
+                                checked={autoRefreshEnabled}
+                                onChange={(e) => setAutoRefreshEnabled(e.target.checked)}
+                                style={{ marginRight: 8 }}
+                            />
+                            Auto
+                        </label>
+                        <select
+                            className="sort-select"
+                            value={autoRefreshMs}
+                            onChange={(e) => setAutoRefreshMs(Number(e.target.value))}
+                            title="Auto-refresh interval"
+                            disabled={!autoRefreshEnabled}
+                        >
+                            <option value={30000}>30s</option>
+                            <option value={60000}>1m</option>
+                            <option value={120000}>2m</option>
+                            <option value={300000}>5m</option>
+                        </select>
+                        <span className="status-indicator" aria-live="polite" style={{ marginLeft: 8 }}>{formatCountdown()}</span>
+                        <button
                             className={`filter-button ${isFiltersOpen ? 'active' : ''}`}
                             onClick={() => setIsFiltersOpen(!isFiltersOpen)}
+                            title="Open filters"
                         >
                             <FilterIcon /> Filters
                         </button>
                         <div className="search-bar">
                             <SearchIcon />
                             <input
+                                ref={searchInputRef}
                                 type="text"
-                                placeholder="Search by name or token ID"
+                                placeholder="Search by name or token ID (/)"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                             />
@@ -1287,23 +1497,73 @@ function MarketplacePage() {
                             <option value="price_low_to_high">Price: Low to High</option>
                             <option value="price_high_to_low">Price: High to Low</option>
                         </select>
+                        <select
+                            className="sort-select"
+                            value={itemsPerPage}
+                            onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                            title="Items per page"
+                        >
+                            <option value={12}>12</option>
+                            <option value={24}>24</option>
+                            <option value={48}>48</option>
+                        </select>
+                        <label className="filter-button" title="Auto-load next page on scroll">
+                            <input
+                                type="checkbox"
+                                checked={autoLoadNext}
+                                onChange={(e) => setAutoLoadNext(e.target.checked)}
+                                style={{ marginRight: 8 }}
+                            />
+                            Auto-Load
+                        </label>
                         <div className="view-options">
                             <button
                                 className={`view-option ${viewMode === 'grid' ? 'active' : ''}`}
                                 onClick={() => setViewMode('grid')}
-                                title="Grid View"
+                                title="Grid View (G)"
                             >
                                 <GridIcon />
                             </button>
                             <button
                                 className={`view-option ${viewMode === 'list' ? 'active' : ''}`}
                                 onClick={() => setViewMode('list')}
-                                title="List View"
+                                title="List View (L)"
                             >
                                 <ListIcon />
                             </button>
                         </div>
                     </div>
+
+                    {anyActiveFilter && (
+                        <div className="active-filters">
+                            {searchTerm && (
+                                <span className="chip" title="Clear search" onClick={() => setSearchTerm('')}>
+                                    🔎 {searchTerm} ✕
+                                </span>
+                            )}
+                            {selectedCategories.map((id) => {
+                                const label = categories.find(c => c.id === id)?.name || id;
+                                return (
+                                    <span key={id} className="chip" title="Remove category" onClick={() => toggleCategory(id)}>
+                                        {label} ✕
+                                    </span>
+                                );
+                            })}
+                            {selectedCollections.map((addr) => (
+                                <span key={addr} className="chip" title="Remove collection" onClick={() => toggleCollection(addr)}>
+                                    {shortAddr(addr)} ✕
+                                </span>
+                            ))}
+                            {(priceRange.min !== '' || priceRange.max !== '') && (
+                                <span className="chip" title="Clear price range" onClick={() => setPriceRange({ min: '', max: '' })}>
+                                    ${priceRange.min || '0'} - ${priceRange.max || '∞'} ✕
+                                </span>
+                            )}
+                            <button className="secondary-button" style={{ marginLeft: 8 }} onClick={clearAllFilters}>
+                                Clear all
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="marketplace-content">
@@ -1389,11 +1649,7 @@ function MarketplacePage() {
 
                             <button
                                 className="clear-filters-button"
-                                onClick={() => {
-                                    setSelectedCategories([]);
-                                    setSelectedCollections([]);
-                                    setPriceRange({ min: '', max: '' });
-                                }}
+                                onClick={clearAllFilters}
                             >
                                 Clear All Filters
                             </button>
@@ -1420,76 +1676,46 @@ function MarketplacePage() {
                                 </div>
 
                                 {/* Pagination */}
-                                {totalPages > 1 && (
+                                {!autoLoadNext && totalPages > 1 && (
                                     <div className="pagination">
                                         <button onClick={() => paginate(1)} disabled={currentPage === 1} className="pagination-button">First</button>
                                         <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="pagination-button">Previous</button>
-                                        <div className="pagination-info">Page {currentPage} of {totalPages}</div>
-                                        <button onClick={() => paginate(currentPage + 1)} disabled={currentPage === totalPages} className="pagination-button">Next</button>
-                                        <button onClick={() => paginate(totalPages)} disabled={currentPage === totalPages} className="pagination-button">Last</button>
+                                        <div className="pagination-info">Page {Math.min(currentPage, totalPages)} of {totalPages}</div>
+                                        <button onClick={() => paginate(currentPage + 1)} disabled={currentPage >= totalPages} className="pagination-button">Next</button>
+                                        <button onClick={() => paginate(totalPages)} disabled={currentPage >= totalPages} className="pagination-button">Last</button>
                                     </div>
+                                )}
+
+                                {/* Infinite loader sentinel */}
+                                {autoLoadNext && currentPage < totalPages && (
+                                    <div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" />
                                 )}
                             </>
                         ) : (
                             <EmptyState
                                 icon={
-                                    searchTerm ||
-                                        selectedCategories.length > 0 ||
-                                        selectedCollections.length > 0 ||
-                                        priceRange.min !== '' ||
-                                        priceRange.max !== ''
-                                        ? '🔍'
-                                        : '🛍️'
+                                    anyActiveFilter ? '🔍' : '🛍️'
                                 }
                                 title={
-                                    searchTerm ||
-                                        selectedCategories.length > 0 ||
-                                        selectedCollections.length > 0 ||
-                                        priceRange.min !== '' ||
-                                        priceRange.max !== ''
-                                        ? 'No Results Found'
-                                        : 'No NFTs Available'
+                                    anyActiveFilter ? 'No Results Found' : 'No NFTs Available'
                                 }
                                 description={
-                                    searchTerm ||
-                                        selectedCategories.length > 0 ||
-                                        selectedCollections.length > 0 ||
-                                        priceRange.min !== '' ||
-                                        priceRange.max !== ''
+                                    anyActiveFilter
                                         ? "Try adjusting your filters or search criteria to find what you're looking for."
-                                        : 'There are currently no active listings in the marketplace. Check back soon or be the first to list your NFT!'
+                                        : 'There are currently no active listings in the marketplace. Try a deep rescan if you expect items to appear.'
                                 }
-                                actionText="Refresh Marketplace"
+                                actionText={anyActiveFilter ? 'Clear Filters' : 'Deep Rescan'}
                                 onAction={() => {
-                                    setSearchTerm('');
-                                    setSelectedCategories([]);
-                                    setSelectedCollections([]);
-                                    setPriceRange({ min: '', max: '' });
-                                    fetchListings();
+                                    if (anyActiveFilter) {
+                                        clearAllFilters();
+                                    } else {
+                                        deepRescan();
+                                    }
                                 }}
-                                secondaryActionText={
-                                    !(
-                                        searchTerm ||
-                                        selectedCategories.length > 0 ||
-                                        selectedCollections.length > 0 ||
-                                        priceRange.min !== '' ||
-                                        priceRange.max !== ''
-                                    )
-                                        ? 'List Your NFT'
-                                        : 'Clear Filters'
-                                }
+                                secondaryActionText={anyActiveFilter ? 'Deep Rescan' : 'List Your NFT'}
                                 onSecondaryAction={() => {
-                                    if (
-                                        searchTerm ||
-                                        selectedCategories.length > 0 ||
-                                        selectedCollections.length > 0 ||
-                                        priceRange.min !== '' ||
-                                        priceRange.max !== ''
-                                    ) {
-                                        setSearchTerm('');
-                                        setSelectedCategories([]);
-                                        setSelectedCollections([]);
-                                        setPriceRange({ min: '', max: '' });
+                                    if (anyActiveFilter) {
+                                        deepRescan();
                                     } else {
                                         window.location.href = '/sell';
                                     }
