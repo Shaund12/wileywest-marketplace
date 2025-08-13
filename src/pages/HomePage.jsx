@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
-import { convertToUSDCValue } from '../utils/tokenUtils';
+import { convertToUSDCValue, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
 import ListingCard from '../components/ListingCard';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
@@ -148,6 +148,7 @@ function useCollectionNames(addresses = [], provider) {
 }
 
 const shortAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
+const fmtToken = (n) => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—';
 
 /* -------------------------------
    HomePage
@@ -243,7 +244,7 @@ function HomePage() {
 
     // Floor (USDC) — prefer backend, else derive from live listings
     const [derivedFloor, setDerivedFloor] = useState(null);
-    const [floorLoading, setFloorLoading] = useState(false);
+    the: const [floorLoading, setFloorLoading] = useState(false);
     const [floorSource, setFloorSource] = useState('stat'); // 'stat' | 'live'
 
     const floorFromStats = useMemo(() => {
@@ -311,11 +312,6 @@ function HomePage() {
 
     /* --------------------------
        NEXT-LEVEL: Market Insights
-       - Unique collections
-       - Unique sellers
-       - 24h new listings
-       - Avg listing price (USDC)
-       - Highest listing price (USDC)
     --------------------------- */
     const [insights, setInsights] = useState({
         uniqueCollections: 0,
@@ -393,7 +389,6 @@ function HomePage() {
 
     /* --------------------------
        NEXT-LEVEL: Collection Leaderboard
-       - Top 5 by count with live floor (USDC)
     --------------------------- */
     const [collectionFloors, setCollectionFloors] = useState({});
     const [floorsLoading, setFloorsLoading] = useState(false);
@@ -423,6 +418,92 @@ function HomePage() {
         })();
         return () => { cancelled = true; };
     }, [provider, trendingCollections, listings]);
+
+    /* --------------------------
+       Token breakdown (by payment token)
+       - Per-token USDC volume, count, and native token total
+    --------------------------- */
+    const [tokenStats, setTokenStats] = useState({ list: [], totalUSDC: 0 });
+    const [tokenStatsLoading, setTokenStatsLoading] = useState(false);
+
+    const computeTokenStats = useCallback(async () => {
+        if (!provider || !listings?.length) {
+            setTokenStats({ list: [], totalUSDC: 0 });
+            return;
+        }
+        setTokenStatsLoading(true);
+        try {
+            const sample = listings.filter((l) => l?.pricePerUnit && l?.paymentToken);
+            const uniqTokens = Array.from(new Set(sample.map((l) => (l.paymentToken || ethers.ZeroAddress).toLowerCase())));
+
+            // Resolve token meta (symbol/decimals)
+            const metaEntries = await Promise.all(uniqTokens.map(async (addr) => {
+                try {
+                    const meta = await fetchTokenDetails(addr, provider);
+                    return [addr, { symbol: meta?.symbol || getTokenSymbol(addr), decimals: Number(meta?.decimals ?? 18) }];
+                } catch {
+                    return [addr, { symbol: getTokenSymbol(addr), decimals: 18 }];
+                }
+            }));
+            const metaMap = Object.fromEntries(metaEntries);
+
+            // Convert all to USDC
+            const conv = await Promise.allSettled(sample.map((l) =>
+                convertToUSDCValue(l.pricePerUnit, l.paymentToken, provider)
+            ));
+
+            const byToken = new Map();
+            let grand = 0;
+
+            for (let i = 0; i < sample.length; i++) {
+                const l = sample[i];
+                const tokenAddr = (l.paymentToken || ethers.ZeroAddress).toLowerCase();
+                const meta = metaMap[tokenAddr] || { symbol: getTokenSymbol(tokenAddr), decimals: 18 };
+                const usdc = conv[i].status === 'fulfilled' ? Number(conv[i].value) : 0;
+                const tokenAmount = Number(ethers.formatUnits(l.pricePerUnit, meta.decimals));
+
+                if (!byToken.has(tokenAddr)) {
+                    byToken.set(tokenAddr, {
+                        address: tokenAddr,
+                        symbol: meta.symbol,
+                        decimals: meta.decimals,
+                        count: 0,
+                        usdcTotal: 0,
+                        tokenTotal: 0,
+                        minUSDC: Number.POSITIVE_INFINITY,
+                        maxUSDC: 0,
+                    });
+                }
+                const entry = byToken.get(tokenAddr);
+                entry.count += 1;
+                entry.usdcTotal += usdc;
+                entry.tokenTotal += tokenAmount;
+                if (usdc > 0) {
+                    if (usdc < entry.minUSDC) entry.minUSDC = usdc;
+                    if (usdc > entry.maxUSDC) entry.maxUSDC = usdc;
+                }
+                grand += usdc;
+            }
+
+            const list = Array.from(byToken.values())
+                .map((x) => ({
+                    ...x,
+                    minUSDC: Number.isFinite(x.minUSDC) ? x.minUSDC : 0,
+                    avgUSDC: x.count > 0 ? x.usdcTotal / x.count : 0,
+                }))
+                .sort((a, b) => b.usdcTotal - a.usdcTotal);
+
+            setTokenStats({ list, totalUSDC: grand });
+        } catch {
+            setTokenStats({ list: [], totalUSDC: 0 });
+        } finally {
+            setTokenStatsLoading(false);
+        }
+    }, [provider, listings]);
+
+    useEffect(() => {
+        computeTokenStats().catch(() => { });
+    }, [computeTokenStats]);
 
     // ----- Featured listings -----
     const renderFeaturedListings = () => {
@@ -574,6 +655,46 @@ function HomePage() {
                         <div className="hp-insight__value">{floorLoading ? '…' : formatUSD(floorUSDC)}</div>
                     </div>
                 </div>
+            </section>
+
+            {/* TOKEN BREAKDOWN */}
+            <section className="hp-insights">
+                <div className="hp-section__head">
+                    <h2>Token Stats</h2>
+                    <span className="hp-hint">USDC volume by payment token</span>
+                </div>
+                {tokenStatsLoading ? (
+                    <LoadingSkeleton type="card" count={6} className="grid" />
+                ) : tokenStats.list.length === 0 ? (
+                    <EmptyState
+                        icon="🪙"
+                        title="No token activity yet"
+                        description="When listings appear, the token breakdown will light up here."
+                        actionText="Explore Marketplace"
+                        onAction={() => (window.location.href = '/marketplace')}
+                    />
+                ) : (
+                    <div className="hp-insights__grid">
+                        <div className="hp-insight hp-insight--accent" title="Total USDC volume across all payment tokens">
+                            <div className="hp-insight__label">Total USDC Volume</div>
+                            <div className="hp-insight__value">{formatUSD(tokenStats.totalUSDC)}</div>
+                        </div>
+                        {tokenStats.list.slice(0, 11).map((t) => {
+                            const pct = tokenStats.totalUSDC > 0 ? (t.usdcTotal / tokenStats.totalUSDC) * 100 : 0;
+                            return (
+                                <div key={t.address} className="hp-insight" title={`${t.symbol} • ${shortAddr(t.address)}`}>
+                                    <div className="hp-insight__label">
+                                        <strong>{t.symbol}</strong> <span className="hp-hint">({shortAddr(t.address)})</span>
+                                    </div>
+                                    <div className="hp-insight__value">{formatUSD(t.usdcTotal)}</div>
+                                    <div className="hp-hint">
+                                        {fmtToken(t.tokenTotal)} {t.symbol} • {t.count} listings • {pct.toFixed(1)}%
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </section>
 
             {/* TRENDING COLLECTIONS */}
