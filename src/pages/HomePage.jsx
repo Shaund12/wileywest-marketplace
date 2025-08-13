@@ -244,7 +244,7 @@ function HomePage() {
 
     // Floor (USDC) — prefer backend, else derive from live listings
     const [derivedFloor, setDerivedFloor] = useState(null);
-    the: const [floorLoading, setFloorLoading] = useState(false);
+    const [floorLoading, setFloorLoading] = useState(false);
     const [floorSource, setFloorSource] = useState('stat'); // 'stat' | 'live'
 
     const floorFromStats = useMemo(() => {
