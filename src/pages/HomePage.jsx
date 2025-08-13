@@ -63,6 +63,26 @@ const coerceNumber = (val) => {
     return NaN;
 };
 
+// Timestamp coercion (seconds/ms, ISO, {seconds})
+const coerceMs = (v) => {
+    if (v == null) return NaN;
+    if (typeof v === 'number') return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
+    if (typeof v === 'string') {
+        const n = Number(v);
+        if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+        const d = Date.parse(v);
+        return Number.isNaN(d) ? NaN : d;
+    }
+    if (v && typeof v === 'object') {
+        if (typeof v.seconds === 'number') return Math.round(v.seconds * 1000);
+        if (typeof v.toString === 'function') {
+            const n = Number(v.toString());
+            if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+        }
+    }
+    return NaN;
+};
+
 /* -------------------------------
    Collection name resolver
 -------------------------------- */
@@ -289,6 +309,121 @@ function HomePage() {
     const totalVolumeAnim = useCountUp(Math.round(totalVolume));
     const currentVolAnim = useCountUp(Math.round(currentListingVolume));
 
+    /* --------------------------
+       NEXT-LEVEL: Market Insights
+       - Unique collections
+       - Unique sellers
+       - 24h new listings
+       - Avg listing price (USDC)
+       - Highest listing price (USDC)
+    --------------------------- */
+    const [insights, setInsights] = useState({
+        uniqueCollections: 0,
+        uniqueSellers: 0,
+        listings24h: 0,
+        avgUSDC: null,
+        maxUSDC: null,
+    });
+    const [insightsLoading, setInsightsLoading] = useState(false);
+
+    const computeInsights = useCallback(async () => {
+        if (!listings?.length) {
+            setInsights({
+                uniqueCollections: 0,
+                uniqueSellers: 0,
+                listings24h: 0,
+                avgUSDC: null,
+                maxUSDC: null,
+            });
+            return;
+        }
+        setInsightsLoading(true);
+        try {
+            // Unique collections and sellers
+            const coll = new Set();
+            const sellers = new Set();
+            const now = Date.now();
+            const cutoff = now - 24 * 60 * 60 * 1000;
+            let cnt24h = 0;
+
+            for (const l of listings) {
+                if (l?.nftContract) coll.add(l.nftContract.toLowerCase());
+                if (l?.seller) sellers.add(l.seller.toLowerCase());
+                const ts = coerceMs(l.createdAt) ?? coerceMs(l.created_at) ?? coerceMs(l.timestamp) ?? coerceMs(l.time) ?? coerceMs(l.blockTimestamp) ?? coerceMs(l.listedAt);
+                if (Number.isFinite(ts) && ts >= cutoff) cnt24h++;
+            }
+
+            // Price stats (USDC)
+            let avg = null, max = null;
+            if (provider) {
+                const sample = listings
+                    .filter((l) => l?.pricePerUnit && l?.paymentToken)
+                    .slice(0, 100);
+
+                const results = await Promise.allSettled(
+                    sample.map((l) => convertToUSDCValue(l.pricePerUnit, l.paymentToken, provider))
+                );
+
+                const values = results
+                    .map((r) => (r.status === 'fulfilled' ? Number(r.value) : NaN))
+                    .filter((v) => Number.isFinite(v) && v > 0);
+
+                if (values.length) {
+                    const sum = values.reduce((a, b) => a + b, 0);
+                    avg = sum / values.length;
+                    max = Math.max(...values);
+                }
+            }
+
+            setInsights({
+                uniqueCollections: coll.size,
+                uniqueSellers: sellers.size,
+                listings24h: cnt24h,
+                avgUSDC: avg,
+                maxUSDC: max,
+            });
+        } finally {
+            setInsightsLoading(false);
+        }
+    }, [listings, provider]);
+
+    useEffect(() => {
+        computeInsights().catch(() => { });
+    }, [computeInsights]);
+
+    /* --------------------------
+       NEXT-LEVEL: Collection Leaderboard
+       - Top 5 by count with live floor (USDC)
+    --------------------------- */
+    const [collectionFloors, setCollectionFloors] = useState({});
+    const [floorsLoading, setFloorsLoading] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            if (!provider || !trendingCollections.length) return;
+            setFloorsLoading(true);
+            try {
+                const next = {};
+                const top = trendingCollections.slice(0, 5);
+                for (const t of top) {
+                    const items = listings.filter((l) => (l?.nftContract || '').toLowerCase() === t.address).slice(0, 12);
+                    const results = await Promise.allSettled(
+                        items.map((l) => convertToUSDCValue(l.pricePerUnit, l.paymentToken, provider))
+                    );
+                    const vals = results
+                        .map((r) => (r.status === 'fulfilled' ? Number(r.value) : NaN))
+                        .filter((v) => Number.isFinite(v) && v > 0);
+                    next[t.address] = vals.length ? Math.min(...vals) : null;
+                }
+                if (!cancelled) setCollectionFloors(next);
+            } finally {
+                if (!cancelled) setFloorsLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [provider, trendingCollections, listings]);
+
     // ----- Featured listings -----
     const renderFeaturedListings = () => {
         if (!isInitialized) {
@@ -318,6 +453,15 @@ function HomePage() {
         );
     };
 
+    // Lucky pick handler (fun)
+    const openLuckyCollection = () => {
+        const pool = listings || [];
+        if (!pool.length) return;
+        const pick = pool[Math.floor(Math.random() * pool.length)];
+        const addr = (pick?.nftContract || '').toLowerCase();
+        if (addr) window.location.href = `/collections/${addr}`;
+    };
+
     return (
         <div className="hp">
             {/* HERO */}
@@ -335,6 +479,9 @@ function HomePage() {
                     <div className="hp-cta">
                         <Link to="/marketplace" className="hp-btn hp-btn--primary">Explore NFTs</Link>
                         <Link to="/sell" className="hp-btn">List Your NFT</Link>
+                        <button type="button" className="hp-btn hp-btn--ghost hp-btn--lucky" onClick={openLuckyCollection} title="Warp to a random collection">
+                            ✨ Lucky Jump
+                        </button>
                     </div>
 
                     {/* Quick mini-stats */}
@@ -395,6 +542,40 @@ function HomePage() {
                 {renderFeaturedListings()}
             </section>
 
+            {/* NEXT-LEVEL: MARKET INSIGHTS */}
+            <section className="hp-insights">
+                <div className="hp-section__head">
+                    <h2>Market Insights</h2>
+                    <span className="hp-hint">auto-derived from live listings</span>
+                </div>
+                <div className="hp-insights__grid">
+                    <div className="hp-insight">
+                        <div className="hp-insight__label">Unique Collections</div>
+                        <div className="hp-insight__value">{insights.uniqueCollections.toLocaleString()}</div>
+                    </div>
+                    <div className="hp-insight">
+                        <div className="hp-insight__label">Unique Sellers</div>
+                        <div className="hp-insight__value">{insights.uniqueSellers.toLocaleString()}</div>
+                    </div>
+                    <div className="hp-insight">
+                        <div className="hp-insight__label">New Listings (24h)</div>
+                        <div className="hp-insight__value">{insights.listings24h.toLocaleString()}</div>
+                    </div>
+                    <div className="hp-insight">
+                        <div className="hp-insight__label">Avg Listing (USDC)</div>
+                        <div className="hp-insight__value">{insightsLoading ? '…' : formatUSD(insights.avgUSDC)}</div>
+                    </div>
+                    <div className="hp-insight">
+                        <div className="hp-insight__label">Highest Listing (USDC)</div>
+                        <div className="hp-insight__value">{insightsLoading ? '…' : formatUSD(insights.maxUSDC)}</div>
+                    </div>
+                    <div className="hp-insight hp-insight--accent">
+                        <div className="hp-insight__label">Global Floor (USDC)</div>
+                        <div className="hp-insight__value">{floorLoading ? '…' : formatUSD(floorUSDC)}</div>
+                    </div>
+                </div>
+            </section>
+
             {/* TRENDING COLLECTIONS */}
             <section className="hp-trending">
                 <div className="hp-section__head">
@@ -420,6 +601,7 @@ function HomePage() {
                                 t.sample?.metadata?.image ||
                                 t.sample?.metadata?.image_url ||
                                 '';
+                            const floor = collectionFloors[t.address];
                             return (
                                 <Link to={`/collections/${t.address}`} className="hp-trend" key={t.address}>
                                     <div className="hp-trend__img" style={{ backgroundImage: `url(${img})` }} />
@@ -427,6 +609,8 @@ function HomePage() {
                                         <strong className="hp-trend__name">{labelFor(t.address)}</strong>
                                         <span className="hp-trend__meta">
                                             {t.count} listing{t.count === 1 ? '' : 's'}
+                                            <span className="hp-dot">•</span>
+                                            Floor: {floorsLoading ? '…' : formatUSD(floor)}
                                         </span>
                                     </div>
                                 </Link>

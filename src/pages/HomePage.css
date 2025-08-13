@@ -699,3 +699,146 @@
         transition: none !important;
     }
 }
+
+/* === Next-level Home enhancements (append to end) === */
+
+/* Market Insights */
+.hp-insights {
+    max-width: 1400px;
+    margin: 20px auto 40px;
+    padding: 0 20px;
+}
+
+    .hp-insights .hp-section__head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+    }
+
+.hp-hint {
+    color: rgba(255,255,255,.55);
+    font-size: .9rem;
+}
+
+.hp-insights__grid {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0,1fr));
+    gap: 16px;
+    margin-top: 16px;
+}
+
+@media (max-width: 1200px) {
+    .hp-insights__grid {
+        grid-template-columns: repeat(3,minmax(0,1fr));
+    }
+}
+
+@media (max-width: 700px) {
+    .hp-insights__grid {
+        grid-template-columns: repeat(2,minmax(0,1fr));
+    }
+}
+
+.hp-insight {
+    background: linear-gradient(135deg, rgba(26,28,37,.8), rgba(15,17,26,.8));
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 16px;
+    padding: 14px 16px;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 8px 24px rgba(0,0,0,.25);
+    transition: transform .2s ease, box-shadow .2s ease;
+}
+
+    .hp-insight:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 12px 28px rgba(0,0,0,.35), 0 0 18px rgba(85,51,255,.25);
+    }
+
+.hp-insight--accent {
+    border-color: rgba(85,51,255,.35);
+    box-shadow: 0 8px 24px rgba(85,51,255,.15);
+}
+
+.hp-insight__label {
+    font-size: .9rem;
+    color: rgba(255,255,255,.65);
+    margin-bottom: 6px;
+}
+
+.hp-insight__value {
+    font-size: 1.4rem;
+    font-weight: 800;
+    letter-spacing: .02em;
+    color: #fff;
+}
+
+/* Lucky jump */
+.hp-btn--lucky {
+    border: 1px dashed rgba(255,255,255,.22);
+}
+
+    .hp-btn--lucky:hover {
+        border-style: solid;
+        box-shadow: 0 0 18px rgba(255,170,51,.25);
+    }
+
+/* Trending cards: show floor inline meta */
+.hp-trend__meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: rgba(255,255,255,.7);
+}
+
+/* Micro polish */
+.hp-badge--live {
+    color: #22cc88;
+}
+
+.hp-mini__refresh {
+    margin-left: 8px;
+    background: rgba(0,0,0,.35);
+    border: 1px solid rgba(255,255,255,.12);
+    color: rgba(255,255,255,.85);
+    border-radius: 6px;
+    padding: 2px 6px;
+    cursor: pointer;
+    transition: transform .15s ease, background .15s ease;
+}
+
+    .hp-mini__refresh:hover {
+        transform: rotate(12deg);
+        background: rgba(85,51,255,.25);
+    }
+
+/* Confetti-lite on hover of hero subtitle (just for fun) */
+.hp-subtitle {
+    position: relative;
+    overflow: visible;
+}
+
+    .hp-subtitle:hover::after {
+        content: "";
+        position: absolute;
+        inset: -30%;
+        background: radial-gradient(4px 4px at 20% 30%, #ff3366 95%, transparent) 0 0/16% 16%, radial-gradient(4px 4px at 60% 20%, #33ccff 95%, transparent) 0 0/18% 18%, radial-gradient(4px 4px at 40% 70%, #22cc88 95%, transparent) 0 0/20% 20%, radial-gradient(4px 4px at 80% 50%, #ffaa33 95%, transparent) 0 0/22% 22%;
+        animation: hp-sparkle 1s ease forwards;
+        pointer-events: none;
+        filter: drop-shadow(0 2px 8px rgba(0,0,0,.3));
+    }
+
+@keyframes hp-sparkle {
+    from {
+        transform: translateY(-10%);
+        opacity: 0;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    to {
+        transform: translateY(10%);
+        opacity: 0;
+    }
+}
