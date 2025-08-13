@@ -1,6 +1,6 @@
 ﻿import './styles.css';
-import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { ethers } from 'ethers';
 import MarketplaceAbi from './abi/Marketplace.json';
 import { createClient } from '@supabase/supabase-js';
@@ -10,14 +10,16 @@ import { Analytics } from '@vercel/analytics/react';
 import Navigation from './components/Navigation';
 import Footer from './layout/Footer';
 import './layout/Footer.css';
-import HomePage from './pages/HomePage';
-import ProfilePage from './pages/ProfilePage';
-import MarketplacePage from './pages/MarketplacePage';
-import HotListingsPage from './pages/HotListingsPage';
-import TermsPage from './pages/TermsPage';
-import PrivacyPage from './pages/PrivacyPage';
-import SellPage from './pages/SellPage';
-import CollectionPage from './pages/CollectionPage'; // ✅ NEW
+
+// Lazy-loaded pages (code-splitting)
+const HomePage = lazy(() => import('./pages/HomePage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const MarketplacePage = lazy(() => import('./pages/MarketplacePage'));
+const HotListingsPage = lazy(() => import('./pages/HotListingsPage'));
+const TermsPage = lazy(() => import('./pages/TermsPage'));
+const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
+const SellPage = lazy(() => import('./pages/SellPage'));
+const CollectionPage = lazy(() => import('./pages/CollectionPage'));
 
 // Providers
 import { WalletProvider } from './context/WalletContext';
@@ -56,32 +58,187 @@ function CollectionAliasRedirect() {
     return <Navigate to={`/collections/${address}`} replace />;
 }
 
+// Scroll to top on route change
+function ScrollToTop() {
+    const { pathname } = useLocation();
+    useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }, [pathname]);
+    return null;
+}
+
+// Lightweight route change progress bar (no deps)
+function RouteProgressBar() {
+    const { pathname } = useLocation();
+    const [visible, setVisible] = useState(false);
+    const [width, setWidth] = useState(0);
+
+    useEffect(() => {
+        let raf = 0, hideT = 0, growT = 0;
+        setVisible(true);
+        setWidth(8);
+        growT = window.setInterval(() => {
+            setWidth((w) => (w < 85 ? Math.min(85, w + 7) : w));
+        }, 60);
+        raf = window.setTimeout(() => {
+            setWidth(100);
+            hideT = window.setTimeout(() => { setVisible(false); setWidth(0); }, 240);
+        }, 320);
+
+        return () => {
+            window.clearInterval(growT);
+            window.clearTimeout(raf);
+            window.clearTimeout(hideT);
+        };
+    }, [pathname]);
+
+    if (!visible) return null;
+    return (
+        <div style={{
+            position: 'fixed',
+            top: 0, left: 0, height: 3,
+            width: `${width}%`,
+            background: 'linear-gradient(90deg, #5533ff, #ff3366, #33ccff)',
+            boxShadow: '0 0 8px rgba(85,51,255,.6)',
+            zIndex: 9999,
+            transition: 'width .22s ease'
+        }} />
+    );
+}
+
+// Online/offline banner
+function OnlineStatusBanner() {
+    const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
+    useEffect(() => {
+        const on = () => setOnline(true);
+        const off = () => setOnline(false);
+        window.addEventListener('online', on);
+        window.addEventListener('offline', off);
+        return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+    }, []);
+    if (online) return null;
+    return (
+        <div style={{
+            position: 'fixed', bottom: 12, left: '50%', transform: 'translateX(-50%)',
+            padding: '8px 14px', borderRadius: 10,
+            background: 'rgba(255, 51, 102, .15)', color: '#fff',
+            border: '1px solid rgba(255,255,255,.12)', backdropFilter: 'blur(8px)',
+            zIndex: 9999, fontSize: 14
+        }}>
+            You are offline. Some data may be stale.
+        </div>
+    );
+}
+
+// Env warning (missing marketplace address)
+function EnvWarningBanner() {
+    if (marketplaceAddress && marketplaceAddress !== '0x0000000000000000000000000000000000000000') return null;
+    return (
+        <div style={{
+            position: 'fixed', top: 8, left: '50%', transform: 'translateX(-50%)',
+            padding: '8px 12px', borderRadius: 8, zIndex: 9998,
+            background: 'rgba(255,170,51,.15)', color: '#fff',
+            border: '1px solid rgba(255,255,255,.14)', backdropFilter: 'blur(6px)', fontSize: 13
+        }}>
+            Warning: VITE_MARKETPLACE_ADDRESS is not set. Using placeholder address.
+        </div>
+    );
+}
+
+// Simple error boundary for lazy-loaded routes
+class RouteErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error) { return { hasError: true, error }; }
+    componentDidCatch(error, info) { console.error('Route render error:', error, info); }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="hp" style={{ maxWidth: 900, margin: '3rem auto', padding: '0 1.25rem' }}>
+                    <h2 style={{ marginBottom: '.5rem' }}>Something went wrong</h2>
+                    <p style={{ color: 'var(--hp-muted)' }}>
+                        The page failed to load. Try refreshing or go back to the homepage.
+                    </p>
+                    <div style={{ marginTop: '1rem' }}>
+                        <a href="/" className="hp-btn hp-btn--primary">Go Home</a>
+                        <button className="hp-btn" style={{ marginLeft: 8 }} onClick={() => window.location.reload()}>Refresh</button>
+                    </div>
+                    {import.meta.env.MODE !== 'production' && this.state.error && (
+                        <pre style={{ marginTop: '1rem', whiteSpace: 'pre-wrap', opacity: .8 }}>
+                            {String(this.state.error?.stack || this.state.error?.message || this.state.error)}
+                        </pre>
+                    )}
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+// Dynamic document title per route
+function TitleSetter() {
+    const { pathname } = useLocation();
+    useEffect(() => {
+        const map = [
+            { test: /^\/$/, title: 'WileyW€$T NFT Marketplace' },
+            { test: /^\/marketplace/, title: 'Marketplace • WileyW€$T' },
+            { test: /^\/hot-listings/, title: 'Hot Listings • WileyW€$T' },
+            { test: /^\/sell/, title: 'Sell NFT • WileyW€$T' },
+            { test: /^\/profile/, title: 'Your Profile • WileyW€$T' },
+            { test: /^\/collections\/[0-9a-zA-Z]+/, title: 'Collection • WileyW€$T' },
+            { test: /^\/terms/, title: 'Terms • WileyW€$T' },
+            { test: /^\/privacy/, title: 'Privacy • WileyW€$T' },
+        ];
+        const found = map.find(m => m.test.test(pathname));
+        document.title = found ? found.title : 'WileyW€$T';
+    }, [pathname]);
+    return null;
+}
+
 function App() {
     return (
         <SupabaseProvider>
             <WalletProvider rpcUrl={rpcUrl}>
                 <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi}>
                     <BrowserRouter>
+                        <RouteProgressBar />
+                        <ScrollToTop />
+                        <TitleSetter />
+                        <OnlineStatusBanner />
+                        <EnvWarningBanner />
                         <div className="app-container">
                             <Navigation />
                             <div className="main-content">
-                                <Routes>
-                                    <Route path="/" element={<HomePage />} />
-                                    <Route path="/profile" element={<ProfilePage />} />
-                                    <Route path="/marketplace" element={<MarketplacePage />} />
-                                    <Route path="/hot-listings" element={<HotListingsPage />} />
-                                    <Route path="/sell" element={<SellPage />} />
-                                    <Route path="/terms" element={<TermsPage />} />
-                                    <Route path="/privacy" element={<PrivacyPage />} />
+                                <RouteErrorBoundary>
+                                    <Suspense fallback={
+                                        <div className="hp" style={{ maxWidth: 900, margin: '3rem auto', padding: '0 1.25rem' }}>
+                                            <div className="hp-section__head"><h2>Loading…</h2></div>
+                                            <div className="hp-mini">
+                                                <div className="hp-mini__card"><div className="hp-mini__label">Preparing</div><div className="hp-mini__value">…</div></div>
+                                                <div className="hp-mini__card"><div className="hp-mini__label">Routes</div><div className="hp-mini__value">…</div></div>
+                                                <div className="hp-mini__card"><div className="hp-mini__label">Assets</div><div className="hp-mini__value">…</div></div>
+                                            </div>
+                                        </div>
+                                    }>
+                                        <Routes>
+                                            <Route path="/" element={<HomePage />} />
+                                            <Route path="/profile" element={<ProfilePage />} />
+                                            <Route path="/marketplace" element={<MarketplacePage />} />
+                                            <Route path="/hot-listings" element={<HotListingsPage />} />
+                                            <Route path="/sell" element={<SellPage />} />
+                                            <Route path="/terms" element={<TermsPage />} />
+                                            <Route path="/privacy" element={<PrivacyPage />} />
 
-                                    {/* ✅ NEW: collections routes */}
-                                    <Route path="/collections" element={<CollectionsIndex />} />
-                                    <Route path="/collections/:address" element={<CollectionPage />} />
-                                    <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
+                                            {/* collections routes */}
+                                            <Route path="/collections" element={<CollectionsIndex />} />
+                                            <Route path="/collections/:address" element={<CollectionPage />} />
+                                            <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
 
-                                    {/* Fallback */}
-                                    <Route path="*" element={<Navigate to="/" replace />} />
-                                </Routes>
+                                            {/* Fallback */}
+                                            <Route path="*" element={<Navigate to="/" replace />} />
+                                        </Routes>
+                                    </Suspense>
+                                </RouteErrorBoundary>
                             </div>
                             <Footer />
                         </div>
