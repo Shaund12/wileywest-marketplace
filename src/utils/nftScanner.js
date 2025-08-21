@@ -421,7 +421,8 @@ export class NFTScanner {
                             if (e.message.includes('execution reverted') || 
                                 e.message.includes('call revert exception') ||
                                 e.message.includes('Internal JSON-RPC error') ||
-                                e.code === -32603 || e.code === -32000) {
+                                e.message.includes('missing revert data') ||
+                                e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                                 // Expected RPC errors - don't log
                             } else {
                                 debugWarn(`Error in conservative scan for ${address}:`, e.message);
@@ -570,7 +571,8 @@ export class NFTScanner {
                 if (e.message.includes('execution reverted') || 
                     e.message.includes('call revert exception') ||
                     e.message.includes('Internal JSON-RPC error') ||
-                    e.code === -32603 || e.code === -32000) {
+                    e.message.includes('missing revert data') ||
+                    e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                     // This is a normal contract call failure - not an error to log
                     // Just means the contract doesn't have a decimals function
                 } else {
@@ -626,8 +628,9 @@ export class NFTScanner {
                 if (e.message.includes('execution reverted') || 
                     e.message.includes('call revert exception') ||
                     e.message.includes('Internal JSON-RPC error') ||
+                    e.message.includes('missing revert data') ||
                     e.message.includes('timeout') ||
-                    e.code === -32603 || e.code === -32000) {
+                    e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                     // Expected errors - don't log
                 } else {
                     // Only log truly unexpected errors
@@ -642,7 +645,8 @@ export class NFTScanner {
             if (error.message.includes('execution reverted') || 
                 error.message.includes('call revert exception') ||
                 error.message.includes('Internal JSON-RPC error') ||
-                error.code === -32603 || error.code === -32000) {
+                error.message.includes('missing revert data') ||
+                error.code === -32603 || error.code === -32000 || error.code === 'CALL_EXCEPTION') {
                 // These are expected for many contracts - don't log
                 return false;
             } else {
@@ -839,7 +843,8 @@ export class NFTScanner {
                     if (error.message.includes('execution reverted') || 
                         error.message.includes('call revert exception') ||
                         error.message.includes('Internal JSON-RPC error') ||
-                        error.code === -32603 || error.code === -32000) {
+                        error.message.includes('missing revert data') ||
+                        error.code === -32603 || error.code === -32000 || error.code === 'CALL_EXCEPTION') {
                         // Expected RPC errors - don't log as warnings, just debug info
                         debugLog(`RPC error scanning blocks ${chunkStart}-${chunkEnd}, continuing...`);
                     } else {
@@ -905,7 +910,8 @@ export class NFTScanner {
                 if (e.message.includes('execution reverted') || 
                     e.message.includes('call revert exception') ||
                     e.message.includes('Internal JSON-RPC error') ||
-                    e.code === -32603 || e.code === -32000) {
+                    e.message.includes('missing revert data') ||
+                    e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                     // Expected error - try interface check before giving up
                 } else {
                     console.warn(`Unexpected balanceOf error for ${contractAddress}:`, e.message);
@@ -928,7 +934,8 @@ export class NFTScanner {
                     if (interfaceError.message.includes('execution reverted') || 
                         interfaceError.message.includes('call revert exception') ||
                         interfaceError.message.includes('Internal JSON-RPC error') ||
-                        interfaceError.code === -32603 || interfaceError.code === -32000) {
+                        interfaceError.message.includes('missing revert data') ||
+                        interfaceError.code === -32603 || interfaceError.code === -32000 || interfaceError.code === 'CALL_EXCEPTION') {
                         // Expected error - move on to ERC1155
                     } else {
                         console.warn(`Unexpected interface error for ${contractAddress}:`, interfaceError.message);
@@ -962,7 +969,8 @@ export class NFTScanner {
                         if (e.message.includes('execution reverted') || 
                             e.message.includes('call revert exception') ||
                             e.message.includes('Internal JSON-RPC error') ||
-                            e.code === -32603 || e.code === -32000) {
+                            e.message.includes('missing revert data') ||
+                            e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                             // Expected error - skip this token ID
                             continue;
                         } else {
@@ -994,7 +1002,8 @@ export class NFTScanner {
                     if (e.message.includes('execution reverted') || 
                         e.message.includes('call revert exception') ||
                         e.message.includes('Internal JSON-RPC error') ||
-                        e.code === -32603 || e.code === -32000) {
+                        e.message.includes('missing revert data') ||
+                        e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                         // Expected error - not an ERC1155
                     } else {
                         console.warn(`Unexpected ERC1155 interface error for ${contractAddress}:`, e.message);
@@ -1005,7 +1014,8 @@ export class NFTScanner {
                 if (e.message.includes('execution reverted') || 
                     e.message.includes('call revert exception') ||
                     e.message.includes('Internal JSON-RPC error') ||
-                    e.code === -32603 || e.code === -32000) {
+                    e.message.includes('missing revert data') ||
+                    e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                     // Expected error - not an ERC1155
                 } else {
                     console.warn(`Unexpected ERC1155 error for ${contractAddress}:`, e.message);
@@ -1018,8 +1028,9 @@ export class NFTScanner {
             if (error.message.includes('execution reverted') || 
                 error.message.includes('call revert exception') ||
                 error.message.includes('Internal JSON-RPC error') ||
+                error.message.includes('missing revert data') ||
                 error.message.includes('timeout') ||
-                error.code === -32603 || error.code === -32000) {
+                error.code === -32603 || error.code === -32000 || error.code === 'CALL_EXCEPTION') {
                 // Expected errors - don't log
                 return null;
             } else {
@@ -1204,8 +1215,9 @@ export class NFTScanner {
                         if (e.message.includes('execution reverted') || 
                             e.message.includes('call revert exception') ||
                             e.message.includes('Internal JSON-RPC error') ||
+                            e.message.includes('missing revert data') ||
                             e.message.includes('timeout') ||
-                            e.code === -32603 || e.code === -32000) {
+                            e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                             // Expected errors - token doesn't exist or we don't own it
                         } else {
                             console.warn(`Unexpected error checking ownership of token ${tokenId}:`, e.message);
@@ -1363,7 +1375,8 @@ export class NFTScanner {
                 if (e.message.includes('execution reverted') || 
                     e.message.includes('call revert exception') ||
                     e.message.includes('Internal JSON-RPC error') ||
-                    e.code === -32603 || e.code === -32000) {
+                    e.message.includes('missing revert data') ||
+                    e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                     // Expected RPC errors - skip this chunk
                     console.log(`RPC error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}, skipping...`);
                 } else {
@@ -1648,7 +1661,8 @@ export class NFTScanner {
                     if (singleError.message.includes('execution reverted') || 
                         singleError.message.includes('call revert exception') ||
                         singleError.message.includes('Internal JSON-RPC error') ||
-                        singleError.code === -32603 || singleError.code === -32000) {
+                        singleError.message.includes('missing revert data') ||
+                        singleError.code === -32603 || singleError.code === -32000 || singleError.code === 'CALL_EXCEPTION') {
                         // Expected RPC errors - skip this chunk
                         console.log(`RPC error getting TransferSingle events in blocks ${startBlock}-${endBlock}, skipping...`);
                     } else {
@@ -1677,7 +1691,8 @@ export class NFTScanner {
                     if (batchError.message.includes('execution reverted') || 
                         batchError.message.includes('call revert exception') ||
                         batchError.message.includes('Internal JSON-RPC error') ||
-                        batchError.code === -32603 || batchError.code === -32000) {
+                        batchError.message.includes('missing revert data') ||
+                        batchError.code === -32603 || batchError.code === -32000 || batchError.code === 'CALL_EXCEPTION') {
                         // Expected RPC errors - skip this chunk
                         console.log(`RPC error getting TransferBatch events in blocks ${startBlock}-${endBlock}, skipping...`);
                     } else {
@@ -1690,7 +1705,8 @@ export class NFTScanner {
                 if (chunkError.message.includes('execution reverted') || 
                     chunkError.message.includes('call revert exception') ||
                     chunkError.message.includes('Internal JSON-RPC error') ||
-                    chunkError.code === -32603 || chunkError.code === -32000) {
+                    chunkError.message.includes('missing revert data') ||
+                    chunkError.code === -32603 || chunkError.code === -32000 || chunkError.code === 'CALL_EXCEPTION') {
                     // Expected RPC errors - skip this chunk
                     console.log(`RPC error scanning ERC1155 events in blocks ${startBlock}-${endBlock}, skipping...`);
                 } else {
