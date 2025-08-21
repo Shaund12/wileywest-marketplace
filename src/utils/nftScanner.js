@@ -359,7 +359,20 @@ export class NFTScanner {
             this.updateStatus(scanFromGenesis ? 
                 "🔍 Discovering NFT contracts from complete blockchain history..." :
                 "🔍 Discovering NFT contracts from recent blockchain activity...");
-            const recentContracts = await this.findContractsByRecentTransfers(scanFromGenesis);
+            
+            let recentContracts = [];
+            try {
+                recentContracts = await this.findContractsByRecentTransfers(scanFromGenesis);
+            } catch (error) {
+                console.warn("Main contract discovery failed, using fallback method:", error);
+                // Fallback to the method that respects scanFromGenesis flag
+                try {
+                    recentContracts = await this.findContractsByRecentTransfersFallback(scanFromGenesis);
+                } catch (fallbackError) {
+                    console.error("Fallback contract discovery also failed:", fallbackError);
+                    recentContracts = []; // Continue with known contracts only
+                }
+            }
             contractsToScan.push(...recentContracts);
             
             // Remove duplicates and invalid addresses
@@ -657,22 +670,29 @@ export class NFTScanner {
                 debugLog(`🌐 Conservative blockchain scan: blocks ${fromBlock} to ${currentBlock} for limited coverage`);
             }
             
-            // Use chunked approach to scan recent blockchain history only
-            await this.findTransfersByChunks(ethers.id("Transfer(address,address,uint256)"), 
-                ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32), 
-                contracts, fromBlock, currentBlock);
-            
-            // Try ERC1155 TransferSingle events in recent blocks only
-            await this.findTransfersByChunks(ethers.id("TransferSingle(address,address,address,uint256,uint256)"),
-                ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32),
-                contracts, fromBlock, currentBlock, true);
+            // Use chunked approach to scan blockchain history
+            try {
+                await this.findTransfersByChunks(ethers.id("Transfer(address,address,uint256)"), 
+                    ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32), 
+                    contracts, fromBlock, currentBlock);
+                
+                // Try ERC1155 TransferSingle events
+                await this.findTransfersByChunks(ethers.id("TransferSingle(address,address,address,uint256,uint256)"),
+                    ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32),
+                    contracts, fromBlock, currentBlock, true);
+            } catch (chunkedError) {
+                console.warn("Chunked transfer scanning failed, using fallback approach:", chunkedError);
+                // Fall back to the fallback method which respects scanFromGenesis
+                throw chunkedError; // Let the caller handle this by calling the fallback method
+            }
             
             // Filter out known ERC20s
             const filteredContracts = [...contracts].filter(addr => 
                 !this.knownErc20s.has(addr.toLowerCase())
             );
                 
-            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from conservative scan`);
+            const scanType = scanFromGenesis ? 'comprehensive' : 'conservative';
+            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from ${scanType} scan`);
             return filteredContracts;
         } catch (error) {
             criticalError("Error finding contracts by recent transfers:", error);
