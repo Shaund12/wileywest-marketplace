@@ -269,9 +269,9 @@ export class NFTScanner {
     }
 
     // Get all NFTs with caching support
-    async getAllNFTs(forceRefresh = false) {
-        // First try to use cached NFTs
-        if (!forceRefresh) {
+    async getAllNFTs(forceRefresh = false, scanFromGenesis = false) {
+        // First try to use cached NFTs (unless scanning from genesis is specifically requested)
+        if (!forceRefresh && !scanFromGenesis) {
             const cachedNfts = this.loadCachedNfts();
             if (cachedNfts) {
                 this.nfts = cachedNfts;
@@ -284,8 +284,8 @@ export class NFTScanner {
             }
         }
         
-        // No valid cache, do a full scan
-        const nfts = await this.scanAllNFTs();
+        // No valid cache or comprehensive scan requested, do a full scan
+        const nfts = await this.scanAllNFTs(false, scanFromGenesis);
         
         // Save to cache
         this.saveNftsToCache(nfts);
@@ -334,7 +334,7 @@ export class NFTScanner {
     }
 
     // Conservative scan for NFTs with limited blockchain coverage
-    async scanAllNFTs(isBackground = false) {
+    async scanAllNFTs(isBackground = false, scanFromGenesis = false) {
         try {
             // Start timing for performance tracking
             this.scanStartTime = Date.now();
@@ -342,16 +342,24 @@ export class NFTScanner {
             // Reset progress
             this.progress = { found: 0, scanned: 0, total: 0 };
             
-            // Start with known contracts + conservative contract discovery
+            // Start with known contracts + contract discovery
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
             
-            this.updateStatus("🔍 Conservative NFT scanning with limited blockchain coverage");
-            debugLog("🌐 Conservative NFT discovery approach to prevent mass data collection");
-            debugLog("💡 Scanning known contracts + recent blockchain history only");
+            if (scanFromGenesis) {
+                this.updateStatus("🔍 Comprehensive NFT scanning from blockchain genesis (block 0)");
+                debugLog("🌐 Comprehensive NFT discovery from all blockchain history");
+                debugLog("💡 Scanning known contracts + complete blockchain history for maximum coverage");
+            } else {
+                this.updateStatus("🔍 Conservative NFT scanning with limited blockchain coverage");
+                debugLog("🌐 Conservative NFT discovery approach to prevent mass data collection");
+                debugLog("💡 Scanning known contracts + recent blockchain history only");
+            }
             
-            // Add contracts from conservative transfer discovery (recent blocks only)
-            this.updateStatus("🔍 Discovering NFT contracts from recent blockchain activity...");
-            const recentContracts = await this.findContractsByRecentTransfers();
+            // Add contracts from transfer discovery (recent blocks or all history)
+            this.updateStatus(scanFromGenesis ? 
+                "🔍 Discovering NFT contracts from complete blockchain history..." :
+                "🔍 Discovering NFT contracts from recent blockchain activity...");
+            const recentContracts = await this.findContractsByRecentTransfers(scanFromGenesis);
             contractsToScan.push(...recentContracts);
             
             // Remove duplicates and invalid addresses
@@ -366,7 +374,7 @@ export class NFTScanner {
                 
             // Update total for progress tracking
             this.updateProgress({ total: contractsToScan.length });
-            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan (conservative approach)`);
+            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan (${scanFromGenesis ? 'comprehensive' : 'conservative'} approach)`);
             
             // Save contract cache and known ERC20s periodically
             const saveInterval = setInterval(() => {
@@ -633,16 +641,21 @@ export class NFTScanner {
     }
 
     // Find contracts from recent Transfer events (conservative approach)
-    async findContractsByRecentTransfers() {
+    async findContractsByRecentTransfers(scanFromGenesis = false) {
         try {
             const contracts = new Set();
             
-            // Conservative approach: Scan only recent blocks to avoid mass data collection
+            // Choose scan range based on user preference
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = Math.max(0, currentBlock - 100000); // Only last 100k blocks
+            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 100000);
             
-            this.updateStatus(`🔍 Conservative blockchain scan (${fromBlock} to ${currentBlock}) - recent activity only...`);
-            debugLog(`🌐 Conservative blockchain scan: blocks ${fromBlock} to ${currentBlock} for limited coverage`);
+            if (scanFromGenesis) {
+                this.updateStatus(`🔍 Comprehensive blockchain scan (block 0 to ${currentBlock}) - scanning all history...`);
+                debugLog(`🌐 Comprehensive blockchain scan: blocks 0 to ${currentBlock} for complete coverage`);
+            } else {
+                this.updateStatus(`🔍 Conservative blockchain scan (${fromBlock} to ${currentBlock}) - recent activity only...`);
+                debugLog(`🌐 Conservative blockchain scan: blocks ${fromBlock} to ${currentBlock} for limited coverage`);
+            }
             
             // Use chunked approach to scan recent blockchain history only
             await this.findTransfersByChunks(ethers.id("Transfer(address,address,uint256)"), 

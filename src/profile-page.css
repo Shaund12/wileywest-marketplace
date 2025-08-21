@@ -1287,6 +1287,29 @@
     box-shadow: none;
 }
 
+.scan-history-button {
+    background: linear-gradient(to right, #8b5cf6, #a78bfa) !important;
+    border: 1px solid #8b5cf6 !important;
+    color: white !important;
+    font-size: 0.85rem;
+    padding: 8px 12px;
+    min-width: auto;
+}
+
+.scan-history-button:hover {
+    background: linear-gradient(to right, #7c3aed, #9333ea) !important;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(139, 92, 246, 0.3);
+}
+
+.scan-history-button:disabled {
+    background: #444 !important;
+    border-color: #444 !important;
+    color: #666 !important;
+    transform: none;
+    box-shadow: none;
+}
+
 .action-button {
     white-space: nowrap;
 }

@@ -846,7 +846,7 @@ function ProfilePage() {
     // Find ALL NFTs owned by the user with cache-first approach and smart scanning
     // NEW BEHAVIOR: Only performs background scanning when explicitly allowed and cache is stale
     // This prevents continuous rescanning and follows best practices for when to refresh data
-    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false) => {
+    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false, scanFromGenesis = false) => {
         if (!wallet || !provider) return;
 
         // Prevent multiple simultaneous scans (with force override option)
@@ -918,7 +918,7 @@ function ProfilePage() {
             // Step 2: Scan from blockchain
             // Reset scanning state before blockchain scan to avoid conflicts
             resetScanningState();
-            await scanUserNftsFromBlockchain(false, forceRefresh);
+            await scanUserNftsFromBlockchain(false, forceRefresh, scanFromGenesis);
 
         } catch (error) {
             console.error("Error loading user NFTs:", error);
@@ -929,7 +929,7 @@ function ProfilePage() {
         }
     };
 
-    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false) => {
+    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false, scanFromGenesis = false) => {
         // Prevent scanning if already in progress or too recent
         if (scanningInProgress.current && !isBackgroundUpdate) {
             console.log("⏳ Blockchain scan already in progress, skipping...");
@@ -975,8 +975,8 @@ function ProfilePage() {
             }
             
             // Start the comprehensive scan with enhanced error handling
-            console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting...`);
-            const foundNfts = await scanner.scanAllNFTs();
+            console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting${scanFromGenesis ? ' from genesis (block 0)' : ''}...`);
+            const foundNfts = await scanner.scanAllNFTs(isBackgroundUpdate, scanFromGenesis);
             
             // CRITICAL FIX: Don't clear existing NFTs if scan finds 0 NFTs (unless it's a force refresh)
             if (foundNfts.length > 0) {
@@ -1454,6 +1454,17 @@ function ProfilePage() {
                                                 Find All NFTs
                                             </>
                                         )}
+                                    </button>
+                                    <button
+                                        className="tertiary-button action-button scan-history-button"
+                                        onClick={() => findAllUserNfts(false, false, true)}
+                                        disabled={isLoading || isScanning}
+                                        title="Comprehensive scan from blockchain genesis (block 0) - finds all historical NFTs"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                            <path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zM12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+                                        </svg>
+                                        Scan All History
                                     </button>
                                     <button
                                         className="secondary-button action-button force-refresh-button"
