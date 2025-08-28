@@ -849,16 +849,24 @@ function ProfilePage() {
     const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false, scanFromGenesis = false) => {
         if (!wallet || !provider) return;
 
+        // CRITICAL DEBUG: Log all parameters to understand what's being called
+        console.log(`🔍 findAllUserNfts called with: forceRefresh=${forceRefresh}, allowBackgroundUpdate=${allowBackgroundUpdate}, scanFromGenesis=${scanFromGenesis}`);
+
         // CRITICAL FIX: If scanFromGenesis is true, completely bypass ALL cache logic and scan from block 0
         if (scanFromGenesis) {
+            console.log("🔍 Comprehensive blockchain scan: blocks 0 to current for complete coverage");
             console.log("🌐 Genesis scan requested - bypassing ALL cache logic and scanning from block 0");
             
             // Reset any existing scanning state
             resetScanningState();
             
-            // Set scanning state immediately
+            // Set scanning state immediately with genesis flag to prevent interference
             setIsLoading(true);
+            setIsScanning(true);
             scanningInProgress.current = true;
+            
+            // Set status to indicate genesis scanning
+            setStatus("🔍 Comprehensive blockchain scan starting from genesis (block 0)...");
             
             // Set timeout for genesis scanning
             scanningTimeout.current = setTimeout(() => {
@@ -868,12 +876,15 @@ function ProfilePage() {
             }, 10 * 60 * 1000); // 10 minutes for genesis scan
             
             try {
+                // Call the blockchain scan directly with genesis flag
+                console.log("Foreground blockchain NFT scan starting from genesis (block 0)...");
                 await scanUserNftsFromBlockchain(false, true, true); // Force refresh = true, scanFromGenesis = true
             } catch (error) {
                 console.error("Error in genesis scan:", error);
                 setStatus(`Error in genesis scan: ${error.message}`);
             } finally {
                 setIsLoading(false);
+                setIsScanning(false);
                 resetScanningState();
             }
             return;
@@ -1250,6 +1261,12 @@ function ProfilePage() {
                 // Check if the update is for the current user
                 if (payload.new?.wallet_address === wallet.toLowerCase()) {
                     const now = Date.now();
+                    
+                    // Don't trigger real-time updates if a genesis scan or any scan is already in progress
+                    if (scanningInProgress.current || isScanning) {
+                        console.log("⏳ Profile update skipped - genesis/comprehensive scan in progress");
+                        return;
+                    }
                     
                     // More aggressive throttling for real-time updates to prevent continuous scanning
                     if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
