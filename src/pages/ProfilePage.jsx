@@ -854,27 +854,23 @@ function ProfilePage() {
         // USER REQUIREMENT: ALWAYS load cache first, then ALWAYS scan from genesis (block 0)
         console.log("🔍 USER REQUIREMENT: Always load cache first, then always scan from genesis (block 0)");
         
-        // Enhanced scanning state management:
-        // - Force refresh always overrides state
-        // - Genesis scanning (Scan All History) also overrides state since user explicitly requested it
-        // - Regular background updates respect existing state
-        const shouldOverrideState = forceRefresh || scanFromGenesis;
-        
-        if (scanningInProgress.current && !shouldOverrideState) {
-            console.log("⏳ NFT scan already in progress, skipping...");
-            console.log("💡 Tip: Use 'Force Refresh' if scanning appears stuck");
-            return;
-        }
+        // USER REQUIREMENT ENFORCEMENT: Genesis scanning (Scan All History) should NEVER be blocked
+        if (scanFromGenesis) {
+            console.log("🔥 GENESIS SCAN REQUESTED - BYPASSING ALL SCANNING STATE CHECKS");
+            console.log("🔄 Automatically resetting any stuck scanning state for genesis scan...");
+            forceResetScanningState(); // Force reset everything for genesis scans
+        } else {
+            // Only check scanning state for non-genesis scans
+            if (scanningInProgress.current && !forceRefresh) {
+                console.log("⏳ NFT scan already in progress, skipping...");
+                console.log("💡 Tip: Use 'Force Refresh' or 'Scan All History' if scanning appears stuck");
+                return;
+            }
 
-        // If user explicitly requested genesis scanning, reset stuck state
-        if (scanFromGenesis && scanningInProgress.current) {
-            console.log("🔄 Genesis scan requested - resetting stuck scanning state...");
-            resetScanningState();
-        }
-
-        // Force reset if this is a force refresh or genesis scan
-        if (forceRefresh || scanFromGenesis) {
-            resetScanningState();
+            // Force reset if this is a force refresh
+            if (forceRefresh) {
+                resetScanningState();
+            }
         }
 
         setIsLoading(true);
@@ -888,8 +884,8 @@ function ProfilePage() {
         }, 10 * 60 * 1000);
 
         try {
-            // STEP 1: Always load cache first to show immediate results (unless force refresh)
-            if (!forceRefresh && supabaseConnected && getCachedProfile) {
+            // STEP 1: USER REQUIREMENT - ALWAYS load cache first to show immediate results
+            if (supabaseConnected && getCachedProfile) {
                 console.log("🔍 Checking cache for profile data...");
                 setStatus("Loading profile from cache...");
 
@@ -913,8 +909,14 @@ function ProfilePage() {
                 }
             }
 
-            // STEP 2: ALWAYS scan from blockchain (using genesis by default)
-            console.log("🌐 Starting blockchain scan from genesis (block 0)...");
+            // STEP 2: USER REQUIREMENT - ALWAYS scan from blockchain from genesis (block 0)
+            if (scanFromGenesis) {
+                console.log("🌐 Starting COMPREHENSIVE blockchain scan from genesis (block 0)...");
+                setStatus("🔥 SCANNING ALL BLOCKCHAIN HISTORY FROM BLOCK 0 - This may take a few minutes...");
+            } else {
+                console.log("🌐 Starting conservative blockchain scan...");
+                setStatus("Scanning recent blockchain activity...");
+            }
             await scanUserNftsFromBlockchain(false, forceRefresh, scanFromGenesis);
 
         } catch (error) {
@@ -927,14 +929,17 @@ function ProfilePage() {
     };
 
     const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false, scanFromGenesis = true) => {
-        // Enhanced scanning state management for genesis scans
-        const shouldOverrideState = isForceRefresh || scanFromGenesis;
-        
-        // Prevent scanning if already in progress (unless force refresh or genesis scan)
-        if (scanningInProgress.current && !shouldOverrideState) {
-            console.log("⏳ Blockchain scan already in progress, skipping...");
-            console.log("💡 Tip: Use 'Force Refresh' if scanning appears stuck");
-            return;
+        // USER REQUIREMENT ENFORCEMENT: Genesis scanning should NEVER be blocked
+        if (scanFromGenesis) {
+            console.log("🔥 GENESIS SCAN EXECUTING - BYPASSING ALL SCANNING STATE CHECKS");
+            // Genesis scans always execute regardless of state
+        } else {
+            // Only check scanning state for non-genesis scans
+            if (scanningInProgress.current && !isForceRefresh) {
+                console.log("⏳ Blockchain scan already in progress, skipping...");
+                console.log("💡 Tip: Use 'Force Refresh' or 'Scan All History' if scanning appears stuck");
+                return;
+            }
         }
 
         const now = Date.now();
