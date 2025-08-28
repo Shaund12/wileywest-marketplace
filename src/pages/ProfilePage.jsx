@@ -1206,8 +1206,8 @@ function ProfilePage() {
     // Fetch NFTs when tab is changed to collection
     useEffect(() => {
         if (activeTab === 'collection' && wallet && !userNfts.length) {
-            // Initial load - allow background update if cache is stale
-            findAllUserNfts(false, true);
+            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) for initial load
+            findAllUserNfts(false, true, true); // forceRefresh=false, allowBackgroundUpdate=true, scanFromGenesis=true
         }
     }, [activeTab, wallet]);
 
@@ -1449,7 +1449,7 @@ function ProfilePage() {
                                 <div className="action-buttons">
                                     <button
                                         className="primary-button action-button"
-                                        onClick={() => findAllUserNfts(false, true)}
+                                        onClick={() => findAllUserNfts(false, true, true)} // USER REQUIREMENT: ALWAYS scan from genesis
                                         disabled={isLoading || isScanning}
                                     >
                                         {isScanning ? (
@@ -1479,7 +1479,7 @@ function ProfilePage() {
                                     </button>
                                     <button
                                         className="secondary-button action-button force-refresh-button"
-                                        onClick={() => findAllUserNfts(true, false)}
+                                        onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
                                         disabled={false}
                                         title="Force refresh - bypasses stuck scanning state and cache"
                                     >
@@ -1651,7 +1651,7 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true, false)}
+                                            onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
                                             disabled={isScanning}
                                         >
                                             {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
@@ -1729,7 +1729,7 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true, false)}
+                                            onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
                                             disabled={isScanning}
                                         >
                                             {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
