@@ -334,7 +334,7 @@ export class NFTScanner {
     }
 
     // Conservative scan for NFTs with limited blockchain coverage
-    async scanAllNFTs(isBackground = false, scanFromGenesis = false) {
+    async scanAllNFTs(isBackground = false, scanFromGenesis = true) {
         try {
             // Start timing for performance tracking
             this.scanStartTime = Date.now();
@@ -345,6 +345,7 @@ export class NFTScanner {
             // Start with known contracts + contract discovery
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
             
+            // USER REQUIREMENT: Always scan from genesis (block 0) by default
             if (scanFromGenesis) {
                 this.updateStatus("🔍 Comprehensive NFT scanning from blockchain genesis (block 0)");
                 debugLog("🌐 Comprehensive NFT discovery from all blockchain history");
@@ -658,7 +659,7 @@ export class NFTScanner {
     }
 
     // Find contracts from recent Transfer events (conservative approach)
-    async findContractsByRecentTransfers(scanFromGenesis = false) {
+    async findContractsByRecentTransfers(scanFromGenesis = true) {
         try {
             const contracts = new Set();
             
@@ -705,7 +706,7 @@ export class NFTScanner {
     }
 
     // Fallback method for when comprehensive scan fails
-    async findContractsByRecentTransfersFallback(scanFromGenesis = false) {
+    async findContractsByRecentTransfersFallback(scanFromGenesis = true) {
         try {
             const contracts = new Set();
             
