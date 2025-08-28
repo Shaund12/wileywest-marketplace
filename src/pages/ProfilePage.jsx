@@ -854,15 +854,26 @@ function ProfilePage() {
         // USER REQUIREMENT: ALWAYS load cache first, then ALWAYS scan from genesis (block 0)
         console.log("🔍 USER REQUIREMENT: Always load cache first, then always scan from genesis (block 0)");
         
-        // Prevent multiple simultaneous scans (with force override option)
-        if (scanningInProgress.current && !forceRefresh) {
+        // Enhanced scanning state management:
+        // - Force refresh always overrides state
+        // - Genesis scanning (Scan All History) also overrides state since user explicitly requested it
+        // - Regular background updates respect existing state
+        const shouldOverrideState = forceRefresh || scanFromGenesis;
+        
+        if (scanningInProgress.current && !shouldOverrideState) {
             console.log("⏳ NFT scan already in progress, skipping...");
             console.log("💡 Tip: Use 'Force Refresh' if scanning appears stuck");
             return;
         }
 
-        // Force reset if this is a force refresh
-        if (forceRefresh) {
+        // If user explicitly requested genesis scanning, reset stuck state
+        if (scanFromGenesis && scanningInProgress.current) {
+            console.log("🔄 Genesis scan requested - resetting stuck scanning state...");
+            resetScanningState();
+        }
+
+        // Force reset if this is a force refresh or genesis scan
+        if (forceRefresh || scanFromGenesis) {
             resetScanningState();
         }
 
@@ -895,7 +906,7 @@ function ProfilePage() {
                         await fetchContractInfoForNfts(cachedProfile.nfts);
                         
                         console.log("🔄 Fetching metadata for cached NFTs...");
-                        await fetchAllMetadata(cachedProfile.nfts);
+                        await batchFetchMetadata(cachedProfile.nfts);
                     }
                 } catch (cacheError) {
                     console.warn("Cache loading failed:", cacheError);
@@ -916,8 +927,11 @@ function ProfilePage() {
     };
 
     const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false, scanFromGenesis = true) => {
-        // Prevent scanning if already in progress or too recent
-        if (scanningInProgress.current && !isBackgroundUpdate) {
+        // Enhanced scanning state management for genesis scans
+        const shouldOverrideState = isForceRefresh || scanFromGenesis;
+        
+        // Prevent scanning if already in progress (unless force refresh or genesis scan)
+        if (scanningInProgress.current && !shouldOverrideState) {
             console.log("⏳ Blockchain scan already in progress, skipping...");
             console.log("💡 Tip: Use 'Force Refresh' if scanning appears stuck");
             return;
