@@ -872,7 +872,15 @@ function ProfilePage() {
         }, 5 * 60 * 1000);
 
         try {
-            // Step 1: Try to load from cache first (unless force refresh)
+            // CRITICAL FIX: If scanFromGenesis is true, bypass cache and go straight to blockchain scan
+            if (scanFromGenesis) {
+                console.log("🌐 Genesis scan requested - bypassing cache and scanning from block 0");
+                resetScanningState();
+                await scanUserNftsFromBlockchain(false, forceRefresh, scanFromGenesis);
+                return;
+            }
+
+            // Step 1: Try to load from cache first (unless force refresh or genesis scan)
             if (!forceRefresh && supabaseConnected && getCachedProfile) {
                 console.log("🔍 Checking cache for profile data...");
                 setStatus("Loading profile from cache...");
