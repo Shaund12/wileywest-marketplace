@@ -849,6 +849,36 @@ function ProfilePage() {
     const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false, scanFromGenesis = false) => {
         if (!wallet || !provider) return;
 
+        // CRITICAL FIX: If scanFromGenesis is true, completely bypass ALL cache logic and scan from block 0
+        if (scanFromGenesis) {
+            console.log("🌐 Genesis scan requested - bypassing ALL cache logic and scanning from block 0");
+            
+            // Reset any existing scanning state
+            resetScanningState();
+            
+            // Set scanning state immediately
+            setIsLoading(true);
+            scanningInProgress.current = true;
+            
+            // Set timeout for genesis scanning
+            scanningTimeout.current = setTimeout(() => {
+                console.warn("⚠️ Genesis scanning timeout reached - auto-resetting state");
+                forceResetScanningState();
+                setStatus("Genesis scanning timed out - please try again");
+            }, 10 * 60 * 1000); // 10 minutes for genesis scan
+            
+            try {
+                await scanUserNftsFromBlockchain(false, true, true); // Force refresh = true, scanFromGenesis = true
+            } catch (error) {
+                console.error("Error in genesis scan:", error);
+                setStatus(`Error in genesis scan: ${error.message}`);
+            } finally {
+                setIsLoading(false);
+                resetScanningState();
+            }
+            return;
+        }
+
         // Prevent multiple simultaneous scans (with force override option)
         if (scanningInProgress.current && !forceRefresh) {
             console.log("⏳ NFT scan already in progress, skipping...");
@@ -872,15 +902,7 @@ function ProfilePage() {
         }, 5 * 60 * 1000);
 
         try {
-            // CRITICAL FIX: If scanFromGenesis is true, bypass cache and go straight to blockchain scan
-            if (scanFromGenesis) {
-                console.log("🌐 Genesis scan requested - bypassing cache and scanning from block 0");
-                resetScanningState();
-                await scanUserNftsFromBlockchain(false, forceRefresh, scanFromGenesis);
-                return;
-            }
-
-            // Step 1: Try to load from cache first (unless force refresh or genesis scan)
+            // Step 1: Try to load from cache first (unless force refresh)
             if (!forceRefresh && supabaseConnected && getCachedProfile) {
                 console.log("🔍 Checking cache for profile data...");
                 setStatus("Loading profile from cache...");
