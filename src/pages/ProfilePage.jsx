@@ -843,82 +843,81 @@ function ProfilePage() {
         setIsScanning(false);
     };
     
-    // Find ALL NFTs owned by the user with cache-first approach and smart scanning
-    // NEW BEHAVIOR: Only performs background scanning when explicitly allowed and cache is stale
-    // This prevents continuous rescanning and follows best practices for when to refresh data
-    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false) => {
+    // Find ALL NFTs owned by the user with cache-first approach and ALWAYS scan from genesis (block 0)
+    // USER REQUIREMENT: Always load cache AND always scan from block 0 no matter what
+    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false, scanFromGenesis = true) => {
         if (!wallet || !provider) return;
 
-        // Prevent multiple simultaneous scans (with force override option)
-        if (scanningInProgress.current && !forceRefresh) {
-            console.log("⏳ NFT scan already in progress, skipping...");
-            console.log("💡 Tip: Use 'Force Refresh' if scanning appears stuck");
-            return;
-        }
+        // CRITICAL DEBUG: Log all parameters to understand what's being called
+        console.log(`🔍 findAllUserNfts called with: forceRefresh=${forceRefresh}, allowBackgroundUpdate=${allowBackgroundUpdate}, scanFromGenesis=${scanFromGenesis}`);
 
-        // Force reset if this is a force refresh
-        if (forceRefresh) {
-            resetScanningState();
+        // USER REQUIREMENT: ALWAYS load cache first, then ALWAYS scan from genesis (block 0)
+        console.log("🔍 USER REQUIREMENT: Always load cache first, then always scan from genesis (block 0)");
+        
+        // USER REQUIREMENT ENFORCEMENT: Genesis scanning (Scan All History) should NEVER be blocked
+        if (scanFromGenesis) {
+            console.log("🔥 GENESIS SCAN REQUESTED - BYPASSING ALL SCANNING STATE CHECKS");
+            console.log("🔄 Automatically resetting any stuck scanning state for genesis scan...");
+            forceResetScanningState(); // Force reset everything for genesis scans
+        } else {
+            // Only check scanning state for non-genesis scans
+            if (scanningInProgress.current && !forceRefresh) {
+                console.log("⏳ NFT scan already in progress, skipping...");
+                console.log("💡 Tip: Use 'Force Refresh' or 'Scan All History' if scanning appears stuck");
+                return;
+            }
+
+            // Force reset if this is a force refresh
+            if (forceRefresh) {
+                resetScanningState();
+            }
         }
 
         setIsLoading(true);
         scanningInProgress.current = true;
         
-        // Set a timeout to auto-reset if scanning gets stuck (5 minutes)
+        // Set a timeout to auto-reset if scanning gets stuck (10 minutes for genesis)
         scanningTimeout.current = setTimeout(() => {
             console.warn("⚠️ Scanning timeout reached - auto-resetting state");
             forceResetScanningState();
             setStatus("Scanning timed out - please try again");
-        }, 5 * 60 * 1000);
+        }, 10 * 60 * 1000);
 
         try {
-            // Step 1: Try to load from cache first (unless force refresh)
-            if (!forceRefresh && supabaseConnected && getCachedProfile) {
+            // STEP 1: USER REQUIREMENT - ALWAYS load cache first to show immediate results
+            if (supabaseConnected && getCachedProfile) {
                 console.log("🔍 Checking cache for profile data...");
                 setStatus("Loading profile from cache...");
 
-                const cachedProfile = await getCachedProfile(wallet);
-
-                if (cachedProfile && cachedProfile.nfts && cachedProfile.nfts.length > 0) {
-                    console.log(`📦 Loaded ${cachedProfile.nfts.length} NFTs from cache`);
-                    setUserNfts(cachedProfile.nfts);
-                    setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache`);
-
-                    // Fetch collection names/symbols from blockchain for cached NFTs
-                    await fetchContractInfoForNfts(cachedProfile.nfts);
-
-                    // Add this line to fetch metadata for cached NFTs immediately
-                    console.log("🔄 Fetching metadata for cached NFTs...");
-                    batchFetchMetadata(cachedProfile.nfts);
-
-                    // IMPROVED: Only schedule background update if explicitly allowed and conditions are met
-                    if (allowBackgroundUpdate) {
-                        const now = Date.now();
-                        const cacheAge = now - (cachedProfile.timestamp || 0);
-                        const isStaleCache = cacheAge > (2 * 60 * 60 * 1000); // Cache older than 2 hours
+                try {
+                    const cachedProfile = await getCachedProfile(wallet);
+                    if (cachedProfile?.nfts && cachedProfile.nfts.length > 0) {
+                        console.log(`📦 Loaded ${cachedProfile.nfts.length} NFTs from cache`);
+                        setUserNfts(cachedProfile.nfts);
+                        setNftMetadata(cachedProfile.metadata || {});
+                        setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache`);
                         
-                        if (isStaleCache && now - lastScanTime.current > SCAN_THROTTLE_MS) {
-                            console.log("📅 Cache is stale, scheduling background refresh...");
-                            setTimeout(() => {
-                                if (!scanningInProgress.current) {
-                                    console.log("🔄 Running background refresh due to stale cache");
-                                    scanUserNftsFromBlockchain(true);
-                                }
-                            }, 10000); // Delay background scan by 10 seconds for stale cache
-                        } else {
-                            console.log("✅ Cache is fresh, no background scan needed");
-                        }
-                    } else {
-                        console.log("✅ Cache loaded successfully, no automatic background scan");
+                        // Get collection info for cached NFTs
+                        const contracts = [...new Set(cachedProfile.nfts.map(nft => nft.contract))];
+                        await fetchContractInfoForNfts(cachedProfile.nfts);
+                        
+                        console.log("🔄 Fetching metadata for cached NFTs...");
+                        await batchFetchMetadata(cachedProfile.nfts);
                     }
-                    return;
+                } catch (cacheError) {
+                    console.warn("Cache loading failed:", cacheError);
                 }
             }
 
-            // Step 2: Scan from blockchain
-            // Reset scanning state before blockchain scan to avoid conflicts
-            resetScanningState();
-            await scanUserNftsFromBlockchain(false, forceRefresh);
+            // STEP 2: USER REQUIREMENT - ALWAYS scan from blockchain from genesis (block 0)
+            if (scanFromGenesis) {
+                console.log("🌐 Starting COMPREHENSIVE blockchain scan from genesis (block 0)...");
+                setStatus("🔥 SCANNING ALL BLOCKCHAIN HISTORY FROM BLOCK 0 - This may take a few minutes...");
+            } else {
+                console.log("🌐 Starting conservative blockchain scan...");
+                setStatus("Scanning recent blockchain activity...");
+            }
+            await scanUserNftsFromBlockchain(false, forceRefresh, scanFromGenesis);
 
         } catch (error) {
             console.error("Error loading user NFTs:", error);
@@ -929,12 +928,18 @@ function ProfilePage() {
         }
     };
 
-    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false) => {
-        // Prevent scanning if already in progress or too recent
-        if (scanningInProgress.current && !isBackgroundUpdate) {
-            console.log("⏳ Blockchain scan already in progress, skipping...");
-            console.log("💡 Tip: Use 'Force Refresh' if scanning appears stuck");
-            return;
+    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false, scanFromGenesis = true) => {
+        // USER REQUIREMENT ENFORCEMENT: Genesis scanning should NEVER be blocked
+        if (scanFromGenesis) {
+            console.log("🔥 GENESIS SCAN EXECUTING - BYPASSING ALL SCANNING STATE CHECKS");
+            // Genesis scans always execute regardless of state
+        } else {
+            // Only check scanning state for non-genesis scans
+            if (scanningInProgress.current && !isForceRefresh) {
+                console.log("⏳ Blockchain scan already in progress, skipping...");
+                console.log("💡 Tip: Use 'Force Refresh' or 'Scan All History' if scanning appears stuck");
+                return;
+            }
         }
 
         const now = Date.now();
@@ -975,8 +980,8 @@ function ProfilePage() {
             }
             
             // Start the comprehensive scan with enhanced error handling
-            console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting...`);
-            const foundNfts = await scanner.scanAllNFTs();
+            console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting${scanFromGenesis ? ' from genesis (block 0)' : ''}...`);
+            const foundNfts = await scanner.scanAllNFTs(isBackgroundUpdate, scanFromGenesis);
             
             // CRITICAL FIX: Don't clear existing NFTs if scan finds 0 NFTs (unless it's a force refresh)
             if (foundNfts.length > 0) {
@@ -1201,8 +1206,8 @@ function ProfilePage() {
     // Fetch NFTs when tab is changed to collection
     useEffect(() => {
         if (activeTab === 'collection' && wallet && !userNfts.length) {
-            // Initial load - allow background update if cache is stale
-            findAllUserNfts(false, true);
+            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) for initial load
+            findAllUserNfts(false, true, true); // forceRefresh=false, allowBackgroundUpdate=true, scanFromGenesis=true
         }
     }, [activeTab, wallet]);
 
@@ -1221,12 +1226,18 @@ function ProfilePage() {
                 if (payload.new?.wallet_address === wallet.toLowerCase()) {
                     const now = Date.now();
                     
+                    // Don't trigger real-time updates if any scan is already in progress
+                    if (scanningInProgress.current || isScanning) {
+                        console.log("⏳ Profile update skipped - genesis scan in progress");
+                        return;
+                    }
+                    
                     // More aggressive throttling for real-time updates to prevent continuous scanning
                     if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
                         console.log("🔄 Refreshing profile due to real-time update (throttled)");
                         lastScanTime.current = now;
-                        // Force refresh but don't allow additional background updates
-                        findAllUserNfts(true, false);
+                        // USER REQUIREMENT: Always scan from genesis (block 0) - even for real-time updates
+                        findAllUserNfts(false, false, true); // scanFromGenesis = true
                     } else {
                         console.log("⏳ Profile update throttled - skipping scan (too recent)");
                     }
@@ -1438,7 +1449,7 @@ function ProfilePage() {
                                 <div className="action-buttons">
                                     <button
                                         className="primary-button action-button"
-                                        onClick={() => findAllUserNfts(false, true)}
+                                        onClick={() => findAllUserNfts(false, true, true)} // USER REQUIREMENT: ALWAYS scan from genesis
                                         disabled={isLoading || isScanning}
                                     >
                                         {isScanning ? (
@@ -1456,8 +1467,19 @@ function ProfilePage() {
                                         )}
                                     </button>
                                     <button
+                                        className="tertiary-button action-button scan-history-button"
+                                        onClick={() => findAllUserNfts(false, false, true)}
+                                        disabled={isLoading || isScanning}
+                                        title="Comprehensive scan from blockchain genesis (block 0) - finds all historical NFTs"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                            <path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zM12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+                                        </svg>
+                                        Scan All History
+                                    </button>
+                                    <button
                                         className="secondary-button action-button force-refresh-button"
-                                        onClick={() => findAllUserNfts(true, false)}
+                                        onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
                                         disabled={false}
                                         title="Force refresh - bypasses stuck scanning state and cache"
                                     >
@@ -1629,7 +1651,7 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true, false)}
+                                            onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
                                             disabled={isScanning}
                                         >
                                             {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
@@ -1707,7 +1729,7 @@ function ProfilePage() {
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true, false)}
+                                            onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
                                             disabled={isScanning}
                                         >
                                             {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
