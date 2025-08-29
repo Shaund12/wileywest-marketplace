@@ -1,3 +1,6 @@
+/* Import auction styles */
+@import './pages/AuctionStyles.css';
+
 :root {
   --primary: #5533ff;
   --primary-hover: #4422ee;
@@ -11,6 +14,17 @@
   --success: #22cc88;
   --warning: #ffaa33;
   --error: #ff3366;
+
+  /* Auction theme variables */
+  --primary-color: #5533ff;
+  --success-color: #22cc88;
+  --warning-color: #ffaa33;
+  --error-color: #ff3366;
+  --text-primary: #e6e8ff;
+  --text-secondary: #9195b0;
+  --bg-primary: #0f111a;
+  --bg-secondary: #1a1c25;
+  --bg-tertiary: #252836;
 }
 
 * {

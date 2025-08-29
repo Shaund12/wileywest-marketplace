@@ -2,8 +2,9 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { ethers } from 'ethers';
-import MarketplaceAbi from './abi/Marketplace.json';
+import MarketplaceAbi from './abi/VTRUNFTMarketplace.json';
 import { createClient } from '@supabase/supabase-js';
+import { isAuctionsEnabled } from './utils/featureFlags';
 import { Analytics } from '@vercel/analytics/react';
 
 // Components
@@ -20,6 +21,13 @@ const TermsPage = lazy(() => import('./pages/TermsPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SellPage = lazy(() => import('./pages/SellPage'));
 const CollectionPage = lazy(() => import('./pages/CollectionPage'));
+
+// Auction pages (lazy-loaded)
+const CreateAuctionPage = lazy(() => import('./pages/CreateAuctionPage'));
+const AuctionDetailPage = lazy(() => import('./pages/AuctionDetailPage'));
+const MyAuctionsPage = lazy(() => import('./pages/MyAuctionsPage'));
+const AdminPathsPage = lazy(() => import('./pages/AdminPathsPage'));
+const VibeDashboardPage = lazy(() => import('./pages/VibeDashboardPage'));
 
 // Providers
 import { WalletProvider } from './context/WalletContext';
@@ -234,6 +242,17 @@ function App() {
                                             <Route path="/collections" element={<CollectionsIndex />} />
                                             <Route path="/collections/:address" element={<CollectionPage />} />
                                             <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
+
+                                            {/* Auction routes - only show if feature flag is enabled */}
+                                            {isAuctionsEnabled() && (
+                                                <>
+                                                    <Route path="/auctions/create" element={<CreateAuctionPage />} />
+                                                    <Route path="/auctions/:id" element={<AuctionDetailPage />} />
+                                                    <Route path="/my-auctions" element={<MyAuctionsPage />} />
+                                                    <Route path="/admin/paths" element={<AdminPathsPage />} />
+                                                    <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
+                                                </>
+                                            )}
 
                                             {/* Fallback */}
                                             <Route path="*" element={<Navigate to="/" replace />} />
