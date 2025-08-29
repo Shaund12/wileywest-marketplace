@@ -685,3 +685,24 @@
         align-items: stretch;
     }
 }
+
+/* No Data Message Styles */
+.no-data-message {
+    padding: 2rem;
+    text-align: center;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    margin: 1rem 0;
+}
+
+.no-data-message p {
+    margin: 0.5rem 0;
+    font-size: 0.95rem;
+}
+
+.no-data-message p:first-child {
+    font-weight: 500;
+    color: var(--text-primary);
+}
