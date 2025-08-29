@@ -5,6 +5,7 @@ import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { convertToUSDCValue, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
+import { isAuctionsEnabled } from '../utils/featureFlags';
 import ListingCard from '../components/ListingCard';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
@@ -560,6 +561,9 @@ function HomePage() {
                     <div className="hp-cta">
                         <Link to="/marketplace" className="hp-btn hp-btn--primary">Explore NFTs</Link>
                         <Link to="/sell" className="hp-btn">List Your NFT</Link>
+                        {isAuctionsEnabled() && (
+                            <Link to="/auctions/create" className="hp-btn">Create Auction</Link>
+                        )}
                         <button type="button" className="hp-btn hp-btn--ghost hp-btn--lucky" onClick={openLuckyCollection} title="Warp to a random collection">
                             ✨ Lucky Jump
                         </button>

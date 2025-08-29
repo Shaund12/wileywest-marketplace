@@ -195,6 +195,11 @@ function TitleSetter() {
             { test: /^\/sell/, title: `List & Sell • ${siteName}` },
             { test: /^\/profile/, title: `Your Profile • ${siteName}` },
             { test: /^\/collections\/[0-9a-zA-Z]+/, title: `Collection • ${siteName}` },
+            { test: /^\/my-auctions/, title: `My Auctions • ${siteName}` },
+            { test: /^\/auctions\/create/, title: `Create Auction • ${siteName}` },
+            { test: /^\/auctions\/[0-9]+/, title: `Auction • ${siteName}` },
+            { test: /^\/vibe-dashboard/, title: `VIBE Dashboard • ${siteName}` },
+            { test: /^\/admin\/paths/, title: `Admin Paths • ${siteName}` },
             { test: /^\/terms/, title: `Terms • ${siteName}` },
             { test: /^\/privacy/, title: `Privacy • ${siteName}` },
         ];
