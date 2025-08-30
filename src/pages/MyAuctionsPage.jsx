@@ -236,9 +236,9 @@ function MyAuctionsPage() {
             setLoading(true);
             setActionStatus('Loading your auctions...');
             
-            // Load auctions from database for the connected wallet
-            const userAuctions = await getCachedAuctions(wallet);
-            console.log(`📦 Loaded ${userAuctions.length} auctions for user ${wallet}`);
+            // Load auctions from database for the connected wallet and current marketplace
+            const userAuctions = await getCachedAuctions(wallet, marketplaceAddress);
+            console.log(`📦 Loaded ${userAuctions.length} auctions for user ${wallet} on marketplace ${marketplaceAddress}`);
             
             // Load current bids for each auction and update auction data from contract if needed
             const auctionsWithCurrentData = await Promise.all(

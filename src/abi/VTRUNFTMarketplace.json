@@ -8,17 +8,7 @@
       },
       {
         "internalType": "address",
-        "name": "_wvtru",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_vibeSink",
-        "type": "address"
-      },
-      {
-        "internalType": "address",
-        "name": "_uniswapRouter",
+        "name": "_feeProcessor",
         "type": "address"
       }
     ],

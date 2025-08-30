@@ -915,7 +915,7 @@ function CreateAuctionPage() {
 
                         // Cache the auction
                         console.log('📦 Caching newly created auction:', auctionData);
-                        await cacheAuctions([auctionData]);
+                        await cacheAuctions([auctionData], marketplaceAddress);
                         setStatus("Auction created and cached successfully!");
                     }
                 }

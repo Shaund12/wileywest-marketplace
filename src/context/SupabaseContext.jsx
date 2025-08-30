@@ -552,15 +552,16 @@ export function SupabaseProvider({ children }) {
 
     // Auction management functions
     const cacheAuctions = useCallback(
-        async (auctions) => {
+        async (auctions, marketplaceAddress) => {
             if (!supabase || !auctions?.length) return;
 
             try {
-                console.log(`💾 Caching ${auctions.length} auctions to Supabase...`);
+                console.log(`💾 Caching ${auctions.length} auctions to Supabase for marketplace ${marketplaceAddress}...`);
 
                 const rows = auctions.map((auction) => {
                     return {
                         auction_id: auction.id?.toString() || auction.auctionId?.toString(),
+                        marketplace_address: marketplaceAddress?.toLowerCase(),
                         seller: auction.seller,
                         nft_contract: auction.nftContract,
                         token_id: auction.tokenId?.toString(),
@@ -586,6 +587,7 @@ export function SupabaseProvider({ children }) {
                 const toSave = rows.filter(
                     (r) =>
                         r.auction_id &&
+                        r.marketplace_address &&
                         r.seller &&
                         r.nft_contract &&
                         r.token_id &&
@@ -633,14 +635,18 @@ export function SupabaseProvider({ children }) {
         [supabase]
     );
 
-    const getCachedAuctions = useCallback(async (sellerAddress = null) => {
+    const getCachedAuctions = useCallback(async (sellerAddress = null, marketplaceAddress = null) => {
         if (!supabase) {
-            const cachedData = getCache(sellerAddress ? `auctions_${sellerAddress}` : 'all_auctions');
+            let cacheKey = sellerAddress ? `auctions_${sellerAddress}` : 'all_auctions';
+            if (marketplaceAddress) {
+                cacheKey += `_${marketplaceAddress}`;
+            }
+            const cachedData = getCache(cacheKey);
             return cachedData || [];
         }
 
         try {
-            console.log(`🔍 Fetching cached auctions from Supabase${sellerAddress ? ` for seller ${sellerAddress}` : ''}...`);
+            console.log(`🔍 Fetching cached auctions from Supabase${sellerAddress ? ` for seller ${sellerAddress}` : ''}${marketplaceAddress ? ` for marketplace ${marketplaceAddress}` : ''}...`);
             
             let query = supabase
                 .from('auctions')
@@ -649,6 +655,10 @@ export function SupabaseProvider({ children }) {
 
             if (sellerAddress) {
                 query = query.eq('seller', sellerAddress);
+            }
+
+            if (marketplaceAddress) {
+                query = query.eq('marketplace_address', marketplaceAddress.toLowerCase());
             }
 
             const { data, error } = await query;
