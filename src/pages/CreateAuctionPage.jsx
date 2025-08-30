@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { canPerformAuctionAction } from '../utils/featureFlags';
 import { getSupportedTokens, formatTokenAmount } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
@@ -333,6 +334,7 @@ function CreateAuctionPage() {
     const navigate = useNavigate();
     const { wallet, connect, provider, signer } = useWallet();
     const { status, setStatus, marketplaceAddress } = useMarketplace();
+    const { cacheAuctions } = useSupabase();
     const [searchParams] = useSearchParams();
 
     const [formData, setFormData] = useState({
@@ -865,8 +867,62 @@ function CreateAuctionPage() {
             );
 
             setStatus("Transaction submitted. Waiting for confirmation...");
-            await tx.wait();
+            const receipt = await tx.wait();
             setStatus("Auction created successfully!");
+            
+            // Extract auction ID from transaction logs for caching
+            try {
+                const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+                const iface = new ethers.Interface(VTRUNFTMarketplaceABI.default);
+                
+                // Find AuctionCreated event in transaction logs
+                const auctionCreatedEvent = receipt.logs
+                    .map(log => {
+                        try {
+                            return iface.parseLog(log);
+                        } catch (e) {
+                            return null;
+                        }
+                    })
+                    .find(event => event && event.name === 'AuctionCreated');
+
+                if (auctionCreatedEvent) {
+                    const auctionId = auctionCreatedEvent.args.auctionId?.toString();
+                    
+                    if (auctionId) {
+                        // Create auction object for caching
+                        const auctionData = {
+                            id: auctionId,
+                            seller: wallet,
+                            nftContract: formData.nftContract,
+                            tokenId: formData.tokenId,
+                            quantity: formData.quantity,
+                            reservePrice: reservePriceInWei.toString(),
+                            startPrice: startPriceInWei.toString(),
+                            endTime: endTime,
+                            paymentToken: formData.paymentToken,
+                            minBidIncrementBps: parseInt(formData.minBidIncrementBps),
+                            antiSnipeSeconds: parseInt(formData.antiSnipeSeconds),
+                            highestBid: '0',
+                            highestBidder: '0x0000000000000000000000000000000000000000',
+                            settled: false,
+                            transactionHash: receipt.hash,
+                            blockNumber: receipt.blockNumber,
+                            logIndex: 0, // First occurrence in this transaction
+                            timestamp: Math.floor(Date.now() / 1000),
+                            metadata: nftMetadata || {}
+                        };
+
+                        // Cache the auction
+                        console.log('📦 Caching newly created auction:', auctionData);
+                        await cacheAuctions([auctionData]);
+                        setStatus("Auction created and cached successfully!");
+                    }
+                }
+            } catch (error) {
+                console.warn('Warning: Could not cache auction data:', error);
+                // Don't fail the entire process if caching fails
+            }
             
             // Show success animation
             setAuctionSuccess(true);
