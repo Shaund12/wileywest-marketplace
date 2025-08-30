@@ -202,7 +202,7 @@ function SmartMedia({ srcList = [], alt = '', width = 200, height = 200, seed = 
 function MyAuctionsPage() {
     const navigate = useNavigate();
     const { wallet, connect, signer, provider } = useWallet();
-    const { status } = useMarketplace();
+    const { status, marketplaceAddress } = useMarketplace();
     const { getCachedAuctions, getAuctionBids } = useSupabase();
     const [auctions, setAuctions] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -409,7 +409,6 @@ function MyAuctionsPage() {
 
             // Import marketplace ABI and create contract instance
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '0x0000000000000000000000000000000000000000';
             const marketplaceContract = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
 
             // Cancel the auction
@@ -443,7 +442,6 @@ function MyAuctionsPage() {
 
             // Import marketplace ABI and create contract instance
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '0x0000000000000000000000000000000000000000';
             const marketplaceContract = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
 
             // Settle the auction
