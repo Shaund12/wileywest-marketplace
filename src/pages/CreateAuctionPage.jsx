@@ -770,9 +770,107 @@ function CreateAuctionPage() {
         }
 
         try {
-            // TODO: Implement auction creation logic
-            setStatus('Creating auction...');
-            console.log('Creating auction with data:', formData);
+            if (!signer) {
+                setStatus("Error: Wallet not connected. Please connect your wallet first");
+                return;
+            }
+
+            if (!marketplaceAddress) {
+                throw new Error("Marketplace contract not initialized");
+            }
+
+            setStatus('Preparing auction...');
+
+            // Validate form data
+            if (!formData.reservePrice || parseFloat(formData.reservePrice) <= 0) {
+                setStatus('Error: Reserve price must be greater than 0');
+                return;
+            }
+
+            if (!formData.startPrice || parseFloat(formData.startPrice) <= 0) {
+                setStatus('Error: Starting price must be greater than 0');
+                return;
+            }
+
+            const token = tokenList[formData.paymentToken];
+            if (!token) {
+                setStatus('Error: Please select a valid payment token');
+                return;
+            }
+
+            // Convert prices to wei using token decimals
+            const reservePriceInWei = ethers.parseUnits(formData.reservePrice, token.decimals || 18);
+            const startPriceInWei = ethers.parseUnits(formData.startPrice, token.decimals || 18);
+
+            // Calculate end time (current time + duration in hours)
+            const endTime = Math.floor(Date.now() / 1000) + (parseInt(formData.duration) * 3600);
+
+            // Check if this is an ERC721 or ERC1155
+            let isERC1155 = false;
+            try {
+                const testContract = new ethers.Contract(
+                    formData.nftContract,
+                    ['function balanceOf(address, uint256) view returns (uint256)'],
+                    provider
+                );
+                await testContract.balanceOf(wallet, formData.tokenId);
+                isERC1155 = true;
+            } catch (e) {
+                isERC1155 = false;
+            }
+
+            // Check and request NFT approval
+            if (isERC1155) {
+                const nftContract1155 = new ethers.Contract(formData.nftContract, ERC1155_APPROVAL_ABI, signer);
+                const isApproved = await nftContract1155.isApprovedForAll(wallet, marketplaceAddress);
+
+                if (!isApproved) {
+                    setStatus("Requesting approval to auction your NFTs...");
+                    const approvalTx = await nftContract1155.setApprovalForAll(marketplaceAddress, true);
+                    setStatus("Approval transaction submitted. Please wait for confirmation...");
+                    await approvalTx.wait();
+                    setStatus("Approval confirmed! Creating auction...");
+                }
+            } else {
+                const nftContract721 = new ethers.Contract(formData.nftContract, ERC721_APPROVAL_ABI, signer);
+                const isApprovedForAll = await nftContract721.isApprovedForAll(wallet, marketplaceAddress);
+
+                if (!isApprovedForAll) {
+                    const approvedAddress = await nftContract721.getApproved(formData.tokenId);
+                    const isTokenApproved = approvedAddress.toLowerCase() === marketplaceAddress.toLowerCase();
+
+                    if (!isTokenApproved) {
+                        setStatus("Requesting approval to auction your NFT...");
+                        const approvalTx = await nftContract721.setApprovalForAll(marketplaceAddress, true);
+                        setStatus("Approval transaction submitted. Please wait for confirmation...");
+                        await approvalTx.wait();
+                        setStatus("Approval confirmed! Creating auction...");
+                    }
+                }
+            }
+
+            // Create marketplace contract instance
+            const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+            const marketplaceContract = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+
+            setStatus("Creating auction...");
+
+            // Call createAuction function
+            const tx = await marketplaceContract.createAuction(
+                formData.nftContract,
+                formData.tokenId,
+                formData.quantity,
+                reservePriceInWei,
+                startPriceInWei,
+                endTime,
+                formData.paymentToken,
+                formData.minBidIncrementBps,
+                formData.antiSnipeSeconds
+            );
+
+            setStatus("Transaction submitted. Waiting for confirmation...");
+            await tx.wait();
+            setStatus("Auction created successfully!");
             
             // Show success animation
             setAuctionSuccess(true);

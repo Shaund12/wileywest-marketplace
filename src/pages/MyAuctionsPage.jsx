@@ -228,47 +228,11 @@ function MyAuctionsPage() {
     const loadUserAuctions = async () => {
         try {
             setLoading(true);
-            // TODO: Load user's auctions from contract
+            setAuctions([]); // Clear existing auctions
             
-            // Mock data for now
-            setAuctions([
-                {
-                    id: '1',
-                    seller: wallet,
-                    nftContract: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-                    tokenId: '1',
-                    quantity: '1',
-                    reservePrice: '1000000000000000000',
-                    startPrice: '100000000000000000',
-                    endTime: Math.floor(Date.now() / 1000) + 86400,
-                    paymentToken: '0x0000000000000000000000000000000000000000',
-                    highestBidder: '0x1111111111111111111111111111111111111111',
-                    highestBid: '1500000000000000000',
-                    settled: false,
-                    metadata: {
-                        name: 'Cosmic Dream #1',
-                        image: 'https://picsum.photos/seed/auction1/200/200'
-                    }
-                },
-                {
-                    id: '2',
-                    seller: wallet,
-                    nftContract: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-                    tokenId: '2',
-                    quantity: '1',
-                    reservePrice: '2000000000000000000',
-                    startPrice: '500000000000000000',
-                    endTime: Math.floor(Date.now() / 1000) - 3600, // ended 1 hour ago
-                    paymentToken: '0x0000000000000000000000000000000000000000',
-                    highestBidder: '0x0000000000000000000000000000000000000000',
-                    highestBid: '0',
-                    settled: false,
-                    metadata: {
-                        name: 'Digital Warrior #5',
-                        image: 'https://picsum.photos/seed/auction2/200/200'
-                    }
-                }
-            ]);
+            // TODO: Implement real auction loading from contract
+            // For now, show empty state since there's no Supabase integration for auctions yet
+            
         } catch (error) {
             console.error('Error loading user auctions:', error);
         } finally {
@@ -453,9 +417,9 @@ function MyAuctionsPage() {
                                     
                                     {getAuctionStatus(auction) === 'Active' && auction.highestBid === '0' && (
                                         <button 
-                                            onClick={() => {
-                                                // TODO: Implement cancel auction
-                                                console.log('Cancel auction:', auction.id);
+                                            onClick={async () => {
+                                                // Note: Cancel auction functionality requires contract integration
+                                                alert('Auction cancellation will be available once contract integration is complete.');
                                             }}
                                             className="hp-btn hp-btn--danger"
                                         >

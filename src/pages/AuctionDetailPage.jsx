@@ -251,7 +251,6 @@ function AuctionDetailPage() {
             return;
         }
 
-        // TODO: Load auction data
         loadAuction();
     }, [id, navigate]);
 
@@ -280,39 +279,11 @@ function AuctionDetailPage() {
     const loadAuction = async () => {
         try {
             setLoading(true);
-            // TODO: Implement auction loading from contract
+            setAuction(null); // Clear existing auction
             
-            // Mock data for now with enhanced metadata
-            setAuction({
-                id: id,
-                seller: '0x1234567890123456789012345678901234567890',
-                nftContract: '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-                tokenId: '1',
-                quantity: '1',
-                reservePrice: '1000000000000000000', // 1 VTRU
-                startPrice: '100000000000000000', // 0.1 VTRU
-                endTime: Math.floor(Date.now() / 1000) + 86400, // 24 hours
-                paymentToken: '0x0000000000000000000000000000000000000000',
-                minBidIncrementBps: 500,
-                antiSnipeSeconds: 600,
-                highestBidder: '0x0000000000000000000000000000000000000000',
-                highestBid: '0',
-                settled: false,
-                metadata: {
-                    name: 'Cosmic Dream #1',
-                    description: 'A beautiful cosmic-themed digital artwork featuring swirling galaxies, nebulae, and stardust in vibrant purples, blues, and gold. This piece represents the infinite possibilities of space exploration and the dreams that guide us to the stars.',
-                    image: 'https://picsum.photos/seed/auction1/600/600',
-                    external_url: 'https://example.com/cosmic-dream-1',
-                    attributes: [
-                        { trait_type: 'Background', value: 'Cosmic Nebula' },
-                        { trait_type: 'Colors', value: 'Purple & Gold' },
-                        { trait_type: 'Style', value: 'Abstract' },
-                        { trait_type: 'Rarity', value: 'Legendary' },
-                        { trait_type: 'Artist', value: 'CosmicCreator' },
-                        { trait_type: 'Year', value: '2024' }
-                    ]
-                }
-            });
+            // TODO: Implement real auction loading from contract
+            // For now, show auction not found since there's no contract integration yet
+            
         } catch (error) {
             console.error('Error loading auction:', error);
         } finally {
@@ -331,8 +302,8 @@ function AuctionDetailPage() {
             return;
         }
 
-        // TODO: Implement bidding
-        console.log('Placing bid:', bidAmount);
+        // Note: Bidding functionality requires contract integration
+        alert('Bidding will be available once contract integration is complete.');
     };
 
     const handleSettle = async () => {
@@ -341,8 +312,8 @@ function AuctionDetailPage() {
             return;
         }
 
-        // TODO: Implement auction settlement
-        console.log('Settling auction:', id);
+        // Note: Settlement functionality requires contract integration
+        alert('Auction settlement will be available once contract integration is complete.');
     };
 
     const formatTimeLeft = () => {
