@@ -100,7 +100,18 @@ export function SupabaseProvider({ children }) {
 
     const setCache = (key, data, type = 'listings') => {
         try {
-            cache.current.set(key, { data, type, timestamp: Date.now() });
+            const cacheItem = { data, type, timestamp: Date.now() };
+            cache.current.set(key, cacheItem);
+            
+            // Also persist to localStorage for auctions to survive page refresh
+            if (type === 'auctions') {
+                try {
+                    localStorage.setItem(`cache_${key}`, JSON.stringify(cacheItem));
+                } catch (e) {
+                    console.warn('localStorage error:', e);
+                }
+            }
+            
             updateCacheStats('updates');
             if (cache.current.size > CACHE_CONFIG.MAX_CACHE_SIZE) {
                 const oldestKey = cache.current.keys().next().value;
@@ -115,13 +126,37 @@ export function SupabaseProvider({ children }) {
 
     const getCache = (key) => {
         try {
-            const item = cache.current.get(key);
+            // First check in-memory cache
+            let item = cache.current.get(key);
+            
+            // If not in memory and it might be auction data, check localStorage
+            if (!item && key.includes('auction')) {
+                try {
+                    const stored = localStorage.getItem(`cache_${key}`);
+                    if (stored) {
+                        item = JSON.parse(stored);
+                        // Restore to in-memory cache
+                        cache.current.set(key, item);
+                    }
+                } catch (e) {
+                    console.warn('localStorage retrieval error:', e);
+                }
+            }
+            
             if (!item) {
                 updateCacheStats('misses');
                 return null;
             }
             if (isExpired(item)) {
                 cache.current.delete(key);
+                // Also remove from localStorage
+                if (key.includes('auction')) {
+                    try {
+                        localStorage.removeItem(`cache_${key}`);
+                    } catch (e) {
+                        console.warn('localStorage removal error:', e);
+                    }
+                }
                 updateCacheStats('misses');
                 return null;
             }
@@ -553,7 +588,44 @@ export function SupabaseProvider({ children }) {
     // Auction management functions
     const cacheAuctions = useCallback(
         async (auctions, marketplaceAddress) => {
-            if (!supabase || !auctions?.length) return;
+            if (!auctions?.length) return;
+
+            // If no Supabase, use in-memory cache only
+            if (!supabase) {
+                console.log(`💾 Caching ${auctions.length} auctions to memory for marketplace ${marketplaceAddress}...`);
+                
+                // Cache each individual auction
+                auctions.forEach((auction) => {
+                    const id = auction.id?.toString() || auction.auctionId?.toString();
+                    if (id) {
+                        const key = getCacheKey('auction', id);
+                        setCache(key, auction, 'auctions');
+                    }
+                });
+                
+                // Cache all auctions
+                setCache('all_auctions', auctions, 'auctions');
+                
+                // Cache auctions filtered by seller and marketplace
+                const sellerAuctions = auctions.filter(a => a.seller);
+                const sellerGroups = {};
+                sellerAuctions.forEach(auction => {
+                    const seller = auction.seller.toLowerCase();
+                    if (!sellerGroups[seller]) sellerGroups[seller] = [];
+                    sellerGroups[seller].push(auction);
+                });
+                
+                Object.entries(sellerGroups).forEach(([seller, auctionList]) => {
+                    let cacheKey = `auctions_${seller}`;
+                    if (marketplaceAddress) {
+                        cacheKey += `_${marketplaceAddress.toLowerCase()}`;
+                    }
+                    setCache(cacheKey, auctionList, 'auctions');
+                });
+                
+                console.log(`✅ Cached ${auctions.length} auctions to memory`);
+                return;
+            }
 
             try {
                 console.log(`💾 Caching ${auctions.length} auctions to Supabase for marketplace ${marketplaceAddress}...`);
