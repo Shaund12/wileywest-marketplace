@@ -1,7 +1,6 @@
 ﻿import React, { useMemo, useState } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
-import { isAuctionsEnabled } from '../utils/featureFlags';
 import logo from '../assets/blockdust-logo.png';
 
 const VITRUVEO = {
@@ -82,24 +81,18 @@ export default function Navigation() {
                         <NavLink to="/hot-listings" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
                             Hot Listings
                         </NavLink>
-                        {isAuctionsEnabled() && (
-                            <NavLink to="/my-auctions" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                                My Auctions
-                            </NavLink>
-                        )}
+                        <NavLink to="/my-auctions" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            My Auctions
+                        </NavLink>
                         <NavLink to="/sell" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
                             Sell NFT
                         </NavLink>
-                        {isAuctionsEnabled() && (
-                            <NavLink to="/auctions/create" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                                Create Auction
-                            </NavLink>
-                        )}
-                        {isAuctionsEnabled() && (
-                            <NavLink to="/vibe-dashboard" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                                VIBE
-                            </NavLink>
-                        )}
+                        <NavLink to="/auctions/create" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            Create Auction
+                        </NavLink>
+                        <NavLink to="/vibe-dashboard" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            VIBE
+                        </NavLink>
                     </nav>
                 </div>
 

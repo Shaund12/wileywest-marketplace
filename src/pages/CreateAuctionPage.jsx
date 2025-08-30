@@ -4,7 +4,6 @@ import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
-import { canPerformAuctionAction } from '../utils/featureFlags';
 import { getSupportedTokens, formatTokenAmount } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import './AuctionStyles.css';
@@ -385,12 +384,6 @@ function CreateAuctionPage() {
         if (!wallet) {
             // Redirect to homepage if not connected
             navigate('/?connect=true');
-            return;
-        }
-
-        if (!canPerformAuctionAction(wallet, 'create')) {
-            // Show error if wallet not allowed
-            navigate('/marketplace');
             return;
         }
     }, [wallet, navigate]);
@@ -1084,20 +1077,6 @@ function CreateAuctionPage() {
                 </div>
                 <button onClick={connect} className="hp-btn hp-btn--primary">
                     Connect Wallet
-                </button>
-            </div>
-        );
-    }
-
-    if (!canPerformAuctionAction(wallet, 'create')) {
-        return (
-            <div className="hp" style={{ maxWidth: 800, margin: '3rem auto', padding: '0 1.25rem' }}>
-                <div className="hp-section__head">
-                    <h2>Access Restricted</h2>
-                    <p>Your wallet is not currently allowed to create auctions during the beta period.</p>
-                </div>
-                <button onClick={() => navigate('/marketplace')} className="hp-btn">
-                    Back to Marketplace
                 </button>
             </div>
         );
