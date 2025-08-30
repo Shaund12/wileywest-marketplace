@@ -357,7 +357,8 @@ function CreateAuctionPage() {
     const [auctionSuccess, setAuctionSuccess] = useState(false);
 
     // Token system state  
-    const [displayPrice, setDisplayPrice] = useState({ wei: '', eth: '', usd: '' });
+    const [startPriceUSD, setStartPriceUSD] = useState('0.00');
+    const [reservePriceUSD, setReservePriceUSD] = useState('0.00');
     const [tokenList, setTokenList] = useState({});
     const [paymentOptions, setPaymentOptions] = useState([]);
     const [loadingPrices, setLoadingPrices] = useState(false);
@@ -392,62 +393,43 @@ function CreateAuctionPage() {
         }
     }, [wallet, navigate]);
 
-    const handleChange = (e) => {
-        const { name, value } = e.target;
-
-        if (name === 'reservePrice' || name === 'startPrice') {
-            setFormData(prev => ({ ...prev, [name]: value }));
-
-            if (value && !isNaN(parseFloat(value))) {
-                const token = tokenList[formData.paymentToken];
-                if (token) {
-                    try {
-                        let usdValue = 'Unknown';
-                        const currentPrice = livePrice[formData.paymentToken];
-                        if (currentPrice) {
-                            usdValue = (formData.paymentToken === USDC_ADDRESS)
-                                ? parseFloat(value).toFixed(2)
-                                : (parseFloat(value) * currentPrice).toFixed(2);
-                        }
-                        setDisplayPrice({
-                            wei: ethers.parseUnits(value, token.decimals || 18).toString(),
-                            eth: value,
-                            usd: usdValue,
-                        });
-                    } catch {
-                        setDisplayPrice({ wei: '0', eth: value, usd: 'Unknown' });
-                    }
-                }
-            } else {
-                setDisplayPrice({ wei: '0', eth: value || '0', usd: '0.00' });
-            }
+    // Helper function to calculate USD value for a given amount and token
+    const calculateUSDValue = (amount, tokenAddress) => {
+        if (!amount || isNaN(parseFloat(amount)) || !tokenAddress) return '0.00';
+        
+        // For native VTRU (ZeroAddress), use WVTRU price lookup
+        const priceKey = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
+        const currentPrice = livePrice[priceKey];
+        
+        if (!currentPrice || typeof currentPrice !== 'number') return 'Unknown';
+        
+        if (tokenAddress === USDC_ADDRESS || tokenAddress === 'USDC') {
+            return parseFloat(amount).toFixed(2);
         } else {
-            setFormData(prev => ({ ...prev, [name]: value }));
+            return (parseFloat(amount) * currentPrice).toFixed(2);
         }
     };
 
-    // Change payment token => recompute display USD
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+        
+        // Update USD calculations for price fields
+        if (name === 'reservePrice') {
+            setReservePriceUSD(calculateUSDValue(value, formData.paymentToken));
+        } else if (name === 'startPrice') {
+            setStartPriceUSD(calculateUSDValue(value, formData.paymentToken));
+        }
+    };
+
+    // Change payment token => recompute both USD values
     const handlePaymentTokenChange = (e) => {
         const tokenAddress = e.target.value;
         setFormData(prev => ({ ...prev, paymentToken: tokenAddress }));
-
-        if (formData.reservePrice && !isNaN(parseFloat(formData.reservePrice))) {
-            const token = tokenList[tokenAddress];
-            if (token) {
-                try {
-                    let usdValue = 'Unknown';
-                    const currentPrice = livePrice[tokenAddress];
-                    if (currentPrice) usdValue = (parseFloat(formData.reservePrice) * currentPrice).toFixed(2);
-                    setDisplayPrice({
-                        wei: ethers.parseUnits(formData.reservePrice, token.decimals || 18).toString(),
-                        eth: formData.reservePrice,
-                        usd: usdValue,
-                    });
-                } catch {
-                    setDisplayPrice({ wei: '0', eth: formData.reservePrice, usd: 'Unknown' });
-                }
-            }
-        }
+        
+        // Recalculate USD values for both fields
+        setStartPriceUSD(calculateUSDValue(formData.startPrice, tokenAddress));
+        setReservePriceUSD(calculateUSDValue(formData.reservePrice, tokenAddress));
     };
 
     const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
@@ -681,9 +663,11 @@ function CreateAuctionPage() {
             return;
         }
         const options = Object.entries(tokenList).map(([address, token]) => {
-            const price = livePrice[address];
-            const priceSource = priceSources[address] || 'Unknown';
-            const error = priceErrors[address];
+            // For native VTRU, get price from WVTRU address
+            const priceKey = address === ethers.ZeroAddress ? WVTRU_ADDRESS : address;
+            const price = livePrice[priceKey];
+            const priceSource = priceSources[priceKey] || 'Unknown';
+            const error = priceErrors[priceKey];
             const validPrice = typeof price === 'number' && price > 0 ? price : null;
             return {
                 address,
@@ -701,6 +685,18 @@ function CreateAuctionPage() {
     useEffect(() => {
         if (Object.keys(tokenList).length > 0) buildPaymentOptions();
     }, [tokenList, livePrice, priceSources, priceErrors]);
+
+    // Update USD values when prices change or payment token changes
+    useEffect(() => {
+        if (formData.paymentToken) {
+            // For native VTRU, check WVTRU price; otherwise use the token's own price
+            const priceKey = formData.paymentToken === ethers.ZeroAddress ? WVTRU_ADDRESS : formData.paymentToken;
+            if (livePrice[priceKey]) {
+                setStartPriceUSD(calculateUSDValue(formData.startPrice, formData.paymentToken));
+                setReservePriceUSD(calculateUSDValue(formData.reservePrice, formData.paymentToken));
+            }
+        }
+    }, [livePrice, formData.paymentToken, formData.startPrice, formData.reservePrice]);
 
     const handleCustomTokenChange = (e) => {
         const { id, value } = e.target;
@@ -1067,12 +1063,16 @@ function CreateAuctionPage() {
                     </div>
                     <div className="ticker-items">
                         {Object.entries(tokenList)
-                            .filter(([address]) => livePrice[address] !== null)
+                            .filter(([address]) => {
+                                const priceKey = address === ethers.ZeroAddress ? WVTRU_ADDRESS : address;
+                                return livePrice[priceKey] !== null;
+                            })
                             .map(([address, token]) => {
-                                const price = livePrice[address];
-                                const change = priceChange[address] || 0;
-                                const source = priceSources[address];
-                                const error = priceErrors[address];
+                                const priceKey = address === ethers.ZeroAddress ? WVTRU_ADDRESS : address;
+                                const price = livePrice[priceKey];
+                                const change = priceChange[priceKey] || 0;
+                                const source = priceSources[priceKey];
+                                const error = priceErrors[priceKey];
 
                                 return (
                                     <div className={`ticker-item ${error ? 'has-error' : ''}`} key={address}>
@@ -1252,7 +1252,7 @@ function CreateAuctionPage() {
                                                         {formData.startPrice || '0'} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
                                                     </div>
                                                     <div className="price-usd">
-                                                        ≈ {displayPrice.usd === 'Unknown' ? 'Unknown USD value' : `$${displayPrice.usd} USD`}
+                                                        ≈ {startPriceUSD === 'Unknown' ? 'Unknown USD value' : `$${startPriceUSD} USD`}
                                                     </div>
                                                 </div>
                                             </div>
@@ -1276,7 +1276,7 @@ function CreateAuctionPage() {
                                                         {formData.reservePrice || '0'} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
                                                     </div>
                                                     <div className="price-usd">
-                                                        ≈ {displayPrice.usd === 'Unknown' ? 'Unknown USD value' : `$${displayPrice.usd} USD`}
+                                                        ≈ {reservePriceUSD === 'Unknown' ? 'Unknown USD value' : `$${reservePriceUSD} USD`}
                                                     </div>
                                                 </div>
                                             </div>
