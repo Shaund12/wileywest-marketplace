@@ -271,7 +271,7 @@ function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 
 }
 
 /* =========================================================
-   ABIs and Token Config
+   ABIs / Token addresses / Uniswap config
    ========================================================= */
 const ERC721_ABI = [
     'function tokenURI(uint256 tokenId) view returns (string)',
@@ -283,16 +283,52 @@ const ERC1155_ABI = [
     'function balanceOf(address account, uint256 id) view returns (uint256)',
 ];
 
+const UNISWAP_V3_FACTORY_ABI = [
+    'function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool)',
+];
+
+const UNISWAP_V3_POOL_ABI = [
+    'function token0() external view returns (address)',
+    'function token1() external view returns (address)',
+    'function fee() external view returns (uint24)',
+    'function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)',
+];
+
 const ERC20_ABI = [
     'function name() view returns (string)',
     'function symbol() view returns (string)',
     'function decimals() view returns (uint8)',
+    'function balanceOf(address owner) view returns (uint256)',
 ];
 
 // Token addresses (Vitruveo chain)
 const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
 const USDC_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
+const VUSD_ADDRESS = '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA';
+const SEVO_ADDRESS = '0x2A34059DF3D60B1864f10F10492746bd26d3D24a';
+const WSEVO_ADDRESS = '0x43a36604B6Ad9A4cf8EF600241E90b3DD97E145d';
+const VITEX_ADDRESS = '0x4Ed92A1d95d2092973007197794542A5D51FF5a6';
+const VTRO_ADDRESS = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
 
+// Uniswap V3 (Vitruveo)
+const UNISWAP_V3_FACTORY_ADDRESS = '0x6196a7a6108B15a2cc24DdaB41C8CC3098C06351';
+const FEE_TIERS = [500, 3000, 10000];
+
+const ERC721_APPROVAL_ABI = [
+    'function setApprovalForAll(address operator, bool approved) returns ()',
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
+    'function approve(address to, uint256 tokenId) returns ()',
+    'function getApproved(uint256 tokenId) view returns (address)',
+];
+
+const ERC1155_APPROVAL_ABI = [
+    'function setApprovalForAll(address operator, bool approved) returns ()',
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
+];
+
+/* =========================================================
+   Component
+   ========================================================= */
 function CreateAuctionPage() {
     const navigate = useNavigate();
     const { wallet, connect, provider, signer } = useWallet();
@@ -320,6 +356,23 @@ function CreateAuctionPage() {
     const [ownershipVerified, setOwnershipVerified] = useState(false);
     const [auctionSuccess, setAuctionSuccess] = useState(false);
 
+    // Token system state  
+    const [displayPrice, setDisplayPrice] = useState({ wei: '', eth: '', usd: '' });
+    const [tokenList, setTokenList] = useState({});
+    const [paymentOptions, setPaymentOptions] = useState([]);
+    const [loadingPrices, setLoadingPrices] = useState(false);
+    const [showAddTokenForm, setShowAddTokenForm] = useState(false);
+    const [customTokenData, setCustomTokenData] = useState({ address: '', symbol: '', name: '', decimals: '18', price: '' });
+    const [customTokenError, setCustomTokenError] = useState('');
+
+    const [livePrice, setLivePrice] = useState({});
+    const [priceChange, setPriceChange] = useState({});
+    const [lastUpdateTime, setLastUpdateTime] = useState(null);
+    const [priceSources, setPriceSources] = useState({});
+    const [priceErrors, setPriceErrors] = useState({});
+
+    const priceIntervalRef = useRef(null);
+
     // Set document title
     useEffect(() => {
         document.title = 'Create Auction • BlockDust';
@@ -341,10 +394,366 @@ function CreateAuctionPage() {
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        setFormData(prev => ({
-            ...prev,
-            [name]: value
-        }));
+
+        if (name === 'reservePrice' || name === 'startPrice') {
+            setFormData(prev => ({ ...prev, [name]: value }));
+
+            if (value && !isNaN(parseFloat(value))) {
+                const token = tokenList[formData.paymentToken];
+                if (token) {
+                    try {
+                        let usdValue = 'Unknown';
+                        const currentPrice = livePrice[formData.paymentToken];
+                        if (currentPrice) {
+                            usdValue = (formData.paymentToken === USDC_ADDRESS)
+                                ? parseFloat(value).toFixed(2)
+                                : (parseFloat(value) * currentPrice).toFixed(2);
+                        }
+                        setDisplayPrice({
+                            wei: ethers.parseUnits(value, token.decimals || 18).toString(),
+                            eth: value,
+                            usd: usdValue,
+                        });
+                    } catch {
+                        setDisplayPrice({ wei: '0', eth: value, usd: 'Unknown' });
+                    }
+                }
+            } else {
+                setDisplayPrice({ wei: '0', eth: value || '0', usd: '0.00' });
+            }
+        } else {
+            setFormData(prev => ({ ...prev, [name]: value }));
+        }
+    };
+
+    // Change payment token => recompute display USD
+    const handlePaymentTokenChange = (e) => {
+        const tokenAddress = e.target.value;
+        setFormData(prev => ({ ...prev, paymentToken: tokenAddress }));
+
+        if (formData.reservePrice && !isNaN(parseFloat(formData.reservePrice))) {
+            const token = tokenList[tokenAddress];
+            if (token) {
+                try {
+                    let usdValue = 'Unknown';
+                    const currentPrice = livePrice[tokenAddress];
+                    if (currentPrice) usdValue = (parseFloat(formData.reservePrice) * currentPrice).toFixed(2);
+                    setDisplayPrice({
+                        wei: ethers.parseUnits(formData.reservePrice, token.decimals || 18).toString(),
+                        eth: formData.reservePrice,
+                        usd: usdValue,
+                    });
+                } catch {
+                    setDisplayPrice({ wei: '0', eth: formData.reservePrice, usd: 'Unknown' });
+                }
+            }
+        }
+    };
+
+    const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
+
+    // Cleanup
+    useEffect(() => {
+        return () => {
+            if (priceIntervalRef.current) clearInterval(priceIntervalRef.current);
+        };
+    }, []);
+
+    /* =========================
+       Token init + price fetching
+       ========================= */
+    useEffect(() => {
+        if (!provider) return;
+        const init = async () => {
+            const initialized = await initializeTokens();
+            await fetchUniswapPrices(0, initialized);
+        };
+        init().catch((err) => {
+            console.error(err);
+            setStatus('Error initializing tokens. Please refresh the page.');
+        });
+    }, [provider]);
+
+    const getUniswapPool = async (tokenA, tokenB) => {
+        try {
+            const factory = new ethers.Contract(UNISWAP_V3_FACTORY_ADDRESS, UNISWAP_V3_FACTORY_ABI, provider);
+            for (const fee of FEE_TIERS) {
+                try {
+                    const poolAddress = await factory.getPool(tokenA, tokenB, fee);
+                    if (poolAddress && poolAddress !== ethers.ZeroAddress) return { poolAddress, fee };
+                } catch { }
+            }
+            return { poolAddress: null, fee: null };
+        } catch {
+            return { poolAddress: null, fee: null };
+        }
+    };
+
+    const getUniswapPrice = async (tokenAddress) => {
+        const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
+        const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
+        let source;
+        if (tokenAddress === ethers.ZeroAddress) source = 'Uniswap V3 (WVTRU proxy)';
+        else if (tokenAddress === USDC_ADDRESS) source = 'USD Stablecoin';
+        else source = `Uniswap V3 (${tokenSymbol}/USDC)`;
+        return { price, source };
+    };
+
+    const fetchUniswapPrices = async (retryCount = 0, providedTokenList = null) => {
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 2000;
+        const activeTokenList = providedTokenList || tokenList;
+        if (!activeTokenList || Object.keys(activeTokenList).length === 0) return;
+
+        try {
+            const previousPrices = { ...livePrice };
+            const newPrices = {};
+            const changes = {};
+            const newSources = { ...priceSources };
+            const errors = {};
+
+            newPrices[USDC_ADDRESS] = 1.0;
+            newSources[USDC_ADDRESS] = 'USD Stablecoin';
+            changes[USDC_ADDRESS] = 0;
+
+            const entries = Object.entries(activeTokenList);
+
+            // WVTRU first
+            const wv = entries.find(([a]) => a === WVTRU_ADDRESS);
+            if (wv) {
+                const [address] = wv;
+                try {
+                    const { price, source } = await getUniswapPrice(address);
+                    if (price && price > 0) {
+                        newPrices[address] = price;
+                        newSources[address] = source;
+                        changes[address] = previousPrices[address] ? ((price - previousPrices[address]) / previousPrices[address]) * 100 : 0;
+                    } else throw new Error('Invalid price');
+                } catch (e) {
+                    errors[address] = e.message || 'Unknown error';
+                    if (previousPrices[address]) {
+                        newPrices[address] = previousPrices[address];
+                        changes[address] = 0;
+                        newSources[address] = 'Outdated (fetch failed)';
+                    } else {
+                        newPrices[address] = null;
+                        newSources[address] = 'No price data';
+                    }
+                }
+            }
+
+            // Others
+            for (const [address] of entries) {
+                if (address === USDC_ADDRESS || address === WVTRU_ADDRESS) continue;
+                try {
+                    const { price, source } = await getUniswapPrice(address);
+                    if (price && price > 0) {
+                        newPrices[address] = price;
+                        newSources[address] = source;
+                        changes[address] = previousPrices[address] ? ((price - previousPrices[address]) / previousPrices[address]) * 100 : 0;
+                    } else throw new Error('Invalid price');
+                } catch (e) {
+                    errors[address] = e.message || 'Unknown error';
+                    if (previousPrices[address]) {
+                        newPrices[address] = previousPrices[address];
+                        changes[address] = 0;
+                        newSources[address] = 'Outdated (fetch failed)';
+                    } else {
+                        newPrices[address] = null;
+                        newSources[address] = 'No price data';
+                    }
+                }
+                await new Promise((r) => setTimeout(r, 100));
+            }
+
+            const validated = {};
+            Object.entries(newPrices).forEach(([a, p]) => {
+                validated[a] = typeof p === 'number' && p >= 0 ? p : null;
+            });
+
+            setLivePrice(validated);
+            setPriceChange(changes);
+            setPriceSources(newSources);
+            setPriceErrors(errors);
+            setLastUpdateTime(new Date());
+
+            if (formData.reservePrice && formData.paymentToken && validated[formData.paymentToken]) {
+                const usdValue = (parseFloat(formData.reservePrice) * validated[formData.paymentToken]).toFixed(2);
+                setDisplayPrice((prev) => ({ ...prev, usd: usdValue }));
+            }
+        } catch (error) {
+            if (retryCount < MAX_RETRIES && /(network|timeout|fetch)/i.test(error.message || '')) {
+                setTimeout(() => fetchUniswapPrices(retryCount + 1, activeTokenList), RETRY_DELAY);
+            } else {
+                setStatus('Warning: Some token prices could not be fetched. You can still create auctions.');
+            }
+        }
+    };
+
+    const initializeTokens = async () => {
+        setLoadingPrices(true);
+        const initialTokens = {};
+        try {
+            initialTokens[ethers.ZeroAddress] = {
+                address: ethers.ZeroAddress,
+                symbol: 'VTRU',
+                name: 'Native VTRU',
+                decimals: 18,
+                isNative: true,
+            };
+
+            // WVTRU
+            try {
+                const c = new ethers.Contract(WVTRU_ADDRESS, ERC20_ABI, provider);
+                const [symbol, name, decimals] = await Promise.all([
+                    c.symbol().catch(() => 'WVTRU'),
+                    c.name().catch(() => 'Wrapped VTRU'),
+                    c.decimals().catch(() => 18),
+                ]);
+                initialTokens[WVTRU_ADDRESS] = { address: WVTRU_ADDRESS, symbol, name, decimals };
+            } catch {
+                initialTokens[WVTRU_ADDRESS] = { address: WVTRU_ADDRESS, symbol: 'WVTRU', name: 'Wrapped VTRU', decimals: 18 };
+            }
+
+            // USDC
+            try {
+                const c = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, provider);
+                const [symbol, name, decimals] = await Promise.all([
+                    c.symbol().catch(() => 'USDC'),
+                    c.name().catch(() => 'USD Coin'),
+                    c.decimals().catch(() => 6),
+                ]);
+                initialTokens[USDC_ADDRESS] = { address: USDC_ADDRESS, symbol, name, decimals };
+                setLivePrice((prev) => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
+                setPriceSources((prev) => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
+            } catch {
+                initialTokens[USDC_ADDRESS] = { address: USDC_ADDRESS, symbol: 'USDC', name: 'USD Coin', decimals: 6 };
+                setLivePrice((prev) => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
+                setPriceSources((prev) => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
+            }
+
+            const addToken = async (addr, fallbackSymbol, fallbackName, fallbackDecimals = 18) => {
+                try {
+                    const c = new ethers.Contract(addr, ERC20_ABI, provider);
+                    const [symbol, name, decimals] = await Promise.all([
+                        c.symbol().catch(() => fallbackSymbol),
+                        c.name().catch(() => fallbackName),
+                        c.decimals().catch(() => fallbackDecimals),
+                    ]);
+                    initialTokens[addr] = { address: addr, symbol, name, decimals };
+                } catch {
+                    initialTokens[addr] = { address: addr, symbol: fallbackSymbol, name: fallbackName, decimals: fallbackDecimals };
+                }
+            };
+
+            await addToken(VUSD_ADDRESS, 'VUSD', 'VUSD Token');
+            await addToken(SEVO_ADDRESS, 'SEVO', 'SEVO Token');
+            await addToken(WSEVO_ADDRESS, 'WSEVO', 'Wrapped SEVO');
+            await addToken(VITEX_ADDRESS, 'VITEX', 'VITEX Token');
+            await addToken(VTRO_ADDRESS, 'VTRO', 'VTRO Token');
+
+            setTokenList(initialTokens);
+            setLastUpdateTime(new Date());
+
+            const options = Object.entries(initialTokens).map(([address, token]) => ({
+                address,
+                name: `${token.symbol}${token.isNative ? ' (Native)' : ''}`,
+                fullName: token.name,
+                symbol: token.symbol,
+                price: address === USDC_ADDRESS ? 1.0 : null,
+                priceSource: address === USDC_ADDRESS ? 'USD Stablecoin' : 'Price pending...',
+                error: null,
+            }));
+            setPaymentOptions(options);
+
+            return initialTokens;
+        } catch (error) {
+            setStatus('Error loading token information. Please refresh the page.');
+            throw error;
+        } finally {
+            setLoadingPrices(false);
+        }
+    };
+
+    const buildPaymentOptions = () => {
+        if (!tokenList || Object.keys(tokenList).length === 0) {
+            setPaymentOptions([]);
+            return;
+        }
+        const options = Object.entries(tokenList).map(([address, token]) => {
+            const price = livePrice[address];
+            const priceSource = priceSources[address] || 'Unknown';
+            const error = priceErrors[address];
+            const validPrice = typeof price === 'number' && price > 0 ? price : null;
+            return {
+                address,
+                name: `${token.symbol}${token.isNative ? ' (Native)' : ''}`,
+                fullName: token.name,
+                symbol: token.symbol,
+                price: validPrice,
+                priceSource,
+                error,
+            };
+        });
+        setPaymentOptions(options);
+    };
+
+    useEffect(() => {
+        if (Object.keys(tokenList).length > 0) buildPaymentOptions();
+    }, [tokenList, livePrice, priceSources, priceErrors]);
+
+    const handleCustomTokenChange = (e) => {
+        const { id, value } = e.target;
+        setCustomTokenData({ ...customTokenData, [id]: value });
+    };
+
+    const addCustomToken = async () => {
+        setCustomTokenError('');
+
+        if (!ethers.isAddress(customTokenData.address)) {
+            setCustomTokenError('Invalid address format');
+            return;
+        }
+
+        try {
+            const checksum = ethers.getAddress(customTokenData.address);
+            if (tokenList[checksum]) {
+                setCustomTokenError('Token already added');
+                return;
+            }
+
+            setLoadingPrices(true);
+            const c = new ethers.Contract(checksum, ERC20_ABI, provider);
+
+            let symbol, name, decimals;
+            try {
+                symbol = await c.symbol();
+                name = await c.name();
+                decimals = await c.decimals();
+            } catch {
+                symbol = customTokenData.symbol || 'UNKNOWN';
+                name = customTokenData.name || 'Custom Token';
+                decimals = parseInt(customTokenData.decimals) || 18;
+            }
+
+            const newToken = { address: checksum, symbol, name, decimals };
+            setTokenList((prev) => ({ ...prev, [checksum]: newToken }));
+
+            if (customTokenData.price) {
+                const manual = parseFloat(customTokenData.price);
+                setLivePrice((prev) => ({ ...prev, [checksum]: manual }));
+                setPriceSources((prev) => ({ ...prev, [checksum]: 'Manually entered' }));
+            } else {
+                setPriceSources((prev) => ({ ...prev, [checksum]: 'Fetching from Uniswap...' }));
+            }
+
+            setCustomTokenData({ address: '', symbol: '', name: '', decimals: '18', price: '' });
+            setShowAddTokenForm(false);
+        } catch (error) {
+            setCustomTokenError(`Error adding token: ${error.message}`);
+        } finally {
+            setLoadingPrices(false);
+        }
     };
 
     const handleSubmit = async (e) => {
@@ -545,11 +954,54 @@ function CreateAuctionPage() {
     }
 
     return (
-        <div className="hp" style={{ maxWidth: 800, margin: '3rem auto', padding: '0 1.25rem' }}>
-            <div className="hp-section__head">
-                <h2>Create Auction</h2>
+        <div className="sell-container">
+            <div className="page-header">
+                <h1>Create Auction</h1>
                 <p>Set up a timed auction for your NFT</p>
             </div>
+
+            {/* Price Ticker with Uniswap Price Data */}
+            {Object.keys(livePrice).length > 0 && (
+                <div className="price-ticker">
+                    <div className="ticker-header">
+                        <span>Uniswap V3 Token Prices</span>
+                        <span className="ticker-time">Last updated: {formatTime(lastUpdateTime)}</span>
+                    </div>
+                    <div className="ticker-items">
+                        {Object.entries(tokenList)
+                            .filter(([address]) => livePrice[address] !== null)
+                            .map(([address, token]) => {
+                                const price = livePrice[address];
+                                const change = priceChange[address] || 0;
+                                const source = priceSources[address];
+                                const error = priceErrors[address];
+
+                                return (
+                                    <div className={`ticker-item ${error ? 'has-error' : ''}`} key={address}>
+                                        <div className="ticker-symbol">{token.symbol}</div>
+                                        {price ? (
+                                            <>
+                                                <div className="ticker-price">${price.toFixed(4)}</div>
+                                                <div className={`ticker-change ${change > 0 ? 'positive' : change < 0 ? 'negative' : ''}`}>
+                                                    {change > 0 ? '+' : ''}
+                                                    {change.toFixed(2)}%
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="ticker-no-price">No Price Data</div>
+                                        )}
+                                        <div className="ticker-source" title={error || source}>{error ? 'Error' : source}</div>
+                                    </div>
+                                );
+                            })}
+                        <div className="ticker-refresh" onClick={() => fetchUniswapPrices()} title="Refresh Uniswap Prices">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* NFT Preview */}
             {metadata && (
@@ -609,192 +1061,404 @@ function CreateAuctionPage() {
                 </div>
             )}
 
-            <form onSubmit={handleSubmit} className="create-auction-form">
-                <div className="form-group">
-                    <label htmlFor="nftContract">NFT Contract Address</label>
-                    <input
-                        type="text"
-                        id="nftContract"
-                        name="nftContract"
-                        value={formData.nftContract}
-                        onChange={handleChange}
-                        placeholder="0x..."
-                        required
-                    />
-                </div>
+            <div className="sell-layout">
+                <div className="sell-form">
+                    <div className={`card glow-card ${auctionSuccess ? 'confetti' : ''}`}>
+                        <form onSubmit={handleSubmit}>
+                            <div className="form-section">
+                                <h3>NFT Details</h3>
 
-                <div className="form-group">
-                    <label htmlFor="tokenId">Token ID</label>
-                    <input
-                        type="text"
-                        id="tokenId"
-                        name="tokenId"
-                        value={formData.tokenId}
-                        onChange={handleChange}
-                        placeholder="1"
-                        required
-                    />
-                </div>
+                                <div className="form-group">
+                                    <label htmlFor="nftContract">NFT Contract Address</label>
+                                    <input
+                                        type="text"
+                                        id="nftContract"
+                                        name="nftContract"
+                                        className="input"
+                                        value={formData.nftContract}
+                                        onChange={handleChange}
+                                        placeholder="0x..."
+                                        required
+                                    />
+                                </div>
 
-                {!metadata && !loading && (
-                    <button type="button" onClick={fetchNftMetadata} className="hp-btn" style={{ marginBottom: '1rem' }}>
-                        Fetch NFT Data
-                    </button>
-                )}
+                                <div className="form-group">
+                                    <label htmlFor="tokenId">Token ID</label>
+                                    <input
+                                        type="text"
+                                        id="tokenId"
+                                        name="tokenId"
+                                        className="input"
+                                        value={formData.tokenId}
+                                        onChange={handleChange}
+                                        placeholder="1"
+                                        required
+                                    />
+                                </div>
 
-                {loading && (
-                    <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                        Loading NFT metadata...
+                                {!metadata && !loading && (
+                                    <button type="button" className="secondary-button fetch-button" onClick={fetchNftMetadata}>
+                                        Fetch NFT Data
+                                    </button>
+                                )}
+                                
+                                {loading && (
+                                    <div className="form-group">
+                                        <div className="skeleton text"></div>
+                                        <div className="skeleton block"></div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {nftType && (
+                                <div className="form-section">
+                                    <h3>Auction Details</h3>
+
+                                    <div className="form-group">
+                                        <label htmlFor="quantity">Quantity to Auction</label>
+                                        <div className="input-with-info">
+                                            <input
+                                                type="number"
+                                                id="quantity"
+                                                name="quantity"
+                                                className="input"
+                                                value={formData.quantity}
+                                                onChange={handleChange}
+                                                placeholder="1"
+                                                min="1"
+                                                max={balance}
+                                                required
+                                            />
+                                            <div className="input-info">
+                                                Available: <span className="chip">{balance}</span>
+                                            </div>
+                                        </div>
+                                        {nftType === 'ERC721' && <div className="small">ERC-721 NFTs are unique and quantity will be 1</div>}
+                                    </div>
+
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label htmlFor="startPrice">Starting Bid</label>
+                                            <div className="price-input-container">
+                                                <input
+                                                    type="text"
+                                                    id="startPrice"
+                                                    name="startPrice"
+                                                    className="input price-input"
+                                                    value={formData.startPrice}
+                                                    onChange={handleChange}
+                                                    placeholder="0.00"
+                                                />
+                                                <div className="price-conversion">
+                                                    <div className="price-eth">
+                                                        {formData.startPrice || '0'} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    </div>
+                                                    <div className="price-usd">
+                                                        ≈ {displayPrice.usd === 'Unknown' ? 'Unknown USD value' : `$${displayPrice.usd} USD`}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="reservePrice">Reserve Price</label>
+                                            <div className="price-input-container">
+                                                <input
+                                                    type="text"
+                                                    id="reservePrice"
+                                                    name="reservePrice"
+                                                    className="input price-input"
+                                                    value={formData.reservePrice}
+                                                    onChange={handleChange}
+                                                    placeholder="1.0"
+                                                    required
+                                                />
+                                                <div className="price-conversion">
+                                                    <div className="price-eth">
+                                                        {formData.reservePrice || '0'} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    </div>
+                                                    <div className="price-usd">
+                                                        ≈ {displayPrice.usd === 'Unknown' ? 'Unknown USD value' : `$${displayPrice.usd} USD`}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Payment token selector with enhanced UI */}
+                                    <div className="form-group">
+                                        <div className="payment-header">
+                                            <label>Payment Token</label>
+                                            <button
+                                                type="button"
+                                                className="add-token-button"
+                                                onClick={() => setShowAddTokenForm(!showAddTokenForm)}
+                                            >
+                                                {showAddTokenForm ? 'Cancel' : '+ Add Custom Token'}
+                                            </button>
+                                        </div>
+
+                                        {showAddTokenForm && (
+                                            <div className="custom-token-form">
+                                                <h4>Add Custom Token</h4>
+
+                                                <div className="form-group">
+                                                    <label htmlFor="address">Token Address *</label>
+                                                    <input
+                                                        type="text"
+                                                        id="address"
+                                                        className="input"
+                                                        value={customTokenData.address}
+                                                        onChange={handleCustomTokenChange}
+                                                        placeholder="0x..."
+                                                        required
+                                                    />
+                                                </div>
+
+                                                <div className="form-row">
+                                                    <div className="form-group">
+                                                        <label htmlFor="symbol">Symbol</label>
+                                                        <input
+                                                            type="text"
+                                                            id="symbol"
+                                                            className="input"
+                                                            value={customTokenData.symbol}
+                                                            onChange={handleCustomTokenChange}
+                                                            placeholder="Auto-detect if available"
+                                                        />
+                                                    </div>
+                                                    <div className="form-group">
+                                                        <label htmlFor="decimals">Decimals</label>
+                                                        <input
+                                                            type="number"
+                                                            id="decimals"
+                                                            className="input"
+                                                            value={customTokenData.decimals}
+                                                            onChange={handleCustomTokenChange}
+                                                            placeholder="18"
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                <div className="form-group">
+                                                    <label htmlFor="name">Token Name</label>
+                                                    <input
+                                                        type="text"
+                                                        id="name"
+                                                        className="input"
+                                                        value={customTokenData.name}
+                                                        onChange={handleCustomTokenChange}
+                                                        placeholder="Auto-detect if available"
+                                                    />
+                                                </div>
+
+                                                <div className="form-group">
+                                                    <label htmlFor="price">USD Price (optional)</label>
+                                                    <div className="input-with-info">
+                                                        <input
+                                                            type="number"
+                                                            id="price"
+                                                            className="input"
+                                                            value={customTokenData.price}
+                                                            onChange={handleCustomTokenChange}
+                                                            placeholder="Token USD price"
+                                                            step="0.000001"
+                                                        />
+                                                        <div className="input-info">Will try to find Uniswap pool if left empty</div>
+                                                    </div>
+                                                </div>
+
+                                                {customTokenError && <div className="error-message">{customTokenError}</div>}
+
+                                                <div className="form-actions token-actions">
+                                                    <button type="button" className="secondary-button" onClick={() => setShowAddTokenForm(false)}>
+                                                        Cancel
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="primary-button"
+                                                        onClick={addCustomToken}
+                                                        disabled={!customTokenData.address || loadingPrices}
+                                                    >
+                                                        {loadingPrices ? 'Adding...' : 'Add Token'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {loadingPrices && !showAddTokenForm ? (
+                                            <div className="loading-tokens">
+                                                <div className="loader"></div>
+                                                <p>Loading token information from Uniswap...</p>
+                                            </div>
+                                        ) : (
+                                            <div className="token-dropdown-container">
+                                                <div className="token-dropdown-wrapper">
+                                                    <select className="token-dropdown" value={formData.paymentToken} onChange={handlePaymentTokenChange}>
+                                                        <option value="" disabled>
+                                                            Select payment token
+                                                        </option>
+                                                        {paymentOptions.map((option) => (
+                                                            <option key={option.address} value={option.address}>
+                                                                {option.name} - $
+                                                                {option.price !== null
+                                                                    ? option.price < 0.01
+                                                                        ? option.price.toFixed(6)
+                                                                        : option.price.toFixed(2)
+                                                                    : 'No price'}{' '}
+                                                                USD
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    <div className="dropdown-icon">
+                                                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                                                            <path d="M7 10l5 5 5-5z" />
+                                                        </svg>
+                                                    </div>
+                                                </div>
+
+                                                {formData.paymentToken && paymentOptions.length > 0 && (
+                                                    <div className="selected-token-details">
+                                                        {(() => {
+                                                            const selected = paymentOptions.find((o) => o.address === formData.paymentToken);
+                                                            if (!selected) return null;
+
+                                                            return (
+                                                                <div className={`token-details-card ${selected.error ? 'has-error' : ''}`}>
+                                                                    <div className="token-details-header">
+                                                                        <div className="token-details-info">
+                                                                            <div className="token-details-name">{selected.name}</div>
+                                                                            <div className="token-details-full-name">{selected.fullName}</div>
+                                                                        </div>
+                                                                        <div className="token-details-price-info">
+                                                                            {selected.price !== null ? (
+                                                                                <div className="token-details-price">
+                                                                                    ${selected.price < 0.01 ? selected.price.toFixed(6) : selected.price.toFixed(2)} USD
+                                                                                </div>
+                                                                            ) : (
+                                                                                <div className="token-details-price-unknown">No price data</div>
+                                                                            )}
+                                                                            <div className={`token-details-source ${selected.error ? 'error' : ''}`} title={selected.error}>
+                                                                                {selected.error ? '⚠️ ' + selected.error : selected.priceSource}
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+                                                )}
+
+                                                {paymentOptions.length === 0 && <div className="no-tokens-message">No tokens available. Add a custom token to continue.</div>}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="form-row">
+                                        <div className="form-group">
+                                            <label htmlFor="duration">Duration (hours)</label>
+                                            <select
+                                                id="duration"
+                                                name="duration"
+                                                className="input"
+                                                value={formData.duration}
+                                                onChange={handleChange}
+                                                required
+                                            >
+                                                <option value="1">1 hour</option>
+                                                <option value="6">6 hours</option>
+                                                <option value="12">12 hours</option>
+                                                <option value="24">24 hours</option>
+                                                <option value="48">48 hours</option>
+                                                <option value="168">7 days</option>
+                                            </select>
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="minBidIncrementBps">Min Bid Increment (%)</label>
+                                            <select
+                                                id="minBidIncrementBps"
+                                                name="minBidIncrementBps"
+                                                className="input"
+                                                value={formData.minBidIncrementBps}
+                                                onChange={handleChange}
+                                                required
+                                            >
+                                                <option value="100">1%</option>
+                                                <option value="250">2.5%</option>
+                                                <option value="500">5%</option>
+                                                <option value="1000">10%</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-group">
+                                        <label htmlFor="antiSnipeSeconds">Anti-Snipe Extension (minutes)</label>
+                                        <select
+                                            id="antiSnipeSeconds"
+                                            name="antiSnipeSeconds"
+                                            className="input"
+                                            value={formData.antiSnipeSeconds}
+                                            onChange={handleChange}
+                                            required
+                                        >
+                                            <option value="300">5 minutes</option>
+                                            <option value="600">10 minutes</option>
+                                            <option value="900">15 minutes</option>
+                                            <option value="1800">30 minutes</option>
+                                        </select>
+                                        <small>Auction will extend by this duration if a bid is placed near the end</small>
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="form-actions">
+                                <div className="approval-note">
+                                    <svg viewBox="0 0 24 24" width="16" height="16">
+                                        <path
+                                            fill="currentColor"
+                                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"
+                                        />
+                                    </svg>
+                                    <span>Note: You'll need to approve the marketplace to transfer your NFT. This is a one-time action per collection.</span>
+                                </div>
+
+                                {!wallet ? (
+                                    <button type="button" className="secondary-button" onClick={connect}>
+                                        Connect Wallet First
+                                    </button>
+                                ) : !ownershipVerified && metadata ? (
+                                    <button type="button" className="warning-button" disabled>
+                                        You don't own this NFT
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="submit"
+                                        className="primary-button"
+                                        disabled={!wallet || !metadata || (typeof status === 'string' && status.includes('Creating')) || !ownershipVerified}
+                                    >
+                                        {typeof status === 'string' && status.includes('Creating') ? 'Processing...' : 'Create Auction'}
+                                    </button>
+                                )}
+                            </div>
+
+                            {status && (
+                                <div className={`status-message ${String(status).includes('Warning') ? 'warning' : ''}`}>
+                                    {status.includes('Error') ? (
+                                        <span className="chip error">{status}</span>
+                                    ) : status.includes('Warning') ? (
+                                        <span className="chip warn">{status}</span>
+                                    ) : status.includes('Success') ? (
+                                        <span className="chip success">{status}</span>
+                                    ) : (
+                                        status
+                                    )}
+                                </div>
+                            )}
+                        </form>
                     </div>
-                )}
-
-                {nftType && (
-                    <>
-                        <div className="form-group">
-                            <label htmlFor="quantity">Quantity (for ERC1155)</label>
-                            <input
-                                type="number"
-                                id="quantity"
-                                name="quantity"
-                                min="1"
-                                max={balance}
-                                value={formData.quantity}
-                                onChange={handleChange}
-                                required
-                            />
-                            <small>Available: {balance}</small>
-                        </div>
-
-                        <div className="form-group">
-                            <label htmlFor="paymentToken">Payment Token</label>
-                            <select
-                                id="paymentToken"
-                                name="paymentToken"
-                                value={formData.paymentToken}
-                                onChange={handleChange}
-                                required
-                            >
-                                {getSupportedTokens().map(token => (
-                                    <option key={token.address} value={token.address}>
-                                        {token.symbol} - {token.name}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-
-                        <div className="form-row">
-                            <div className="form-group">
-                                <label htmlFor="startPrice">Starting Price</label>
-                                <input
-                                    type="text"
-                                    id="startPrice"
-                                    name="startPrice"
-                                    value={formData.startPrice}
-                                    onChange={handleChange}
-                                    placeholder="0.1"
-                                    required
-                                />
-                            </div>
-
-                            <div className="form-group">
-                                <label htmlFor="reservePrice">Reserve Price</label>
-                                <input
-                                    type="text"
-                                    id="reservePrice"
-                                    name="reservePrice"
-                                    value={formData.reservePrice}
-                                    onChange={handleChange}
-                                    placeholder="1.0"
-                                    required
-                                />
-                            </div>
-                        </div>
-
-                        <div className="form-row">
-                            <div className="form-group">
-                                <label htmlFor="duration">Duration (hours)</label>
-                                <select
-                                    id="duration"
-                                    name="duration"
-                                    value={formData.duration}
-                                    onChange={handleChange}
-                                    required
-                                >
-                                    <option value="1">1 hour</option>
-                                    <option value="6">6 hours</option>
-                                    <option value="12">12 hours</option>
-                                    <option value="24">24 hours</option>
-                                    <option value="48">48 hours</option>
-                                    <option value="168">7 days</option>
-                                </select>
-                            </div>
-
-                            <div className="form-group">
-                                <label htmlFor="minBidIncrementBps">Min Bid Increment (%)</label>
-                                <select
-                                    id="minBidIncrementBps"
-                                    name="minBidIncrementBps"
-                                    value={formData.minBidIncrementBps}
-                                    onChange={handleChange}
-                                    required
-                                >
-                                    <option value="100">1%</option>
-                                    <option value="250">2.5%</option>
-                                    <option value="500">5%</option>
-                                    <option value="1000">10%</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className="form-group">
-                            <label htmlFor="antiSnipeSeconds">Anti-Snipe Extension (minutes)</label>
-                            <select
-                                id="antiSnipeSeconds"
-                                name="antiSnipeSeconds"
-                                value={formData.antiSnipeSeconds}
-                                onChange={handleChange}
-                                required
-                            >
-                                <option value="300">5 minutes</option>
-                                <option value="600">10 minutes</option>
-                                <option value="900">15 minutes</option>
-                                <option value="1800">30 minutes</option>
-                            </select>
-                            <small>Auction will extend by this duration if a bid is placed near the end</small>
-                        </div>
-                    </>
-                )}
-
-                {status && (
-                    <div className="status-message">
-                        {status}
-                    </div>
-                )}
-
-                <div className="form-actions">
-                    {!ownershipVerified && metadata ? (
-                        <button type="button" className="hp-btn" disabled>
-                            You don't own this NFT
-                        </button>
-                    ) : (
-                        <button
-                            type="submit"
-                            className="hp-btn hp-btn--primary"
-                            disabled={!wallet || !metadata || (typeof status === 'string' && status.includes('Creating')) || !ownershipVerified}
-                        >
-                            {typeof status === 'string' && status.includes('Creating') ? 'Processing...' : 'Create Auction'}
-                        </button>
-                    )}
-                    
-                    <button 
-                        type="button" 
-                        onClick={() => navigate('/marketplace')} 
-                        className="hp-btn"
-                    >
-                        Cancel
-                    </button>
                 </div>
-            </form>
+            </div>
         </div>
     );
 }
