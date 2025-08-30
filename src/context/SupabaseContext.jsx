@@ -550,6 +550,218 @@ export function SupabaseProvider({ children }) {
         };
     }, []);
 
+    // Auction management functions
+    const cacheAuctions = useCallback(
+        async (auctions) => {
+            if (!supabase || !auctions?.length) return;
+
+            try {
+                console.log(`💾 Caching ${auctions.length} auctions to Supabase...`);
+
+                const rows = auctions.map((auction) => {
+                    return {
+                        auction_id: auction.id?.toString() || auction.auctionId?.toString(),
+                        seller: auction.seller,
+                        nft_contract: auction.nftContract,
+                        token_id: auction.tokenId?.toString(),
+                        quantity: auction.quantity?.toString() || '1',
+                        reserve_price: auction.reservePrice?.toString(),
+                        start_price: auction.startPrice?.toString(), 
+                        end_time: auction.endTime,
+                        payment_token: auction.paymentToken,
+                        min_bid_increment_bps: auction.minBidIncrementBps || 500,
+                        anti_snipe_seconds: auction.antiSnipeSeconds || 300,
+                        highest_bid: auction.highestBid?.toString() || '0',
+                        highest_bidder: auction.highestBidder || '0x0000000000000000000000000000000000000000',
+                        settled: auction.settled || false,
+                        transaction_hash: auction.transactionHash,
+                        block_number: auction.blockNumber,
+                        log_index: auction.logIndex || 0,
+                        timestamp: auction.timestamp || Math.floor(Date.now() / 1000),
+                        metadata: auction.metadata || {}
+                    };
+                });
+
+                // Filter invalid rows
+                const toSave = rows.filter(
+                    (r) =>
+                        r.auction_id &&
+                        r.seller &&
+                        r.nft_contract &&
+                        r.token_id &&
+                        r.reserve_price &&
+                        r.start_price &&
+                        r.end_time &&
+                        r.payment_token
+                );
+
+                if (toSave.length === 0) {
+                    console.warn('⚠️ No valid auction rows to upsert');
+                    return;
+                }
+
+                console.log(`💾 Upserting ${toSave.length} auctions to Supabase...`);
+
+                // Chunked upserts
+                const CHUNK = 100;
+                for (let i = 0; i < toSave.length; i += CHUNK) {
+                    const chunk = toSave.slice(i, i + CHUNK);
+                    const { data, error } = await supabase
+                        .from('auctions')
+                        .upsert(chunk, { onConflict: 'auction_id', ignoreDuplicates: false });
+
+                    if (error) {
+                        console.warn('❌ Database auction cache error:', error);
+                        updateCacheStats('errors');
+                    } else {
+                        console.log(`✅ Cached ${chunk.length} auctions [${i + 1}-${i + chunk.length}]`);
+                        // Cache in memory
+                        chunk.forEach((dbRow) => {
+                            const id = dbRow.auction_id;
+                            const key = getCacheKey('auction', id);
+                            setCache(key, dbRow, 'auctions');
+                        });
+                    }
+                }
+
+                setCache('all_auctions', auctions, 'auctions');
+            } catch (error) {
+                console.warn('❌ Error caching auctions:', error);
+                updateCacheStats('errors');
+            }
+        },
+        [supabase]
+    );
+
+    const getCachedAuctions = useCallback(async (sellerAddress = null) => {
+        if (!supabase) {
+            const cachedData = getCache(sellerAddress ? `auctions_${sellerAddress}` : 'all_auctions');
+            return cachedData || [];
+        }
+
+        try {
+            console.log(`🔍 Fetching cached auctions from Supabase${sellerAddress ? ` for seller ${sellerAddress}` : ''}...`);
+            
+            let query = supabase
+                .from('auctions')
+                .select('*')
+                .order('timestamp', { ascending: false });
+
+            if (sellerAddress) {
+                query = query.eq('seller', sellerAddress);
+            }
+
+            const { data, error } = await query;
+
+            if (error) {
+                console.warn('Error fetching cached auctions:', error);
+                updateCacheStats('errors');
+                return [];
+            }
+
+            console.log(`📦 Retrieved ${data.length} cached auctions from database`);
+
+            const auctions = data.map((item) => ({
+                id: item.auction_id,
+                auctionId: item.auction_id,
+                seller: item.seller,
+                nftContract: item.nft_contract,
+                tokenId: item.token_id,
+                quantity: item.quantity,
+                reservePrice: item.reserve_price,
+                startPrice: item.start_price,
+                endTime: item.end_time,
+                paymentToken: item.payment_token,
+                minBidIncrementBps: item.min_bid_increment_bps,
+                antiSnipeSeconds: item.anti_snipe_seconds,
+                highestBid: item.highest_bid || '0',
+                highestBidder: item.highest_bidder || '0x0000000000000000000000000000000000000000',
+                settled: item.settled || false,
+                transactionHash: item.transaction_hash,
+                blockNumber: item.block_number,
+                timestamp: item.timestamp,
+                metadata: item.metadata || {}
+            }));
+
+            const cacheKey = sellerAddress ? `auctions_${sellerAddress}` : 'all_auctions';
+            setCache(cacheKey, auctions, 'auctions');
+            return auctions;
+        } catch (error) {
+            console.warn('Error retrieving cached auctions:', error);
+            updateCacheStats('errors');
+            return [];
+        }
+    }, [supabase]);
+
+    const getAuctionBids = useCallback(async (auctionId) => {
+        if (!supabase) {
+            const cachedData = getCache(`auction_bids_${auctionId}`);
+            return cachedData || [];
+        }
+
+        try {
+            console.log(`🔍 Fetching bids for auction ${auctionId}...`);
+            
+            const { data, error } = await supabase
+                .from('auction_bids')
+                .select('*')
+                .eq('auction_id', auctionId)
+                .order('timestamp', { ascending: false });
+
+            if (error) {
+                console.warn('Error fetching auction bids:', error);
+                updateCacheStats('errors');
+                return [];
+            }
+
+            console.log(`📦 Retrieved ${data.length} bids for auction ${auctionId}`);
+
+            const bids = data.map((item) => ({
+                auctionId: item.auction_id,
+                bidder: item.bidder,
+                amount: item.amount,
+                newEndTime: item.new_end_time,
+                isNative: item.is_native,
+                transactionHash: item.transaction_hash,
+                blockNumber: item.block_number,
+                timestamp: item.timestamp
+            }));
+
+            setCache(`auction_bids_${auctionId}`, bids, 'auctions');
+            return bids;
+        } catch (error) {
+            console.warn('Error retrieving auction bids:', error);
+            updateCacheStats('errors');
+            return [];
+        }
+    }, [supabase]);
+
+    const subscribeToAuctions = useCallback((callback) => {
+        if (!supabase) return null;
+        try {
+            console.log('🔄 Setting up real-time subscription for auctions...');
+            const subscription = supabase
+                .channel('auctions')
+                .on(
+                    'postgres_changes',
+                    { event: '*', schema: 'public', table: 'auctions' },
+                    (payload) => {
+                        console.log('📡 Real-time auction update:', payload);
+                        clearCache('auction');
+                        clearCache('all_auctions');
+                        if (callback) callback(payload);
+                    }
+                )
+                .subscribe();
+
+            subscriptions.current.set('auctions', subscription);
+            return subscription;
+        } catch (error) {
+            console.warn('Error setting up auctions subscription:', error);
+            return null;
+        }
+    }, [supabase]);
+
     const value = {
         supabase,
         isConnected,
@@ -568,9 +780,15 @@ export function SupabaseProvider({ children }) {
         cacheSalesHistory,
         getCachedSalesHistory,
 
+        // Auction ops
+        cacheAuctions,
+        getCachedAuctions,
+        getAuctionBids,
+
         // Realtime
         subscribeToListings,
         subscribeToProfiles,
+        subscribeToAuctions,
 
         // Utils
         ensureSupabaseReady
