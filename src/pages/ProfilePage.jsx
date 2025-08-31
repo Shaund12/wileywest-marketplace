@@ -44,15 +44,58 @@ const IPFS_GATEWAYS = [
     'https://dweb.link/ipfs/',
 ];
 
+// Small helpers for activity timeline
+const shortAddr = (a = '') => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
+const coerceMs = (v) => {
+    if (v == null) return NaN;
+    if (typeof v === 'number') return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
+    if (typeof v === 'string') {
+        const n = Number(v);
+        if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+        const d = Date.parse(v);
+        return Number.isNaN(d) ? NaN : d;
+    }
+    if (v && typeof v === 'object') {
+        if (typeof v.seconds === 'number') return Math.round(v.seconds * 1000);
+        if (typeof v.toString === 'function') {
+            const n = Number(v.toString());
+            if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+        }
+    }
+    return NaN;
+};
+const timeAgo = (ms) => {
+    const d = Math.max(0, Date.now() - ms);
+    const s = Math.floor(d / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    const days = Math.floor(h / 24);
+    return `${days}d`;
+};
+
 function ProfilePage() {
     const { wallet, connect, provider, signer, chainId } = useWallet();
-    const { listings, fetchListings, status, setStatus, marketplace } = useMarketplace();
-    const { 
-        cacheProfileData, 
-        getCachedProfile, 
+    const {
+        listings,
+        fetchListings,
+        status,
+        setStatus,
+        marketplace,
+        // NEW: include sales + canceled for activity
+        salesHistory,
+        canceledListings
+    } = useMarketplace();
+    const {
+        supabase, // NEW: direct access for auctions (optional)
+        cacheProfileData,
+        getCachedProfile,
         subscribeToProfiles,
-        isConnected: supabaseConnected 
+        isConnected: supabaseConnected
     } = useSupabase();
+
     const [activeTab, setActiveTab] = useState('myListings');
     const [userListings, setUserListings] = useState([]);
     const [userNfts, setUserNfts] = useState([]);
@@ -77,6 +120,12 @@ function ProfilePage() {
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(12);
     const modalRef = useRef(null);
+
+    // NEW: Activity + auctions state
+    const [userAuctions, setUserAuctions] = useState([]);
+    const [isAuctionsLoading, setIsAuctionsLoading] = useState(false);
+    const [activities, setActivities] = useState([]);
+    const [activityFilter, setActivityFilter] = useState('all'); // all | listings | sales | purchases | auctions
 
     // Reset pagination when filters change
     useEffect(() => {
@@ -128,13 +177,181 @@ function ProfilePage() {
     useEffect(() => {
         if (wallet && listings.length > 0) {
             const filtered = listings.filter(
-                listing => listing.seller.toLowerCase() === wallet.toLowerCase()
+                listing => listing.seller?.toLowerCase() === wallet.toLowerCase()
             );
             setUserListings(filtered);
         } else {
             setUserListings([]);
         }
     }, [wallet, listings]);
+
+    // NEW: Load user's auctions (if feature enabled and Supabase available)
+    useEffect(() => {
+        let cancelled = false;
+        async function loadAuctions() {
+            if (!wallet || !supabaseConnected || !supabase || !isAuctionsEnabled()) {
+                setUserAuctions([]);
+                return;
+            }
+            setIsAuctionsLoading(true);
+            try {
+                // Try common table names. If none exist, silently ignore.
+                const tryTables = ['auctions', 'marketplace_auctions', 'auction_listings'];
+                let rows = [];
+                for (const table of tryTables) {
+                    try {
+                        const { data, error } = await supabase
+                            .from(table)
+                            .select('*')
+                            .eq('seller', wallet.toLowerCase());
+                        if (!error && Array.isArray(data) && data.length) {
+                            rows = data;
+                            break;
+                        }
+                    } catch { /* ignore */ }
+                }
+                if (cancelled) return;
+
+                // Normalize minimal fields
+                const normalized = rows.map(r => ({
+                    id: String(r.id ?? r.auction_id ?? ''),
+                    nftContract: (r.nft_contract || r.contract || '').toLowerCase(),
+                    tokenId: String(r.token_id ?? r.tokenId ?? ''),
+                    seller: (r.seller || '').toLowerCase(),
+                    startPrice: String(r.start_price ?? r.startPrice ?? r.reserve ?? '0'),
+                    paymentToken: r.payment_token || r.paymentToken || ethers.ZeroAddress,
+                    status: (r.status || '').toLowerCase(), // e.g. active, ended, canceled
+                    createdAt: r.created_at || r.createdAt || null,
+                    endsAt: r.ends_at || r.endsAt || null
+                }));
+                setUserAuctions(normalized);
+            } finally {
+                if (!cancelled) setIsAuctionsLoading(false);
+            }
+        }
+        if (activeTab === 'activity') loadAuctions();
+        return () => { cancelled = true; };
+    }, [activeTab, wallet, supabaseConnected, supabase]);
+
+    // NEW: Build activity timeline from multiple sources (non-invasive, read-only)
+    useEffect(() => {
+        if (!wallet) { setActivities([]); return; }
+
+        const walletL = wallet.toLowerCase();
+        const listingById = new Map(listings.map(l => [String(l.id), l]));
+        const out = [];
+
+        // 1) Listings created by user
+        for (const l of userListings) {
+            const ts =
+                coerceMs(l.createdAt) ??
+                coerceMs(l.created_at) ??
+                coerceMs(l.timestamp) ??
+                coerceMs(l.blockTimestamp) ??
+                coerceMs(l.listedAt) ??
+                Date.now();
+            out.push({
+                type: 'listing',
+                ts,
+                label: `Listed ${l.name || `#${l.tokenId}`}`,
+                detail: `${shortAddr(l.nftContract)} · #${l.tokenId}`,
+                refId: String(l.id),
+                meta: { ...l }
+            });
+        }
+
+        // 2) Purchases made by user (buyer = wallet)
+        for (const s of salesHistory || []) {
+            if ((s.buyer || '').toLowerCase() === walletL) {
+                const ts = coerceMs(s.timestamp) || Date.now();
+                const l = listingById.get(String(s.listingId));
+                out.push({
+                    type: 'purchase',
+                    ts,
+                    label: `Bought listing #${s.listingId}`,
+                    detail: l ? `${shortAddr(l.nftContract)} · #${l.tokenId}` : `Listing #${s.listingId}`,
+                    refId: String(s.listingId),
+                    meta: { ...s, listing: l || null }
+                });
+            }
+        }
+
+        // 3) Sales by user (seller = wallet if known)
+        for (const s of salesHistory || []) {
+            const seller = (s.seller || listingById.get(String(s.listingId))?.seller || '').toLowerCase();
+            if (seller && seller === walletL) {
+                const ts = coerceMs(s.timestamp) || Date.now();
+                const l = listingById.get(String(s.listingId));
+                out.push({
+                    type: 'sale',
+                    ts,
+                    label: `Sold listing #${s.listingId}`,
+                    detail: l ? `${shortAddr(l.nftContract)} · #${l.tokenId}` : `Listing #${s.listingId}`,
+                    refId: String(s.listingId),
+                    meta: { ...s, listing: l || null }
+                });
+            }
+        }
+
+        // 4) Cancellations (only include if we can attribute to user via current listings or seller)
+        if (canceledListings && canceledListings.size > 0) {
+            for (const id of canceledListings) {
+                const l = listingById.get(String(id));
+                const canAttribute = l && l.seller?.toLowerCase() === walletL;
+                if (canAttribute) {
+                    out.push({
+                        type: 'cancel',
+                        ts: Date.now(), // no event ts available; show recent
+                        label: `Canceled listing #${id}`,
+                        detail: `${shortAddr(l.nftContract)} · #${l.tokenId}`,
+                        refId: String(id),
+                        meta: { listing: l }
+                    });
+                }
+            }
+        }
+
+        // 5) Auctions created by user (if any from Supabase)
+        for (const a of userAuctions) {
+            const ts = coerceMs(a.createdAt) || Date.now();
+            out.push({
+                type: 'auction',
+                ts,
+                label: a.status === 'canceled' ? 'Canceled auction' : 'Created auction',
+                detail: `${shortAddr(a.nftContract)} · #${a.tokenId}`,
+                refId: String(a.id || ''),
+                meta: { ...a }
+            });
+            if (a.endsAt) {
+                const endTs = coerceMs(a.endsAt);
+                if (Number.isFinite(endTs) && endTs <= Date.now()) {
+                    out.push({
+                        type: 'auction_end',
+                        ts: endTs,
+                        label: 'Auction ended',
+                        detail: `${shortAddr(a.nftContract)} · #${a.tokenId}`,
+                        refId: String(a.id || ''),
+                        meta: { ...a }
+                    });
+                }
+            }
+        }
+
+        // Sort newest first
+        out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+
+        // Filter by UI filter
+        const filtered = out.filter((e) => {
+            if (activityFilter === 'all') return true;
+            if (activityFilter === 'listings') return e.type === 'listing' || e.type === 'cancel';
+            if (activityFilter === 'sales') return e.type === 'sale';
+            if (activityFilter === 'purchases') return e.type === 'purchase';
+            if (activityFilter === 'auctions') return e.type === 'auction' || e.type === 'auction_end';
+            return true;
+        });
+
+        setActivities(filtered);
+    }, [wallet, userListings, listings, salesHistory, canceledListings, userAuctions, activityFilter]);
 
     // Cancel a listing
     const cancelListing = async (listingId) => {
@@ -160,7 +377,6 @@ function ProfilePage() {
     };
 
     // Refresh listings manually
-    // Refresh listings manually
     const refreshListings = async () => {
         setIsListingsLoading(true);
         try {
@@ -168,16 +384,12 @@ function ProfilePage() {
 
             // Fetch metadata for all listings immediately after they're loaded
             if (listings && listings.length > 0) {
-                // Create NFT objects from listings to pass to batch fetch
                 const listingNfts = listings.map(listing => ({
                     contractAddress: listing.nftContract,
                     tokenId: listing.tokenId,
                     tokenURI: listing.metadata?.tokenURI || null,
                     type: listing.isERC1155 ? 'ERC1155' : 'ERC721'
                 }));
-
-                // Fetch metadata for all listings
-                console.log(`Fetching metadata for ${listingNfts.length} listings...`);
                 setTimeout(() => batchFetchMetadata(listingNfts), 100);
             }
 
@@ -191,7 +403,6 @@ function ProfilePage() {
                     };
 
                     await cacheProfileData(wallet, profileData);
-                    console.log(`✅ Cached updated profile data for ${wallet}`);
                 } catch (cacheError) {
                     console.warn("Failed to cache updated profile data:", cacheError);
                 }
@@ -209,9 +420,7 @@ function ProfilePage() {
     const resolveIpfsUri = (uri) => {
         if (!uri) return '';
         if (uri.startsWith('ipfs://')) {
-            // Extract the CID from the URI
             const cid = uri.replace('ipfs://', '');
-            // Return the first gateway (we'll handle fallbacks in the image component)
             return `${IPFS_GATEWAYS[0]}${cid}`;
         }
         return uri;
@@ -220,7 +429,6 @@ function ProfilePage() {
     // Generate a custom LP-style placeholder SVG for NFTs
     const generateFallbackImage = (contractAddress, tokenId) => {
         try {
-            // Create deterministic values from contract+tokenId
             const hash = contractAddress.toLowerCase() + tokenId.toString();
             let hashNum = 0;
             for (let i = 0; i < hash.length; i++) {
@@ -228,34 +436,27 @@ function ProfilePage() {
                 hashNum = hashNum & hashNum;
             }
 
-            // Generate dynamic angles and colors
             const angle = Math.abs(hashNum % 360);
             const hue1 = Math.abs(hashNum % 360);
             const hue2 = (hue1 + 180) % 360;
 
-            // Get collection info
             const collectionInfo = contractInfo[contractAddress] || {};
             const symbol = collectionInfo.symbol || '';
             const shortName = (symbol || collectionInfo.name || '').substring(0, 8);
 
-            // Create an SVG that looks like an LP token with cyberpunk style
             return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Crect width='300' height='300' fill='%230f0f0f'/%3E%3Ccircle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/%3E%3Ccircle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/%3E%3Cpath d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/%3E%3Cpath d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/%3E%3Ccircle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/%3E%3Ctext x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'%3E%23${tokenId}%3C/text%3E%3Ctext x='150' y='170' font-family='monospace' font-size='18' fill='hsl(${hue1},80%,60%)' text-anchor='middle'%3E${shortName}%3C/text%3E%3Ctext x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'%3EWNFT%3C/text%3E%3C/svg%3E`;
         } catch (err) {
             console.error("Error generating SVG:", err);
-            // Ultra simple fallback that will definitely work
             return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
         }
     };
 
     // Fetch NFT metadata with improved error handling and multiple retry attempts
-    // Improved metadata fetching function
     const fetchNftMetadata = async (contractAddress, tokenId, tokenURI) => {
         const key = `${contractAddress.toLowerCase()}-${tokenId}`;
 
-        // Skip if we already have metadata and it's loaded successfully
         if (nftMetadata[key]?.loaded && !nftMetadata[key]?.error) return;
 
-        // Mark as loading
         setNftMetadata(prev => ({
             ...prev,
             [key]: {
@@ -266,24 +467,16 @@ function ProfilePage() {
         }));
 
         try {
-            // If we have a tokenURI, fetch metadata
             if (tokenURI) {
-                // Handle common URI formats and cleanup
                 let resolvedUri = tokenURI;
-
-                // Replace {id} with tokenId in various formats
                 resolvedUri = resolvedUri.replace(/{id}/g, tokenId)
                     .replace(/{tokenId}/g, tokenId)
                     .replace(/\{id\}/g, tokenId);
 
-                // Handle IPFS URIs
                 if (resolvedUri.startsWith('ipfs://')) {
                     resolvedUri = `https://cloudflare-ipfs.com/ipfs/${resolvedUri.replace('ipfs://', '')}`;
                 }
 
-                console.log(`Fetching metadata from: ${resolvedUri}`);
-
-                // Try to fetch with a timeout
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
@@ -299,14 +492,10 @@ function ProfilePage() {
                     if (response.ok) {
                         const metadata = await response.json();
 
-                        // Process and normalize the metadata
                         let imageUrl = null;
 
-                        // Handle various image field formats
                         if (metadata.image) {
                             imageUrl = metadata.image;
-
-                            // Process IPFS image URLs
                             if (imageUrl.startsWith('ipfs://')) {
                                 imageUrl = `https://cloudflare-ipfs.com/ipfs/${imageUrl.replace('ipfs://', '')}`;
                             }
@@ -316,7 +505,6 @@ function ProfilePage() {
                             imageUrl = metadata.imageUrl;
                         }
 
-                        // Try to extract attributes in various formats
                         const attributes = metadata.attributes || metadata.traits || [];
 
                         setNftMetadata(prev => ({
@@ -334,22 +522,17 @@ function ProfilePage() {
                     }
                 } catch (fetchError) {
                     clearTimeout(timeoutId);
-                    console.warn(`Error fetching from URI: ${fetchError.message}`);
 
-                    // Try alternative IPFS gateways if needed
                     if (tokenURI.startsWith('ipfs://')) {
                         for (const gateway of IPFS_GATEWAYS) {
-                            if (gateway === 'https://cloudflare-ipfs.com/ipfs/') continue; // Skip the one we already tried
+                            if (gateway === 'https://cloudflare-ipfs.com/ipfs/') continue;
 
                             try {
                                 const altUri = `${gateway}${tokenURI.replace('ipfs://', '')}`;
-                                console.log(`Trying alternative gateway: ${altUri}`);
-
                                 const altResponse = await fetch(altUri);
                                 if (altResponse.ok) {
                                     const metadata = await altResponse.json();
 
-                                    // Process image URL
                                     let imageUrl = null;
                                     if (metadata.image) {
                                         imageUrl = metadata.image;
@@ -375,15 +558,12 @@ function ProfilePage() {
                                     }));
                                     return;
                                 }
-                            } catch (e) {
-                                console.warn(`Error with gateway ${gateway}: ${e.message}`);
-                            }
+                            } catch { /* next gateway */ }
                         }
                     }
                 }
             }
 
-            // If we reach here, use a deterministic fallback image
             const fallbackImg = generateFallbackImage(contractAddress, tokenId);
 
             setNftMetadata(prev => ({
@@ -400,7 +580,6 @@ function ProfilePage() {
             }));
 
         } catch (error) {
-            console.error(`Error fetching metadata for ${contractAddress} token ${tokenId}:`, error);
             const fallbackImg = generateFallbackImage(contractAddress, tokenId);
 
             setNftMetadata(prev => ({
@@ -420,7 +599,6 @@ function ProfilePage() {
 
     // Optimized batch fetching function with maximum parallelism
     const batchFetchMetadata = async (nfts) => {
-        // Group NFTs by those that need metadata fetching
         const nftsToFetch = nfts.filter(nft => {
             const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
             return !nftMetadata[key]?.loaded && nft.tokenURI;
@@ -428,18 +606,12 @@ function ProfilePage() {
 
         if (nftsToFetch.length === 0) return;
 
-        console.log(`Batch fetching metadata for ${nftsToFetch.length} NFTs`);
         setStatus(`Fetching metadata for ${nftsToFetch.length} NFTs...`);
 
-        // Split NFTs into visible (first 20) and background groups
         const visibleNfts = nftsToFetch.slice(0, 20);
         const backgroundNfts = nftsToFetch.slice(20);
 
-        // Process visible NFTs with high priority
         if (visibleNfts.length > 0) {
-            console.log(`Fetching metadata for ${visibleNfts.length} visible NFTs with high priority`);
-
-            // Fetch all visible NFT metadata in parallel
             await Promise.all(
                 visibleNfts.map(nft =>
                     fetchNftMetadata(nft.contractAddress, nft.tokenId, nft.tokenURI)
@@ -448,17 +620,14 @@ function ProfilePage() {
             );
         }
 
-        // Process background NFTs with controlled concurrency (15 at a time)
         if (backgroundNfts.length > 0) {
-            const concurrencyLimit = 15;  // Process 15 requests at once
+            const concurrencyLimit = 15;
             const chunks = [];
 
-            // Create chunks of NFTs for concurrent processing
             for (let i = 0; i < backgroundNfts.length; i += concurrencyLimit) {
                 chunks.push(backgroundNfts.slice(i, i + concurrencyLimit));
             }
 
-            // Process each chunk with Promise.all
             for (let i = 0; i < chunks.length; i++) {
                 const chunk = chunks[i];
                 setStatus(`Fetching metadata chunk ${i + 1}/${chunks.length} (${chunk.length} NFTs)...`);
@@ -469,8 +638,6 @@ function ProfilePage() {
                             .catch(err => console.error(`Error fetching background metadata for ${nft.tokenId}:`, err))
                     )
                 );
-
-                // No delay between chunks - maximum speed
             }
         }
 
@@ -480,13 +647,11 @@ function ProfilePage() {
     // Try to detect if contract is ERC721 or ERC1155
     const detectNftStandard = async (contractAddress) => {
         try {
-            // First try as ERC721
             const erc721Contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
             await erc721Contract.balanceOf(wallet);
             return 'ERC721';
         } catch (e) {
             try {
-                // Then try as ERC1155 with a random token ID
                 const erc1155Contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
                 await erc1155Contract.balanceOf(wallet, 1);
                 return 'ERC1155';
@@ -498,30 +663,18 @@ function ProfilePage() {
 
     // Fetch contract info (name/symbol) for all unique contract addresses from discovered NFTs
     const fetchContractInfoForNfts = async (nfts) => {
-        // Get unique contract addresses
         const uniqueContracts = [...new Set(nfts.map(nft => nft.contractAddress))];
-        
-        console.log(`🏷️ Fetching collection names/symbols for ${uniqueContracts.length} contracts from blockchain...`);
         setStatus(`Fetching collection info for ${uniqueContracts.length} contracts...`);
-        
-        // Fetch contract info for each unique contract in parallel
         const contractInfoPromises = uniqueContracts.map(async (contractAddress) => {
-            // Skip if we already have this info
             if (contractInfo[contractAddress]) {
                 return { contractAddress, info: contractInfo[contractAddress] };
             }
-            
             try {
-                // Determine contract type from NFTs
                 const nftOfThisContract = nfts.find(nft => nft.contractAddress === contractAddress);
                 const contractType = nftOfThisContract?.type || 'ERC721';
-                
                 const info = await getContractInfo(contractAddress, contractType);
-                console.log(`✅ Fetched info for ${contractAddress}: ${info.name} (${info.symbol})`);
                 return { contractAddress, info };
             } catch (error) {
-                console.warn(`⚠️ Failed to fetch contract info for ${contractAddress}:`, error);
-                // Return fallback info
                 const fallbackInfo = {
                     name: `Collection ${contractAddress.slice(0, 6)}...${contractAddress.slice(-4)}`,
                     symbol: ''
@@ -529,24 +682,16 @@ function ProfilePage() {
                 return { contractAddress, info: fallbackInfo };
             }
         });
-        
         try {
-            // Wait for all contract info to be fetched
             const results = await Promise.all(contractInfoPromises);
-            
-            // Update contract info state with all results
             const newContractInfo = {};
             results.forEach(({ contractAddress, info }) => {
                 newContractInfo[contractAddress] = info;
             });
-            
             setContractInfo(prev => ({
                 ...prev,
                 ...newContractInfo
             }));
-            
-            console.log(`🏷️ Successfully fetched collection info for ${results.length} contracts`);
-            
         } catch (error) {
             console.error("Error fetching contract info batch:", error);
         }
@@ -554,7 +699,6 @@ function ProfilePage() {
 
     // Get contract name and symbol with better error handling
     const getContractInfo = async (contractAddress, contractType) => {
-        // Skip if we already have this info
         if (contractInfo[contractAddress]) return contractInfo[contractAddress];
 
         try {
@@ -566,24 +710,18 @@ function ProfilePage() {
 
             try {
                 name = await contract.name();
-            } catch (e) {
-                console.log("Contract doesn't have name function");
-            }
+            } catch { /* optional */ }
 
             try {
                 symbol = await contract.symbol();
-            } catch (e) {
-                console.log("Contract doesn't have symbol function");
-            }
+            } catch { /* optional */ }
 
-            // If we couldn't get a name, use a formatted address
             if (!name) {
                 name = `Collection ${contractAddress.slice(0, 6)}...${contractAddress.slice(-4)}`;
             }
 
             const info = { name, symbol };
 
-            // Update state
             setContractInfo(prev => ({
                 ...prev,
                 [contractAddress]: info
@@ -591,7 +729,6 @@ function ProfilePage() {
 
             return info;
         } catch (e) {
-            console.error("Error getting contract info:", e);
             const fallbackName = `Collection ${contractAddress.slice(0, 6)}...${contractAddress.slice(-4)}`;
 
             setContractInfo(prev => ({
@@ -611,35 +748,29 @@ function ProfilePage() {
 
             if (balance.toString() === '0') return [];
 
-            // Get contract info
             await getContractInfo(contractAddress, 'ERC721');
 
             const nfts = [];
             const balanceNum = Number(balance.toString());
 
-            // Update scan progress
             setScanProgress(prev => ({
                 ...prev,
                 total: prev.total + balanceNum
             }));
 
-            // Process in smaller batches to avoid RPC limits
             const batchSize = 5;
             for (let batchStart = 0; batchStart < balanceNum; batchStart += batchSize) {
                 const batchPromises = [];
-                
+
                 for (let i = batchStart; i < Math.min(batchStart + batchSize, balanceNum); i++) {
                     batchPromises.push((async () => {
                         try {
-                            // Use tokenOfOwnerByIndex to get each token ID
                             const tokenId = await contract.tokenOfOwnerByIndex(wallet, i);
                             let tokenURI = null;
 
                             try {
                                 tokenURI = await contract.tokenURI(tokenId);
-                            } catch (e) {
-                                console.log(`Error getting tokenURI for ${contractAddress} token ${tokenId}:`, e);
-                            }
+                            } catch { }
 
                             const nft = {
                                 contractAddress,
@@ -648,20 +779,17 @@ function ProfilePage() {
                                 tokenURI,
                                 balance: '1',
                             };
-                            
+
                             nfts.push(nft);
 
-                            // Update scan progress
                             setScanProgress(prev => ({
                                 ...prev,
                                 found: prev.found + 1,
                                 scanned: prev.scanned + 1
                             }));
-                            
+
                             return nft;
                         } catch (e) {
-                            console.error(`Error getting token ${i} for ${contractAddress}:`, e);
-                            // Update scanned count even if we failed
                             setScanProgress(prev => ({
                                 ...prev,
                                 scanned: prev.scanned + 1
@@ -670,20 +798,16 @@ function ProfilePage() {
                         }
                     })());
                 }
-                
-                // Process this batch in parallel
+
                 await Promise.all(batchPromises);
             }
-            
-            // Once all NFTs are found, batch fetch their metadata
+
             if (nfts.length > 0) {
-                // Schedule metadata fetching without waiting for it
                 setTimeout(() => batchFetchMetadata(nfts), 100);
             }
 
             return nfts;
         } catch (e) {
-            console.error(`Error scanning ERC721 contract ${contractAddress}:`, e);
             return [];
         }
     };
@@ -693,23 +817,17 @@ function ProfilePage() {
         try {
             const contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
 
-            // Get contract info
             await getContractInfo(contractAddress, 'ERC1155');
 
-            // For ERC1155, we need to discover which token IDs the user owns
-            // One approach is to look at Transfer events to this user
             const transferSingleFilter = contract.filters.TransferSingle(null, null, wallet);
             const transferBatchFilter = contract.filters.TransferBatch(null, null, wallet);
 
-            // Look back from the beginning to find ALL NFTs (comprehensive scan)
             const currentBlock = await provider.getBlockNumber();
-            const fromBlock = 0; // Start from beginning to find all historical NFTs
+            const fromBlock = 0;
 
-            // Get transfer events
             const singleEvents = await contract.queryFilter(transferSingleFilter, fromBlock);
             const batchEvents = await contract.queryFilter(transferBatchFilter, fromBlock);
 
-            // Extract unique token IDs from events
             const tokenIds = new Set();
 
             singleEvents.forEach(event => {
@@ -720,25 +838,21 @@ function ProfilePage() {
                 event.args.ids.forEach(id => tokenIds.add(id.toString()));
             });
 
-            // Add token IDs from existing listings for this contract
             listings
                 .filter(l => l.nftContract.toLowerCase() === contractAddress.toLowerCase())
                 .forEach(l => tokenIds.add(l.tokenId.toString()));
 
-            // Convert to array and add some common token IDs just in case (1-10)
             for (let i = 1; i <= 10; i++) {
                 tokenIds.add(i.toString());
             }
 
             const uniqueTokenIds = [...tokenIds];
 
-            // Update scan progress
             setScanProgress(prev => ({
                 ...prev,
                 total: prev.total + uniqueTokenIds.length
             }));
 
-            // Check balance for each token ID
             const nfts = [];
 
             for (const tokenId of uniqueTokenIds) {
@@ -749,9 +863,7 @@ function ProfilePage() {
                         let tokenURI = null;
                         try {
                             tokenURI = await contract.uri(tokenId);
-                        } catch (e) {
-                            console.log(`Error getting URI for ${contractAddress} token ${tokenId}:`, e);
-                        }
+                        } catch { }
 
                         nfts.push({
                             contractAddress,
@@ -761,25 +873,20 @@ function ProfilePage() {
                             balance: balance.toString()
                         });
 
-                        // Fetch metadata in background
                         fetchNftMetadata(contractAddress, tokenId, tokenURI);
 
-                        // Update scan progress - found a token
                         setScanProgress(prev => ({
                             ...prev,
                             found: prev.found + 1
                         }));
                     }
 
-                    // Update scan progress - scanned a token
                     setScanProgress(prev => ({
                         ...prev,
                         scanned: prev.scanned + 1
                     }));
 
-                } catch (e) {
-                    console.error(`Error checking balance for ${contractAddress} token ${tokenId}:`, e);
-                    // Update scanned count even if we failed
+                } catch {
                     setScanProgress(prev => ({
                         ...prev,
                         scanned: prev.scanned + 1
@@ -789,7 +896,6 @@ function ProfilePage() {
 
             return nfts;
         } catch (e) {
-            console.error(`Error scanning ERC1155 contract ${contractAddress}:`, e);
             return [];
         }
     };
@@ -797,28 +903,20 @@ function ProfilePage() {
     // Scan Transfer events for NFTs sent to the user
     const scanForTransferEvents = async () => {
         try {
-            // Filter for all ERC721 Transfer events to the user's address
             const erc721TransferTopic = ethers.id('Transfer(address,address,uint256)');
             const toUserTopic = ethers.zeroPadValue(wallet.toLowerCase(), 32);
 
-            // Create a filter for Transfer(*, wallet, *)
             const filter = {
                 topics: [erc721TransferTopic, null, toUserTopic],
-                fromBlock: -10000, // Look back ~10k blocks
+                fromBlock: -10000,
                 toBlock: 'latest'
             };
 
-            // Query for the transfer events
             const logs = await provider.getLogs(filter);
-
-            console.log(`Found ${logs.length} transfer events to user`);
-
-            // Extract unique contract addresses
             const contracts = [...new Set(logs.map(log => log.address.toLowerCase()))];
 
             return contracts;
         } catch (e) {
-            console.error("Error scanning for transfer events:", e);
             return [];
         }
     };
@@ -826,7 +924,7 @@ function ProfilePage() {
     // Find ALL NFTs owned by the user with cache-first approach and throttling
     const scanningInProgress = useRef(false);
     const scanningTimeout = useRef(null);
-    
+
     // Reset scanning state with timeout protection
     const resetScanningState = () => {
         scanningInProgress.current = false;
@@ -835,40 +933,25 @@ function ProfilePage() {
             scanningTimeout.current = null;
         }
     };
-    
+
     // Force reset scanning state (for stuck situations)
     const forceResetScanningState = () => {
-        console.log("🔄 Force resetting scanning state...");
         resetScanningState();
         setIsLoading(false);
         setIsScanning(false);
     };
-    
+
     // Find ALL NFTs owned by the user with cache-first approach and ALWAYS scan from genesis (block 0)
     // USER REQUIREMENT: Always load cache AND always scan from block 0 no matter what
     const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false, scanFromGenesis = true) => {
         if (!wallet || !provider) return;
 
-        // CRITICAL DEBUG: Log all parameters to understand what's being called
-        console.log(`🔍 findAllUserNfts called with: forceRefresh=${forceRefresh}, allowBackgroundUpdate=${allowBackgroundUpdate}, scanFromGenesis=${scanFromGenesis}`);
-
-        // USER REQUIREMENT: ALWAYS load cache first, then ALWAYS scan from genesis (block 0)
-        console.log("🔍 USER REQUIREMENT: Always load cache first, then always scan from genesis (block 0)");
-        
-        // USER REQUIREMENT ENFORCEMENT: Genesis scanning (Scan All History) should NEVER be blocked
         if (scanFromGenesis) {
-            console.log("🔥 GENESIS SCAN REQUESTED - BYPASSING ALL SCANNING STATE CHECKS");
-            console.log("🔄 Automatically resetting any stuck scanning state for genesis scan...");
-            forceResetScanningState(); // Force reset everything for genesis scans
+            forceResetScanningState();
         } else {
-            // Only check scanning state for non-genesis scans
             if (scanningInProgress.current && !forceRefresh) {
-                console.log("⏳ NFT scan already in progress, skipping...");
-                console.log("💡 Tip: Use 'Force Refresh' or 'Scan All History' if scanning appears stuck");
                 return;
             }
-
-            // Force reset if this is a force refresh
             if (forceRefresh) {
                 resetScanningState();
             }
@@ -876,52 +959,35 @@ function ProfilePage() {
 
         setIsLoading(true);
         scanningInProgress.current = true;
-        
-        // Set a timeout to auto-reset if scanning gets stuck (10 minutes for genesis)
+
         scanningTimeout.current = setTimeout(() => {
-            console.warn("⚠️ Scanning timeout reached - auto-resetting state");
             forceResetScanningState();
             setStatus("Scanning timed out - please try again");
         }, 10 * 60 * 1000);
 
         try {
-            // STEP 1: USER REQUIREMENT - ALWAYS load cache first to show immediate results
+            // Always load cache first
             if (supabaseConnected && getCachedProfile) {
-                console.log("🔍 Checking cache for profile data...");
                 setStatus("Loading profile from cache...");
-
                 try {
                     const cachedProfile = await getCachedProfile(wallet);
                     if (cachedProfile?.nfts && cachedProfile.nfts.length > 0) {
-                        console.log(`📦 Loaded ${cachedProfile.nfts.length} NFTs from cache`);
                         setUserNfts(cachedProfile.nfts);
                         setNftMetadata(cachedProfile.metadata || {});
                         setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache`);
-                        
-                        // Get collection info for cached NFTs
-                        const contracts = [...new Set(cachedProfile.nfts.map(nft => nft.contract))];
                         await fetchContractInfoForNfts(cachedProfile.nfts);
-                        
-                        console.log("🔄 Fetching metadata for cached NFTs...");
                         await batchFetchMetadata(cachedProfile.nfts);
                     }
-                } catch (cacheError) {
-                    console.warn("Cache loading failed:", cacheError);
-                }
+                } catch { /* ignore cache errors */ }
             }
 
-            // STEP 2: USER REQUIREMENT - ALWAYS scan from blockchain from genesis (block 0)
-            if (scanFromGenesis) {
-                console.log("🌐 Starting COMPREHENSIVE blockchain scan from genesis (block 0)...");
-                setStatus("🔥 SCANNING ALL BLOCKCHAIN HISTORY FROM BLOCK 0 - This may take a few minutes...");
-            } else {
-                console.log("🌐 Starting conservative blockchain scan...");
-                setStatus("Scanning recent blockchain activity...");
-            }
+            // Always scan from chain (genesis or conservative)
+            setStatus(scanFromGenesis
+                ? "🔥 SCANNING ALL BLOCKCHAIN HISTORY FROM BLOCK 0 - This may take a few minutes..."
+                : "Scanning recent blockchain activity...");
             await scanUserNftsFromBlockchain(false, forceRefresh, scanFromGenesis);
 
         } catch (error) {
-            console.error("Error loading user NFTs:", error);
             setStatus(`Error loading NFTs: ${error.message}`);
         } finally {
             setIsLoading(false);
@@ -930,22 +996,16 @@ function ProfilePage() {
     };
 
     const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false, scanFromGenesis = true) => {
-        // USER REQUIREMENT ENFORCEMENT: Genesis scanning should NEVER be blocked
         if (scanFromGenesis) {
-            console.log("🔥 GENESIS SCAN EXECUTING - BYPASSING ALL SCANNING STATE CHECKS");
-            // Genesis scans always execute regardless of state
+            // always allowed
         } else {
-            // Only check scanning state for non-genesis scans
             if (scanningInProgress.current && !isForceRefresh) {
-                console.log("⏳ Blockchain scan already in progress, skipping...");
-                console.log("💡 Tip: Use 'Force Refresh' or 'Scan All History' if scanning appears stuck");
                 return;
             }
         }
 
         const now = Date.now();
         if (isBackgroundUpdate && now - lastScanTime.current < SCAN_THROTTLE_MS) {
-            console.log("⏳ Background scan throttled - too recent");
             return;
         }
 
@@ -954,19 +1014,15 @@ function ProfilePage() {
             setScanProgress({ found: 0, scanned: 0, total: 0 });
             setStatus("Scanning blockchain for your NFTs...");
             scanningInProgress.current = true;
-            
-            // Set timeout for foreground scanning too
             scanningTimeout.current = setTimeout(() => {
-                console.warn("⚠️ Foreground scanning timeout reached - auto-resetting state");
                 forceResetScanningState();
                 setStatus("Scanning timed out - please try again");
             }, 5 * 60 * 1000);
         }
-        
+
         lastScanTime.current = now;
-        
+
         try {
-            // Create a new NFT scanner with current wallet - with validation
             let scanner;
             try {
                 scanner = new NFTScanner(provider, wallet, (statusMsg) => {
@@ -975,30 +1031,20 @@ function ProfilePage() {
                     }
                 });
             } catch (scannerError) {
-                console.error("Error creating NFT scanner:", scannerError);
                 setStatus(`Error initializing scanner: ${scannerError.message}`);
                 return;
             }
-            
-            // Start the comprehensive scan with enhanced error handling
-            console.log(`${isBackgroundUpdate ? 'Background' : 'Foreground'} blockchain NFT scan starting${scanFromGenesis ? ' from genesis (block 0)' : ''}...`);
+
             const foundNfts = await scanner.scanAllNFTs(isBackgroundUpdate, scanFromGenesis);
-            
-            // CRITICAL FIX: Don't clear existing NFTs if scan finds 0 NFTs (unless it's a force refresh)
+
             if (foundNfts.length > 0) {
-                // Update UI with found NFTs only if we actually found some
                 setUserNfts(foundNfts);
-                
-                if (isBackgroundUpdate) {
-                    console.log(`🔄 Background update: Found ${foundNfts.length} NFTs`);
-                } else {
+                if (!isBackgroundUpdate) {
                     setStatus(`✅ Found ${foundNfts.length} NFTs in your wallet`);
                 }
-                
-                // Fetch collection names/symbols from blockchain for all discovered contracts
+
                 await fetchContractInfoForNfts(foundNfts);
-                
-                // Cache the fresh data
+
                 if (supabaseConnected && cacheProfileData) {
                     try {
                         const profileData = {
@@ -1006,54 +1052,29 @@ function ProfilePage() {
                             listings: userListings,
                             balance: await provider.getBalance(wallet).then(b => b.toString())
                         };
-                        
                         await cacheProfileData(wallet, profileData);
-                        console.log(`✅ Cached profile data for ${wallet}`);
-                    } catch (cacheError) {
-                        console.warn("Failed to cache profile data:", cacheError);
-                    }
+                    } catch { }
                 }
-                
-                // Batch fetch metadata for all NFTs
+
                 batchFetchMetadata(foundNfts);
             } else {
-                // Handle case where scan found 0 NFTs
                 if (isForceRefresh) {
-                    // For force refresh, user explicitly requested to clear everything and rescan
-                    console.log(`🔄 Force refresh: Found 0 NFTs - clearing existing NFTs as requested`);
                     setUserNfts([]);
                     setStatus("Force refresh complete - no NFTs found in wallet");
-                } else if (isBackgroundUpdate) {
-                    console.log(`🔄 Background update: Found 0 NFTs - keeping existing NFTs to prevent clearing`);
-                } else {
-                    // For regular scans, don't clear existing NFTs if scan found 0
-                    console.warn("⚠️ Scan found 0 NFTs - this may indicate RPC issues or scanning problems");
-                    setStatus("⚠️ Scan found 0 NFTs - there may be RPC issues. Try 'Force Refresh' or check console for errors.");
-                    
-                    // Don't clear existing NFTs unless user specifically requested a force refresh
-                    // This prevents the bug where scan clearing out all NFTs
+                } else if (!isBackgroundUpdate) {
+                    setStatus("⚠️ Scan found 0 NFTs - there may be RPC issues. Try 'Force Refresh'.");
                 }
             }
-            
+
             if (!isBackgroundUpdate && foundNfts.length > 0) {
                 setTimeout(() => setStatus(''), 3000);
             }
-            
+
         } catch (error) {
-            console.error("Error during NFT scan:", error);
-            
-            // Provide specific error messages for common issues
-            let errorMessage = "Error scanning for NFTs";
-            if (error.message.includes('network')) {
-                errorMessage = "Network error - please check your connection and try again";
-            } else if (error.message.includes('timeout')) {
-                errorMessage = "Scan timed out - please try again";
-            } else if (error.message.includes('rate limit')) {
-                errorMessage = "Too many requests - please wait a moment and try again";
-            } else {
-                errorMessage = `Error scanning: ${error.message}`;
-            }
-            
+            let errorMessage = `Error scanning: ${error.message}`;
+            if (error.message?.includes?.('network')) errorMessage = "Network error - please check your connection and try again";
+            else if (error.message?.includes?.('timeout')) errorMessage = "Scan timed out - please try again";
+            else if (error.message?.includes?.('rate limit')) errorMessage = "Too many requests - please wait a moment and try again";
             if (!isBackgroundUpdate) {
                 setStatus(errorMessage);
             }
@@ -1127,8 +1148,6 @@ function ProfilePage() {
 
             // Listable filter - currently we can list all NFTs
             if (showOnlyListable) {
-                // Additional logic can be added here if needed
-                // For example, filtering out NFTs that don't meet certain criteria
                 return true;
             }
 
@@ -1215,39 +1234,24 @@ function ProfilePage() {
     // Set up real-time subscriptions for profile updates with improved throttling
     const lastScanTime = useRef(0);
     const SCAN_THROTTLE_MS = 2 * 60 * 1000; // Increased to 2 minutes to reduce frequency
-    
+
     useEffect(() => {
         if (supabaseConnected && subscribeToProfiles && wallet) {
-            console.log("🔄 Setting up profile real-time subscriptions...");
-            
             const profileSubscription = subscribeToProfiles((payload) => {
-                console.log("📡 Real-time profile update received:", payload);
-                
-                // Check if the update is for the current user
                 if (payload.new?.wallet_address === wallet.toLowerCase()) {
                     const now = Date.now();
-                    
-                    // Don't trigger real-time updates if any scan is already in progress
                     if (scanningInProgress.current || isScanning) {
-                        console.log("⏳ Profile update skipped - genesis scan in progress");
                         return;
                     }
-                    
-                    // More aggressive throttling for real-time updates to prevent continuous scanning
                     if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
-                        console.log("🔄 Refreshing profile due to real-time update (throttled)");
                         lastScanTime.current = now;
-                        // USER REQUIREMENT: Always scan from genesis (block 0) - even for real-time updates
                         findAllUserNfts(false, false, true); // scanFromGenesis = true
-                    } else {
-                        console.log("⏳ Profile update throttled - skipping scan (too recent)");
                     }
                 }
             });
 
             return () => {
                 if (profileSubscription) {
-                    console.log("🔌 Unsubscribing from profile updates");
                     profileSubscription.unsubscribe();
                 }
             };
@@ -1257,7 +1261,6 @@ function ProfilePage() {
     // Cleanup scanning state when wallet changes or component unmounts
     useEffect(() => {
         return () => {
-            // Reset scanning state on wallet change or unmount
             resetScanningState();
         };
     }, [wallet]);
@@ -1404,13 +1407,74 @@ function ProfilePage() {
                     <div className="activity-container">
                         <div className="section-header">
                             <h2>Recent Activity</h2>
+                            <div className="header-actions" style={{ display: 'flex', gap: 8 }}>
+                                <select
+                                    className="input sort-select"
+                                    value={activityFilter}
+                                    onChange={(e) => setActivityFilter(e.target.value)}
+                                    title="Filter activity"
+                                >
+                                    <option value="all">All activity</option>
+                                    <option value="listings">Listings</option>
+                                    <option value="sales">Sales</option>
+                                    <option value="purchases">Purchases</option>
+                                    {isAuctionsEnabled() && <option value="auctions">Auctions</option>}
+                                </select>
+                                {isAuctionsEnabled() && (
+                                    <span className="small" style={{ opacity: .75 }}>
+                                        {isAuctionsLoading ? 'Loading auctions…' : `${userAuctions.length} auctions`}
+                                    </span>
+                                )}
+                            </div>
                         </div>
-                        <div className="empty-state">
-                            <div className="empty-icon">📊</div>
-                            <h3>No Recent Activity</h3>
-                            <p>Your recent transactions will appear here</p>
-                            <p className="small">We'll track your marketplace activity such as buying, selling and cancellations</p>
-                        </div>
+
+                        {activities.length > 0 ? (
+                            <ul className="activity-timeline">
+                                {activities.slice(0, 100).map((ev, idx) => (
+                                    <li key={ev.refId ? `${ev.type}-${ev.refId}-${idx}` : `${ev.type}-${idx}`} className={`activity-item type-${ev.type}`}>
+                                        <div className="activity-icon">
+                                            {ev.type === 'listing' && '📤'}
+                                            {ev.type === 'sale' && '✅'}
+                                            {ev.type === 'purchase' && '🛒'}
+                                            {ev.type === 'cancel' && '🗑️'}
+                                            {(ev.type === 'auction' || ev.type === 'auction_end') && '🏷️'}
+                                        </div>
+                                        <div className="activity-content">
+                                            <div className="activity-header">
+                                                <strong>{ev.label}</strong>
+                                                <span className="muted">· {timeAgo(ev.ts)} ago</span>
+                                            </div>
+                                            <div className="activity-detail">{ev.detail}</div>
+                                            <div className="activity-actions">
+                                                {ev.meta?.listing && (
+                                                    <button
+                                                        className="tertiary-button small-button"
+                                                        onClick={() => window.location.href = `/collections/${ev.meta.listing.nftContract.toLowerCase()}`}
+                                                    >
+                                                        View Collection
+                                                    </button>
+                                                )}
+                                                {ev.type === 'auction' && ev.meta?.id && (
+                                                    <button
+                                                        className="tertiary-button small-button"
+                                                        onClick={() => window.location.href = `/auctions/${ev.meta.id}`}
+                                                    >
+                                                        View Auction
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : (
+                            <div className="empty-state">
+                                <div className="empty-icon">📊</div>
+                                <h3>No Recent Activity</h3>
+                                <p>Your listings, sales, purchases, and auctions will appear here.</p>
+                                {isAuctionsEnabled() && <p className="small">Tip: Create an auction to see it in your activity.</p>}
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -1484,7 +1548,7 @@ function ProfilePage() {
                                         title="Comprehensive scan from blockchain genesis (block 0) - finds all historical NFTs"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
-                                            <path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zM12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+                                            <path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zM12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z" />
                                         </svg>
                                         Scan All History
                                     </button>
@@ -1495,7 +1559,7 @@ function ProfilePage() {
                                         title="Force refresh - bypasses stuck scanning state and cache"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
-                                            <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                                            <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                                         </svg>
                                         Force Refresh
                                     </button>
@@ -1580,7 +1644,7 @@ function ProfilePage() {
                                         const collectionEndIdx = collectionStartIdx + itemsPerPage;
                                         const paginatedCollectionItems = isCollapsed
                                             ? []
-                                            : collection.items.slice(collectionStartIdx, collectionEndIdx );
+                                            : collection.items.slice(collectionStartIdx, collectionEndIdx);
 
                                         const totalCollectionPages = Math.ceil(collection.items.length / itemsPerPage);
 
@@ -2013,7 +2077,7 @@ function ProfilePage() {
                 {scanProgress.total > 0 && (
                     <div className="scan-details">
                         <small>
-                            Progress: {scanProgress.scanned}/{scanProgress.total} contracts checked, 
+                            Progress: {scanProgress.scanned}/{scanProgress.total} contracts checked,
                             {scanProgress.found} NFTs found
                         </small>
                     </div>
@@ -2040,7 +2104,6 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
     // Generate a custom LP-style placeholder SVG for NFTs
     const generateFallbackImage = (contractAddress, tokenId) => {
         try {
-            // Create deterministic values from contract+tokenId
             const hash = contractAddress.toLowerCase() + tokenId.toString();
             let hashNum = 0;
             for (let i = 0; i < hash.length; i++) {
@@ -2048,21 +2111,16 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
                 hashNum = hashNum & hashNum;
             }
 
-            // Generate dynamic angles and colors
             const angle = Math.abs(hashNum % 360);
             const hue1 = Math.abs(hashNum % 360);
             const hue2 = (hue1 + 180) % 360;
 
-            // Get collection info
             const collectionInfo = contractInfo[contractAddress] || {};
             const symbol = collectionInfo.symbol || '';
             const shortName = (symbol || collectionInfo.name || '').substring(0, 8);
 
-            // Create an SVG that looks like an LP token with cyberpunk style
             return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Crect width='300' height='300' fill='%230f0f0f'/%3E%3Ccircle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/%3E%3Ccircle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/%3E%3Cpath d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/%3E%3Cpath d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/%3E%3Ccircle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/%3E%3Ctext x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'%3E%23${tokenId}%3C/text%3E%3Ctext x='150' y='170' font-family='monospace' font-size='18' fill='hsl(${hue1},80%,60%)' text-anchor='middle'%3E${shortName}%3C/text%3E%3Ctext x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'%3EWNFT%3C/text%3E%3C/svg%3E`;
         } catch (err) {
-            console.error("Error generating SVG:", err);
-            // Ultra simple fallback that will definitely work
             return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
         }
     };
