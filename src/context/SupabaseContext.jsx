@@ -31,13 +31,6 @@ export function SupabaseProvider({ children }) {
             const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
             const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-            console.log('🔧 Supabase Config Check:', {
-                hasUrl: !!supabaseUrl,
-                hasKey: !!supabaseKey,
-                url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'not set',
-                isDummy: supabaseUrl === 'https://dummy.supabase.co'
-            });
-
             if (supabaseUrl && supabaseKey && supabaseUrl !== 'https://dummy.supabase.co') {
                 const client = createClient(supabaseUrl, supabaseKey);
                 setSupabase(client);
@@ -63,13 +56,9 @@ export function SupabaseProvider({ children }) {
     // Test Supabase connection
     const testSupabaseConnection = async (client) => {
         try {
-            console.log('🧪 Testing Supabase connection...');
             const { error } = await client.from('marketplace_listings').select('id').limit(1);
             if (error) {
                 console.warn('⚠️ Supabase connection test failed:', error.message);
-                console.log('📝 Ensure tables exist and RLS policies allow inserts/updates with anon key');
-            } else {
-                console.log('✅ Supabase connection test successful');
             }
         } catch (error) {
             console.warn('⚠️ Supabase connection test error:', error.message);
@@ -299,7 +288,6 @@ export function SupabaseProvider({ children }) {
         }
 
         try {
-            console.log('🔍 Fetching cached listings from Supabase...');
             const { data, error } = await supabase
                 .from('marketplace_listings')
                 .select('*')
@@ -311,8 +299,6 @@ export function SupabaseProvider({ children }) {
                 updateCacheStats('errors');
                 return [];
             }
-
-            console.log(`📦 Retrieved ${data.length} cached listings from database`);
 
             const listings = data.map((item) => ({
                 id: Number(item.listing_id),
@@ -480,7 +466,6 @@ export function SupabaseProvider({ children }) {
         if (!supabase) return [];
 
         try {
-            console.log('🔍 Loading sales history from Supabase cache...');
             const { data, error } = await supabase
                 .from('sales_history')
                 .select('*')
@@ -492,8 +477,6 @@ export function SupabaseProvider({ children }) {
                 updateCacheStats('errors');
                 return [];
             }
-
-            console.log(`📦 Loaded ${data.length} sales from Supabase cache`);
 
             const sales = data.map((item) => ({
                 listingId: item.listing_id,

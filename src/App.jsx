@@ -2,7 +2,6 @@
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import MarketplaceAbi from './abi/VTRUNFTMarketplace.json';
-import { createClient } from '@supabase/supabase-js';
 import { Analytics } from '@vercel/analytics/react';
 
 // Components
@@ -31,19 +30,6 @@ const VibeDashboardPage = lazy(() => import('./pages/VibeDashboardPage'));
 import { WalletProvider } from './context/WalletContext';
 import { MarketplaceProvider } from './context/MarketplaceContext';
 import { SupabaseProvider } from './context/SupabaseContext';
-
-// Optional Supabase client - only create if URL is provided
-let supabase = null;
-try {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-    if (supabaseUrl && supabaseKey && supabaseUrl !== 'https://dummy.supabase.co') {
-        supabase = createClient(supabaseUrl, supabaseKey);
-    }
-} catch (error) {
-    console.warn('Supabase not configured, continuing without it:', error.message);
-}
 
 const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
 const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '';

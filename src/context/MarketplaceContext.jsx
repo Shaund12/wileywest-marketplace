@@ -217,23 +217,14 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         const initializeMarketplace = async () => {
             if (marketplaceAddress && provider) {
                 try {
-                    console.log("Initializing marketplace contract...");
                     const contract = new ethers.Contract(marketplaceAddress, abi, provider);
                     setMarketplace(contract);
                     setIsInitialized(true);
-                    console.log("Marketplace contract initialized successfully");
                     
                     // Test network connectivity before setting up events
                     try {
                         await provider.getNetwork();
-                        // DISABLED: Automatic past events fetch to prevent mass data collection
-                        console.log("⚠️ Automatic blockchain scanning DISABLED to prevent mass data collection");
-                        console.log("💡 Users can manually refresh blockchain data if needed");
-                        
-                        // Don't automatically fetch past sales events - only set up event listeners
-                        // setupEventListeners(contract); - Also disabled to prevent any automatic data collection
-                        
-                        console.log("💡 Event listeners and blockchain scanning DISABLED - manual refresh only");
+                        // Event listeners and blockchain scanning disabled for production
                     } catch (networkError) {
                         console.warn("Network connectivity issue - event listeners not set up:", networkError.message);
                         setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
@@ -248,14 +239,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         initializeMarketplace();
     }, [marketplaceAddress, abi, provider]);
 
-    // Disabled aggressive real-time subscriptions and background scanning to prevent mass data collection
     // Manual refresh functionality if needed
     useEffect(() => {
-        // Completely disable automatic periodic updates to prevent mass data collection
-        console.log("⚠️ Automatic background scanning DISABLED to prevent mass data collection");
-        console.log("💡 Users can manually refresh if needed");
-        
-        // No periodic updates - user must manually refresh
+        // No automatic periodic updates - user must manually refresh
         return () => {
             if (cacheUpdateInterval.current) {
                 clearInterval(cacheUpdateInterval.current);
@@ -1075,7 +1061,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             
             // Step 2: Check blockchain for updates if needed
             if (shouldCheckBlockchain) {
-                console.log("🌐 Checking blockchain for latest listings...");
                 await fetchListingsFromBlockchain(cachedListings.length > 0, cachedListings);
                 lastCacheUpdateRef.current = Date.now();
             } else {
@@ -1100,13 +1085,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         }
         
         try {
-            console.log(`🌐 Fetching marketplace listings from blockchain... (background: ${isBackgroundUpdate})`);
-            
             // Test network connectivity first
             try {
                 await provider.getNetwork();
-                
-                // Check network connectivity
             } catch (networkError) {
                 console.warn("Network connectivity issue:", networkError.message);
                 
@@ -1117,7 +1098,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     return;
                 } else {
                     // No listings available 
-                    console.log("Network issue - no cached listings available");
                     setListings([]);
                     setHotListings([]);
                     setStatus("Network connectivity issue - please try again later");
@@ -1637,21 +1617,10 @@ const ERC1155_APPROVAL_ABI = [
         }
     };
 
-    // DISABLED: Load listings on initial load only - no automatic refresh to prevent mass data
+    // Load listings on initial load only - no automatic refresh 
     useEffect(() => {
         if (marketplace) {
-            // Only load once on initial mount - no automatic refresh intervals
-            console.log("📋 Loading listings once on initialization - auto-refresh DISABLED");
             fetchListings();
-            
-            // DISABLED: Automatic refresh interval to prevent mass data collection
-            console.log("⚠️ Automatic listing refresh DISABLED to prevent mass data collection");
-            console.log("💡 Users can manually refresh listings if needed");
-            
-            // No automatic refresh interval
-            return () => {
-                // No interval to cleanup
-            };
         }
     }, [marketplace]);
 
