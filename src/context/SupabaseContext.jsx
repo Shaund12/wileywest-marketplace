@@ -709,9 +709,9 @@ export function SupabaseProvider({ children }) {
 
     const getCachedAuctions = useCallback(async (sellerAddress = null, marketplaceAddress = null) => {
         if (!supabase) {
-            let cacheKey = sellerAddress ? `auctions_${sellerAddress}` : 'all_auctions';
+            let cacheKey = sellerAddress ? `auctions_${sellerAddress.toLowerCase()}` : 'all_auctions';
             if (marketplaceAddress) {
-                cacheKey += `_${marketplaceAddress}`;
+                cacheKey += `_${marketplaceAddress.toLowerCase()}`;
             }
             const cachedData = getCache(cacheKey);
             return cachedData || [];
@@ -765,7 +765,7 @@ export function SupabaseProvider({ children }) {
                 metadata: item.metadata || {}
             }));
 
-            const cacheKey = sellerAddress ? `auctions_${sellerAddress}` : 'all_auctions';
+            const cacheKey = sellerAddress ? `auctions_${sellerAddress.toLowerCase()}` : 'all_auctions';
             setCache(cacheKey, auctions, 'auctions');
             return auctions;
         } catch (error) {

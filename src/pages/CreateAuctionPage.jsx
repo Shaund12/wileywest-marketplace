@@ -380,14 +380,6 @@ function CreateAuctionPage() {
         document.title = 'Create Auction • BlockDust';
     }, []);
 
-    useEffect(() => {
-        if (!wallet) {
-            // Redirect to homepage if not connected
-            navigate('/?connect=true');
-            return;
-        }
-    }, [wallet, navigate]);
-
     // Helper function to calculate USD value for a given amount and token
     const calculateUSDValue = (amount, tokenAddress) => {
         if (!amount || isNaN(parseFloat(amount)) || !tokenAddress) return '0.00';

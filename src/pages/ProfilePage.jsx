@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
@@ -44,6 +45,7 @@ const IPFS_GATEWAYS = [
 ];
 
 function ProfilePage() {
+    const navigate = useNavigate();
     const { wallet, connect, provider, signer, chainId } = useWallet();
     const { listings, fetchListings, status, setStatus, marketplace } = useMarketplace();
     const { 
@@ -1387,7 +1389,7 @@ function ProfilePage() {
                                     </button>
                                     <button
                                         className="secondary-button"
-                                        onClick={() => window.location.href = '/auctions/create'}
+                                        onClick={() => navigate('/auctions/create')}
                                     >
                                         Create Auction
                                     </button>
@@ -1903,7 +1905,7 @@ function ProfilePage() {
                                 className="secondary-button full-width"
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    window.location.href = `/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`;
+                                    navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`);
                                 }}
                                 style={{ marginTop: '0.5rem' }}
                             >
@@ -1966,7 +1968,7 @@ function ProfilePage() {
                         </button>
                         <button
                             className="secondary-button"
-                            onClick={() => window.location.href = `/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`}
+                            onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
                         >
                             Create Auction
                         </button>
@@ -2125,7 +2127,7 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
                                     </button>
                                     <button
                                         className="secondary-button"
-                                        onClick={() => window.location.href = `/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`}
+                                        onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
                                     >
                                         Create Auction
                                     </button>
