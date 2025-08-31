@@ -362,7 +362,6 @@ function CreateAuctionPage() {
     const [startPriceUSD, setStartPriceUSD] = useState('0.00');
     const [reservePriceUSD, setReservePriceUSD] = useState('0.00');
     const [tokenList, setTokenList] = useState({});
-    the
     const [paymentOptions, setPaymentOptions] = useState([]);
     const [loadingPrices, setLoadingPrices] = useState(false);
     const [showAddTokenForm, setShowAddTokenForm] = useState(false);
@@ -377,57 +376,37 @@ function CreateAuctionPage() {
 
     const priceIntervalRef = useRef(null);
 
-    // Set document title
     useEffect(() => {
         document.title = 'Create Auction • BlockDust';
     }, []);
 
-    // Helper function to calculate USD value for a given amount and token
     const calculateUSDValue = (amount, tokenAddress) => {
         if (!amount || isNaN(parseFloat(amount)) || !tokenAddress) return '0.00';
-
-        // For native VTRU (ZeroAddress), use WVTRU price lookup
         const priceKey = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
         const currentPrice = livePrice[priceKey];
-
         if (!currentPrice || typeof currentPrice !== 'number') return 'Unknown';
-
-        if (tokenAddress === USDC_ADDRESS || tokenAddress === 'USDC') {
-            return parseFloat(amount).toFixed(2);
-        } else {
-            return (parseFloat(amount) * currentPrice).toFixed(2);
-        }
+        if (tokenAddress === USDC_ADDRESS || tokenAddress === 'USDC') return parseFloat(amount).toFixed(2);
+        return (parseFloat(amount) * currentPrice).toFixed(2);
     };
 
     const handleChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
-
-        // Update USD calculations for price fields
-        if (name === 'reservePrice') {
-            setReservePriceUSD(calculateUSDValue(value, formData.paymentToken));
-        } else if (name === 'startPrice') {
-            setStartPriceUSD(calculateUSDValue(value, formData.paymentToken));
-        }
+        if (name === 'reservePrice') setReservePriceUSD(calculateUSDValue(value, formData.paymentToken));
+        else if (name === 'startPrice') setStartPriceUSD(calculateUSDValue(value, formData.paymentToken));
     };
 
-    // Change payment token => recompute both USD values
     const handlePaymentTokenChange = (e) => {
         const tokenAddress = e.target.value;
         setFormData(prev => ({ ...prev, paymentToken: tokenAddress }));
-
-        // Recalculate USD values for both fields
         setStartPriceUSD(calculateUSDValue(formData.startPrice, tokenAddress));
         setReservePriceUSD(calculateUSDValue(formData.reservePrice, tokenAddress));
     };
 
     const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
 
-    // Cleanup
     useEffect(() => {
-        return () => {
-            if (priceIntervalRef.current) clearInterval(priceIntervalRef.current);
-        };
+        return () => { if (priceIntervalRef.current) clearInterval(priceIntervalRef.current); };
     }, []);
 
     /* =========================
@@ -538,9 +517,7 @@ function CreateAuctionPage() {
             }
 
             const validated = {};
-            Object.entries(newPrices).forEach(([a, p]) => {
-                validated[a] = typeof p === 'number' && p >= 0 ? p : null;
-            });
+            Object.entries(newPrices).forEach(([a, p]) => { validated[a] = typeof p === 'number' && p >= 0 ? p : null; });
 
             setLivePrice(validated);
             setPriceChange(changes);
@@ -548,7 +525,6 @@ function CreateAuctionPage() {
             setPriceErrors(errors);
             setLastUpdateTime(new Date());
 
-            // Update USD displays rather than using an undefined setDisplayPrice
             setStartPriceUSD(calculateUSDValue(formData.startPrice, formData.paymentToken));
             setReservePriceUSD(calculateUSDValue(formData.reservePrice, formData.paymentToken));
         } catch (error) {
@@ -647,7 +623,6 @@ function CreateAuctionPage() {
             return;
         }
         const options = Object.entries(tokenList).map(([address, token]) => {
-            // For native VTRU, get price from WVTRU address
             const priceKey = address === ethers.ZeroAddress ? WVTRU_ADDRESS : address;
             const price = livePrice[priceKey];
             const priceSource = priceSources[priceKey] || 'Unknown';
@@ -670,10 +645,8 @@ function CreateAuctionPage() {
         if (Object.keys(tokenList).length > 0) buildPaymentOptions();
     }, [tokenList, livePrice, priceSources, priceErrors]);
 
-    // Update USD values when prices change or payment token changes
     useEffect(() => {
         if (formData.paymentToken) {
-            // For native VTRU, check WVTRU price; otherwise use the token's own price
             const priceKey = formData.paymentToken === ethers.ZeroAddress ? WVTRU_ADDRESS : formData.paymentToken;
             if (livePrice[priceKey]) {
                 setStartPriceUSD(calculateUSDValue(formData.startPrice, formData.paymentToken));
@@ -689,22 +662,18 @@ function CreateAuctionPage() {
 
     const addCustomToken = async () => {
         setCustomTokenError('');
-
         if (!ethers.isAddress(customTokenData.address)) {
             setCustomTokenError('Invalid address format');
             return;
         }
-
         try {
             const checksum = ethers.getAddress(customTokenData.address);
             if (tokenList[checksum]) {
                 setCustomTokenError('Token already added');
                 return;
             }
-
             setLoadingPrices(true);
             const c = new ethers.Contract(checksum, ERC20_ABI, provider);
-
             let symbol, name, decimals;
             try {
                 symbol = await c.symbol();
@@ -715,7 +684,6 @@ function CreateAuctionPage() {
                 name = customTokenData.name || 'Custom Token';
                 decimals = parseInt(customTokenData.decimals) || 18;
             }
-
             const newToken = { address: checksum, symbol, name, decimals };
             setTokenList((prev) => ({ ...prev, [checksum]: newToken }));
 
@@ -753,56 +721,28 @@ function CreateAuctionPage() {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
-        if (!wallet) {
-            await connect();
-            return;
-        }
-        if (!isCorrectNetwork) {
-            setStatus('Error: Wrong network. Please switch to Vitruveo.');
-            return;
-        }
-        if (!ownershipVerified) {
-            setStatus('Error: Ownership not verified. You must own this NFT to create an auction.');
-            return;
-        }
+        if (!wallet) { await connect(); return; }
+        if (!isCorrectNetwork) { setStatus('Error: Wrong network. Please switch to Vitruveo.'); return; }
+        if (!ownershipVerified) { setStatus('Error: Ownership not verified. You must own this NFT to create an auction.'); return; }
 
         try {
-            if (!signer) {
-                setStatus("Error: Wallet not connected. Please connect your wallet first");
-                return;
-            }
-
-            if (!marketplaceAddress || marketplaceAddress === ethers.ZeroAddress) {
-                throw new Error("Marketplace contract not initialized");
-            }
+            if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
+            if (!marketplaceAddress || marketplaceAddress === ethers.ZeroAddress) { throw new Error('Marketplace contract not initialized'); }
 
             setStatus('Preparing auction...');
 
-            // Validate form data
-            if (!formData.reservePrice || parseFloat(formData.reservePrice) <= 0) {
-                setStatus('Error: Reserve price must be greater than 0');
-                return;
-            }
-            if (!formData.startPrice || parseFloat(formData.startPrice) <= 0) {
-                setStatus('Error: Starting price must be greater than 0');
-                return;
-            }
+            if (!formData.reservePrice || parseFloat(formData.reservePrice) <= 0) { setStatus('Error: Reserve price must be greater than 0'); return; }
+            if (!formData.startPrice || parseFloat(formData.startPrice) <= 0) { setStatus('Error: Starting price must be greater than 0'); return; }
 
             const token = tokenList[formData.paymentToken];
-            if (!token) {
-                setStatus('Error: Please select a valid payment token');
-                return;
-            }
+            if (!token) { setStatus('Error: Please select a valid payment token'); return; }
 
-            // Convert prices to wei using token decimals
             const reservePriceInWei = ethers.parseUnits(formData.reservePrice, token.decimals || 18);
             const startPriceInWei = ethers.parseUnits(formData.startPrice, token.decimals || 18);
 
-            // Compute start and end times
             const startTimeSec = Math.floor(Date.now() / 1000);
             const endTimeSec = startTimeSec + (parseInt(formData.duration) * 3600);
 
-            // Check if this is an ERC721 or ERC1155
             let isERC1155 = false;
             try {
                 const testContract = new ethers.Contract(
@@ -812,59 +752,38 @@ function CreateAuctionPage() {
                 );
                 await testContract.balanceOf(wallet, formData.tokenId);
                 isERC1155 = true;
-            } catch {
-                isERC1155 = false;
-            }
+            } catch { isERC1155 = false; }
 
-            // Check and request NFT approval
             if (isERC1155) {
                 const nftContract1155 = new ethers.Contract(formData.nftContract, ERC1155_APPROVAL_ABI, signer);
                 const isApproved = await nftContract1155.isApprovedForAll(wallet, marketplaceAddress);
-
                 if (!isApproved) {
-                    setStatus("Requesting approval to auction your NFTs...");
+                    setStatus('Requesting approval to auction your NFTs...');
                     const approvalTx = await nftContract1155.setApprovalForAll(marketplaceAddress, true);
-                    setStatus("Approval transaction submitted. Please wait for confirmation...");
+                    setStatus('Approval transaction submitted. Please wait for confirmation...');
                     await approvalTx.wait();
-                    setStatus("Approval confirmed! Creating auction...");
+                    setStatus('Approval confirmed! Creating auction...');
                 }
             } else {
                 const nftContract721 = new ethers.Contract(formData.nftContract, ERC721_APPROVAL_ABI, signer);
                 const isApprovedForAll = await nftContract721.isApprovedForAll(wallet, marketplaceAddress);
-
                 if (!isApprovedForAll) {
                     const approvedAddress = await nftContract721.getApproved(formData.tokenId);
                     const isTokenApproved = String(approvedAddress || '').toLowerCase() === String(marketplaceAddress || '').toLowerCase();
-
                     if (!isTokenApproved) {
-                        setStatus("Requesting approval to auction your NFT...");
+                        setStatus('Requesting approval to auction your NFT...');
                         const approvalTx = await nftContract721.setApprovalForAll(marketplaceAddress, true);
-                        setStatus("Approval transaction submitted. Please wait for confirmation...");
+                        setStatus('Approval transaction submitted. Please wait for confirmation...');
                         await approvalTx.wait();
-                        setStatus("Approval confirmed! Creating auction...");
+                        setStatus('Approval confirmed! Creating auction...');
                     }
                 }
             }
 
-            // Create marketplace contract instance
             const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, signer);
 
-            setStatus("Creating auction...");
+            setStatus('Creating auction...');
 
-            // Expected ABI (commonly):
-            // createAuction(
-            //  address nftContract,
-            //  uint256 tokenId,
-            //  uint256 quantity,
-            //  bool isERC1155,
-            //  address paymentToken,
-            //  uint256 reservePrice,
-            //  uint256 startPrice,
-            //  uint64 startTime,
-            //  uint64 endTime,
-            //  uint32 minIncrementBps,
-            //  uint32 antiSnipeWindow
-            // )
             const args = [
                 ethers.getAddress(formData.nftContract),
                 BigInt(formData.tokenId),
@@ -879,19 +798,13 @@ function CreateAuctionPage() {
                 BigInt(parseInt(formData.antiSnipeSeconds || '600', 10)),
             ];
 
-            // Preflight simulate
-            await contract.createAuction.staticCall(...args).catch((e) => {
-                throw new Error(decodeRevert(e));
-            });
+            await contract.createAuction.staticCall(...args).catch((e) => { throw new Error(decodeRevert(e)); });
 
-            // Estimate gas with buffer and set fees
             const overrides = {};
             try {
                 const gas = await contract.createAuction.estimateGas(...args);
-                overrides.gasLimit = (gas * 12n) / 10n; // +20%
-            } catch {
-                overrides.gasLimit = 1_200_000n; // fallback
-            }
+                overrides.gasLimit = (gas * 12n) / 10n;
+            } catch { overrides.gasLimit = 1_200_000n; }
             try {
                 const fee = await provider.getFeeData();
                 if (fee?.maxFeePerGas) {
@@ -903,11 +816,10 @@ function CreateAuctionPage() {
             } catch { /* ignore */ }
 
             const tx = await contract.createAuction(...args, overrides);
-            setStatus("Transaction submitted. Waiting for confirmation...");
+            setStatus('Transaction submitted. Waiting for confirmation...');
             const receipt = await tx.wait();
-            setStatus("Auction created successfully!");
+            setStatus('Auction created successfully!');
 
-            // Extract auction ID from logs
             try {
                 const iface = new ethers.Interface(VtruMarketplaceArtifact.abi);
                 const auctionCreatedEvent = receipt.logs
@@ -942,20 +854,18 @@ function CreateAuctionPage() {
                         };
 
                         await cacheAuctions([auctionData], marketplaceAddress);
-                        setStatus("Auction created and cached successfully!");
+                        setStatus('Auction created and cached successfully!');
                     }
                 }
             } catch (error) {
                 console.warn('Warning: Could not cache auction data:', error);
             }
 
-            // Show success animation then redirect
             setAuctionSuccess(true);
             setTimeout(() => {
                 setAuctionSuccess(false);
                 navigate('/my-auctions');
             }, 2500);
-
         } catch (error) {
             const reason = decodeRevert(error);
             setStatus(`Error: ${reason}`);
@@ -971,18 +881,9 @@ function CreateAuctionPage() {
     }
 
     const fetchNftMetadata = async () => {
-        if (!formData.nftContract || !formData.tokenId) {
-            setStatus('Please enter contract address and token ID');
-            return;
-        }
-        if (!wallet) {
-            setStatus('Please connect your wallet first');
-            return;
-        }
-        if (!provider) {
-            setStatus('No provider available. Please reconnect your wallet.');
-            return;
-        }
+        if (!formData.nftContract || !formData.tokenId) { setStatus('Please enter contract address and token ID'); return; }
+        if (!wallet) { setStatus('Please connect your wallet first'); return; }
+        if (!provider) { setStatus('No provider available. Please reconnect your wallet.'); return; }
 
         setLoading(true);
         setStatus('Fetching NFT metadata...');
@@ -995,18 +896,13 @@ function CreateAuctionPage() {
             if (!ethers.isAddress(formData.nftContract)) throw new Error('Invalid contract address format');
             const checksum = ethers.getAddress(formData.nftContract);
 
-            // Try ERC721 first
+            // Try ERC721
             try {
                 const erc721 = new ethers.Contract(checksum, ERC721_ABI, provider);
-
                 const owner = await erc721.ownerOf(formData.tokenId);
                 const isOwner = owner?.toLowerCase?.() === wallet?.toLowerCase?.();
                 setOwnershipVerified(!!isOwner);
-                if (!isOwner) {
-                    setStatus('Warning: You are not the owner of this NFT');
-                    setLoading(false);
-                    return;
-                }
+                if (!isOwner) { setStatus('Warning: You are not the owner of this NFT'); setLoading(false); return; }
 
                 const tokenURI = await erc721.tokenURI(formData.tokenId);
                 const metaCands = metadataCandidatesFromUri(tokenURI, formData.tokenId, false);
@@ -1015,15 +911,11 @@ function CreateAuctionPage() {
                 setMetadata(json);
                 setNftName(json?.name || `NFT #${formData.tokenId}`);
 
-                // Pre-resolve one working preview URL for zoom
                 try {
                     const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
                     const firstVideo = media.find(isVideoUrl);
-                    if (firstVideo) setNftImage(firstVideo);
-                    else setNftImage(await findFirstWorkingImage(media));
-                } catch {
-                    setNftImage('');
-                }
+                    if (firstVideo) setNftImage(firstVideo); else setNftImage(await findFirstWorkingImage(media));
+                } catch { setNftImage(''); }
 
                 setNftType('ERC721');
                 setBalance('1');
@@ -1033,18 +925,13 @@ function CreateAuctionPage() {
                 // fallthrough to ERC1155
             }
 
-            // Try ERC1155
+            // ERC1155
             try {
                 const erc1155 = new ethers.Contract(checksum, ERC1155_ABI, provider);
-
                 const bal = await erc1155.balanceOf(wallet, formData.tokenId);
                 const ownerBalance = bal.toString();
                 setBalance(ownerBalance);
-                if (ownerBalance === '0') {
-                    setStatus('Warning: You do not own any of these tokens');
-                    setLoading(false);
-                    return;
-                }
+                if (ownerBalance === '0') { setStatus('Warning: You do not own any of these tokens'); setLoading(false); return; }
                 setOwnershipVerified(true);
 
                 const uri = await erc1155.uri(formData.tokenId);
@@ -1057,11 +944,8 @@ function CreateAuctionPage() {
                 try {
                     const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
                     const firstVideo = media.find(isVideoUrl);
-                    if (firstVideo) setNftImage(firstVideo);
-                    else setNftImage(await findFirstWorkingImage(media));
-                } catch {
-                    setNftImage('');
-                }
+                    if (firstVideo) setNftImage(firstVideo); else setNftImage(await findFirstWorkingImage(media));
+                } catch { setNftImage(''); }
 
                 setNftType('ERC1155');
                 setFormData((prev) => ({ ...prev, quantity: ownerBalance }));
