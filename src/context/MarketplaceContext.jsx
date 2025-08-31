@@ -249,7 +249,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     }, [marketplaceAddress, abi, provider]);
 
     // Disabled aggressive real-time subscriptions and background scanning to prevent mass data collection
-    // TODO: Re-implement with user-controlled refresh if needed
+    // Manual refresh functionality if needed
     useEffect(() => {
         // Completely disable automatic periodic updates to prevent mass data collection
         console.log("⚠️ Automatic background scanning DISABLED to prevent mass data collection");
@@ -1106,12 +1106,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             try {
                 await provider.getNetwork();
                 
-                // Check if we should use mock data for testing (environment flag)
-                const useMockData = import.meta.env.VITE_USE_MOCK_DATA === 'true';
-                if (useMockData) {
-                    console.log("🧪 Using mock data for testing collection names (VITE_USE_MOCK_DATA=true)");
-                    throw new Error("Using mock data for testing");
-                }
+                // Check network connectivity
             } catch (networkError) {
                 console.warn("Network connectivity issue:", networkError.message);
                 
@@ -1121,184 +1116,12 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     setTimeout(() => setStatus(''), 3000);
                     return;
                 } else {
-                    // For testing: Add mock listings when network is not available
-                    console.log("Network issue - adding mock listings for testing collection names");
-                    
-                    const mockListings = [
-                        {
-                            id: 1,
-                            seller: "0x1234567890123456789012345678901234567890",
-                            nftContract: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
-                            tokenId: "1",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.1").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/1/300/300",
-                            imageUrl: "https://picsum.photos/seed/1/300/300",
-                            name: "Cosmic Dream #1",
-                            title: "Cosmic Dream #1",
-                            description: "A beautiful cosmic-themed digital artwork featuring swirling galaxies and stars",
-                            collectionName: "Cosmic Dreams Collection",
-                            metadata: {
-                                name: "Cosmic Dream #1",
-                                description: "A beautiful cosmic-themed digital artwork featuring swirling galaxies and stars",
-                                image: "https://picsum.photos/seed/1/300/300",
-                                collection: {
-                                    name: "Cosmic Dreams Collection",
-                                    description: "A collection of cosmic-themed digital artworks exploring the beauty of space",
-                                    external_link: "https://cosmicdreams.example.com",
-                                    image: "https://picsum.photos/seed/collection1/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 2,
-                            seller: "0x2345678901234567890123456789012345678901",
-                            nftContract: "0xbcdefabcdefabcdefabcdefabcdefabcdefabcde",
-                            tokenId: "5",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.25").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/2/300/300",
-                            imageUrl: "https://picsum.photos/seed/2/300/300",
-                            name: "Digital Warrior #5",
-                            title: "Digital Warrior #5",
-                            description: "A powerful warrior character from the digital realm",
-                            collectionName: "Digital Warriors",
-                            metadata: {
-                                name: "Digital Warrior #5",
-                                description: "A powerful warrior character from the digital realm",
-                                image: "https://picsum.photos/seed/2/300/300",
-                                collection: {
-                                    name: "Digital Warriors",
-                                    description: "Elite warrior characters ready for battle in the metaverse",
-                                    external_link: "https://digitalwarriors.example.com",
-                                    image: "https://picsum.photos/seed/collection2/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 3,
-                            seller: "0x3456789012345678901234567890123456789012",
-                            nftContract: "0xcdefabcdefabcdefabcdefabcdefabcdefabcdef",
-                            tokenId: "10",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.05").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/3/300/300",
-                            imageUrl: "https://picsum.photos/seed/3/300/300",
-                            name: "Abstract Expression #10",
-                            title: "Abstract Expression #10",
-                            description: "A vibrant abstract artwork exploring color and form",
-                            collectionName: "Abstract Expressions",
-                            metadata: {
-                                name: "Abstract Expression #10",
-                                description: "A vibrant abstract artwork exploring color and form",
-                                image: "https://picsum.photos/seed/3/300/300",
-                                collection: {
-                                    name: "Abstract Expressions",
-                                    description: "Bold abstract artworks that push the boundaries of digital creativity",
-                                    external_link: "https://abstractexpressions.example.com",
-                                    image: "https://picsum.photos/seed/collection3/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 4,
-                            seller: "0x4567890123456789012345678901234567890123",
-                            nftContract: "0xdefabcdefabcdefabcdefabcdefabcdefabcdefa",
-                            tokenId: "15",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.75").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/4/300/300",
-                            imageUrl: "https://picsum.photos/seed/4/300/300",
-                            name: "Cyber Punk Avatar #15",
-                            title: "Cyber Punk Avatar #15",
-                            description: "A futuristic cyberpunk character with neon aesthetics",
-                            collectionName: "Cyber Punk Avatars",
-                            metadata: {
-                                name: "Cyber Punk Avatar #15",
-                                description: "A futuristic cyberpunk character with neon aesthetics",
-                                image: "https://picsum.photos/seed/4/300/300",
-                                collection: {
-                                    name: "Cyber Punk Avatars",
-                                    description: "Futuristic avatars from the cyberpunk universe",
-                                    external_link: "https://cyberpunkavatars.example.com",
-                                    image: "https://picsum.photos/seed/collection4/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 5,
-                            seller: "0x5678901234567890123456789012345678901234",
-                            nftContract: "0xefabcdefabcdefabcdefabcdefabcdefabcdefab",
-                            tokenId: "3",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.15").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/5/300/300",
-                            imageUrl: "https://picsum.photos/seed/5/300/300",
-                            name: "Nature Spirit #3",
-                            title: "Nature Spirit #3",
-                            description: "A mystical nature spirit embodying the essence of the forest",
-                            collectionName: "Nature Spirits",
-                            metadata: {
-                                name: "Nature Spirit #3",
-                                description: "A mystical nature spirit embodying the essence of the forest",
-                                image: "https://picsum.photos/seed/5/300/300",
-                                collection: {
-                                    name: "Nature Spirits",
-                                    description: "Mystical beings that connect the digital and natural worlds",
-                                    external_link: "https://naturespirits.example.com",
-                                    image: "https://picsum.photos/seed/collection5/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 6,
-                            seller: "0x6789012345678901234567890123456789012345",
-                            nftContract: "0xfabcdefabcdefabcdefabcdefabcdefabcdefabc",
-                            tokenId: "7",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.3").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/6/300/300",
-                            imageUrl: "https://picsum.photos/seed/6/300/300",
-                            name: "Pixel Art Masterpiece #7",
-                            title: "Pixel Art Masterpiece #7",
-                            description: "A retro-style pixel art creation with modern appeal",
-                            collectionName: "Pixel Art Masterpieces",
-                            metadata: {
-                                name: "Pixel Art Masterpiece #7",
-                                description: "A retro-style pixel art creation with modern appeal",
-                                image: "https://picsum.photos/seed/6/300/300",
-                                collection: {
-                                    name: "Pixel Art Masterpieces",
-                                    description: "Nostalgic pixel art that brings back the golden age of gaming",
-                                    external_link: "https://pixelartmasterpieces.example.com",
-                                    image: "https://picsum.photos/seed/collection6/300/300"
-                                }
-                            }
-                        }
-                    ];
-                    
-                    setListings(mockListings);
-                    setHotListings(mockListings.slice(0, 2));
-                    setStatus("Showing mock listings for testing collection names");
-                    setTimeout(() => setStatus(''), 3000);
+                    // No listings available 
+                    console.log("Network issue - no cached listings available");
+                    setListings([]);
+                    setHotListings([]);
+                    setStatus("Network connectivity issue - please try again later");
+                    setTimeout(() => setStatus(''), 5000);
                     return;
                 }
             }
