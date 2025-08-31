@@ -1006,72 +1006,52 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
         let cachedListings = [];
-        let shouldCheckBlockchain = true; // Default to check blockchain
         
         try {
+            // Step 1: ALWAYS fetch from blockchain first for real-time data
+            console.log("🌐 Always fetching from blockchain for real-time data...");
+            await fetchListingsFromBlockchain(false, []);
+            lastCacheUpdateRef.current = Date.now();
 
-            // Step 1: Try to load from cache first (unless force refresh)
+            // Step 2: Optionally try to load cache in background for comparison
             if (!forceRefresh && supabaseConnected && getCachedListings) {
-                debugLog("Checking cache for listings...");
-                cachedListings = await getCachedListings();
-                
-                if (cachedListings && cachedListings.length > 0) {
-                    // Validate cache using content signature if available
-                    const cacheValid = !lastCacheSignature || isCacheValid(
-                        { signature: lastCacheSignature }, 
-                        { listings: cachedListings }
-                    );
+                try {
+                    debugLog("Checking cache for comparison...");
+                    cachedListings = await getCachedListings();
                     
-                    if (cacheValid) {
-                        debugLog(`Loaded ${cachedListings.length} listings from cache`);
-                        setListings(cachedListings);
-                        setHotListings(cachedListings.slice(0, 5));
-                        
-                        // Check if cache is stale (older than 1 hour)
-                        const cacheAge = Date.now() - (cachedListings[0]?.timestamp || 0);
-                        if (cacheAge > 60 * 60 * 1000) {
-                            setStatusWithType('Loaded from cache (data may be stale)', 'warning', true);
-                            shouldCheckBlockchain = true; // Check blockchain if cache is stale
-                        } else {
-                            setStatusWithType('Loaded from cache', 'success');
-                            shouldCheckBlockchain = false; // Don't need to check blockchain if cache is fresh
-                        }
-                        
-                        // Clear non-persistent status after delay
-                        setTimeout(() => clearStatus(), 2000);
-                        
-                        // If cache is fresh, don't check blockchain unless forced
-                        if (!shouldCheckBlockchain && !forceRefresh) {
-                            return;
-                        }
-                    } else {
-                        debugLog("Cache signature mismatch, fetching fresh data");
+                    if (cachedListings && cachedListings.length > 0) {
+                        debugLog(`Found ${cachedListings.length} listings in cache (used for comparison only)`);
                     }
-                } else {
-                    debugLog("No cached listings found, fetching from blockchain");
+                } catch (cacheError) {
+                    console.warn("Cache check failed, continuing with blockchain data:", cacheError.message);
                 }
-            } else {
-                debugLog("Skipping cache check:", {
-                    forceRefresh,
-                    supabaseConnected,
-                    hasCachedListingsFunc: !!getCachedListings
-                });
-
-            }
-            
-            // Step 2: Check blockchain for updates if needed
-            if (shouldCheckBlockchain) {
-                await fetchListingsFromBlockchain(cachedListings.length > 0, cachedListings);
-                lastCacheUpdateRef.current = Date.now();
-            } else {
-                // Just show cached data with appropriate status
-                setStatus('Showing cached listings');
-                setTimeout(() => setStatus(''), 2000);
             }
             
         } catch (error) {
             criticalError("Error in fetchListings:", error);
-            setStatus('Failed to fetch listings');
+            
+            // Fallback: try to use cached data if blockchain fails
+            if (supabaseConnected && getCachedListings && !forceRefresh) {
+                try {
+                    console.log("🔄 Blockchain failed, trying cache as fallback...");
+                    cachedListings = await getCachedListings();
+                    
+                    if (cachedListings && cachedListings.length > 0) {
+                        setListings(cachedListings);
+                        setHotListings(cachedListings.slice(0, 5));
+                        setStatus('Network error - showing cached listings');
+                        setTimeout(() => setStatus(''), 5000);
+                        debugLog(`Fallback: Loaded ${cachedListings.length} listings from cache due to blockchain error`);
+                    } else {
+                        setStatus('Failed to fetch listings - no cache available');
+                    }
+                } catch (fallbackError) {
+                    console.error("Both blockchain and cache failed:", fallbackError);
+                    setStatus('Failed to fetch listings from all sources');
+                }
+            } else {
+                setStatus('Failed to fetch listings');
+            }
         } finally {
             setIsLoading(false);
         }

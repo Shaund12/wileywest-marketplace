@@ -35,6 +35,10 @@ Create or update your `.env` file with your Supabase credentials:
 # Replace these with your actual Supabase values
 VITE_SUPABASE_URL=https://your-project-url.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key-here
+
+# Marketplace Configuration
+VITE_MARKETPLACE_ADDRESS=0xE4C31bCA890dcC1Dc038ac07a3d720A6A26877D1
+VITE_ENABLE_AUCTIONS=1
 ```
 
 **Important:** If you're using dummy values, auction functionality will not work properly.
@@ -43,11 +47,20 @@ VITE_SUPABASE_ANON_KEY=your-anon-key-here
 
 Go to your Supabase dashboard → **SQL Editor** and run the complete schema from `supabase-schema.sql`:
 
+### Key Schema Update for Metadata Support
+
+**IMPORTANT:** If you're updating an existing auction table, you MUST add the metadata column:
+
+```sql
+-- Add metadata column to existing auctions table
+ALTER TABLE auctions ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+```
+
 ### Required Tables for Auction System
 
 The schema creates these auction-specific tables:
 
-- **`auctions`** - Main auction data (seller, NFT, prices, timing)
+- **`auctions`** - Main auction data (seller, NFT, prices, timing, **metadata**)
 - **`auction_bids`** - All bid events with timestamps
 - **`auction_settlements`** - Final auction results
 - **`auction_breakdowns`** - Fee distribution details

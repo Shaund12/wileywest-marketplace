@@ -659,17 +659,45 @@ export function SupabaseProvider({ children }) {
 
                 console.log(`💾 Upserting ${toSave.length} auctions to Supabase...`);
 
-                // Chunked upserts
+                // Chunked upserts with metadata fallback
                 const CHUNK = 100;
                 for (let i = 0; i < toSave.length; i += CHUNK) {
                     const chunk = toSave.slice(i, i + CHUNK);
-                    const { data, error } = await supabase
+                    
+                    // Try with metadata first, fallback without metadata if column doesn't exist
+                    let { data, error } = await supabase
                         .from('auctions')
                         .upsert(chunk, { onConflict: 'auction_id', ignoreDuplicates: false });
+
+                    // If metadata column error, retry without metadata
+                    if (error && error.message?.includes("metadata") && error.code === 'PGRST204') {
+                        console.warn('⚠️ Metadata column not found, retrying without metadata...');
+                        const chunkWithoutMetadata = chunk.map(({ metadata, ...item }) => item);
+                        
+                        const fallbackResult = await supabase
+                            .from('auctions')
+                            .upsert(chunkWithoutMetadata, { onConflict: 'auction_id', ignoreDuplicates: false });
+                        
+                        data = fallbackResult.data;
+                        error = fallbackResult.error;
+                    }
 
                     if (error) {
                         console.warn('❌ Database auction cache error:', error);
                         updateCacheStats('errors');
+                        
+                        // If Supabase fails, continue with localStorage caching
+                        console.log('💾 Supabase failed, using localStorage for auction persistence...');
+                        chunk.forEach((auction) => {
+                            try {
+                                const id = auction.auction_id;
+                                const key = getCacheKey('auction', id);
+                                setCache(key, auction, 'auctions');
+                                localStorage.setItem(`auction_${id}`, JSON.stringify(auction));
+                            } catch (e) {
+                                console.warn('localStorage auction cache error:', e);
+                            }
+                        });
                     } else {
                         console.log(`✅ Cached ${chunk.length} auctions [${i + 1}-${i + chunk.length}]`);
                         // Cache in memory
@@ -691,13 +719,40 @@ export function SupabaseProvider({ children }) {
     );
 
     const getCachedAuctions = useCallback(async (sellerAddress = null, marketplaceAddress = null) => {
+        // Always try memory cache first
+        let cacheKey = sellerAddress ? `auctions_${sellerAddress.toLowerCase()}` : 'all_auctions';
+        if (marketplaceAddress) {
+            cacheKey += `_${marketplaceAddress.toLowerCase()}`;
+        }
+        const cachedData = getCache(cacheKey);
+        
+        if (cachedData && cachedData.length > 0) {
+            console.log(`📦 Retrieved ${cachedData.length} auctions from memory cache`);
+            return cachedData;
+        }
+
+        // Fallback to localStorage if no Supabase
         if (!supabase) {
-            let cacheKey = sellerAddress ? `auctions_${sellerAddress.toLowerCase()}` : 'all_auctions';
-            if (marketplaceAddress) {
-                cacheKey += `_${marketplaceAddress.toLowerCase()}`;
+            console.log('🔍 Supabase unavailable, checking localStorage for auctions...');
+            try {
+                const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_'));
+                const localAuctions = keys.map(key => {
+                    try {
+                        return JSON.parse(localStorage.getItem(key));
+                    } catch (e) {
+                        return null;
+                    }
+                }).filter(Boolean);
+                
+                console.log(`📦 Retrieved ${localAuctions.length} auctions from localStorage`);
+                if (localAuctions.length > 0) {
+                    setCache(cacheKey, localAuctions, 'auctions');
+                }
+                return localAuctions;
+            } catch (e) {
+                console.warn('localStorage auction retrieval error:', e);
+                return [];
             }
-            const cachedData = getCache(cacheKey);
-            return cachedData || [];
         }
 
         try {
@@ -721,7 +776,25 @@ export function SupabaseProvider({ children }) {
             if (error) {
                 console.warn('Error fetching cached auctions:', error);
                 updateCacheStats('errors');
-                return [];
+                
+                // Fallback to localStorage on Supabase error
+                console.log('🔄 Supabase error, falling back to localStorage...');
+                try {
+                    const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_'));
+                    const localAuctions = keys.map(key => {
+                        try {
+                            return JSON.parse(localStorage.getItem(key));
+                        } catch (e) {
+                            return null;
+                        }
+                    }).filter(Boolean);
+                    
+                    console.log(`📦 Retrieved ${localAuctions.length} auctions from localStorage fallback`);
+                    return localAuctions;
+                } catch (e) {
+                    console.warn('localStorage fallback error:', e);
+                    return [];
+                }
             }
 
             console.log(`📦 Retrieved ${data.length} cached auctions from database`);

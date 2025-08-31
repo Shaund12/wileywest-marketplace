@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS auctions (
     highest_bidder TEXT DEFAULT '0x0000000000000000000000000000000000000000',
     highest_bid TEXT DEFAULT '0',
     settled BOOLEAN DEFAULT FALSE,
+    metadata JSONB DEFAULT '{}',
     transaction_hash TEXT NOT NULL,
     block_number BIGINT NOT NULL,
     log_index INTEGER NOT NULL,
