@@ -8,6 +8,7 @@ import ListingCard from '../components/ListingCard';
 import { NFTScanner } from '../utils/nftScanner';
 import '../profile-page.css';
 import CacheStats from '../components/CacheStats';
+import { isAuctionsEnabled } from '../utils/featureFlags';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
