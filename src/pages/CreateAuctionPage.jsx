@@ -6,6 +6,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { getSupportedTokens, formatTokenAmount } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import './AuctionStyles.css';
 import './SellPage.css';
 
@@ -301,6 +302,18 @@ const ERC20_ABI = [
     'function balanceOf(address owner) view returns (uint256)',
 ];
 
+const ERC721_APPROVAL_ABI = [
+    'function setApprovalForAll(address operator, bool approved) returns ()',
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
+    'function approve(address to, uint256 tokenId) returns ()',
+    'function getApproved(uint256 tokenId) view returns (address)',
+];
+
+const ERC1155_APPROVAL_ABI = [
+    'function setApprovalForAll(address operator, bool approved) returns ()',
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
+];
+
 // Token addresses (Vitruveo chain)
 const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
 const USDC_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
@@ -314,24 +327,12 @@ const VTRO_ADDRESS = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
 const UNISWAP_V3_FACTORY_ADDRESS = '0x6196a7a6108B15a2cc24DdaB41C8CC3098C06351';
 const FEE_TIERS = [500, 3000, 10000];
 
-const ERC721_APPROVAL_ABI = [
-    'function setApprovalForAll(address operator, bool approved) returns ()',
-    'function isApprovedForAll(address owner, address operator) view returns (bool)',
-    'function approve(address to, uint256 tokenId) returns ()',
-    'function getApproved(uint256 tokenId) view returns (address)',
-];
-
-const ERC1155_APPROVAL_ABI = [
-    'function setApprovalForAll(address operator, bool approved) returns ()',
-    'function isApprovedForAll(address owner, address operator) view returns (bool)',
-];
-
 /* =========================================================
    Component
    ========================================================= */
 function CreateAuctionPage() {
     const navigate = useNavigate();
-    const { wallet, connect, provider, signer } = useWallet();
+    const { wallet, connect, provider, signer, isCorrectNetwork } = useWallet();
     const { status, setStatus, marketplaceAddress } = useMarketplace();
     const { cacheAuctions } = useSupabase();
     const [searchParams] = useSearchParams();
@@ -361,6 +362,7 @@ function CreateAuctionPage() {
     const [startPriceUSD, setStartPriceUSD] = useState('0.00');
     const [reservePriceUSD, setReservePriceUSD] = useState('0.00');
     const [tokenList, setTokenList] = useState({});
+    the
     const [paymentOptions, setPaymentOptions] = useState([]);
     const [loadingPrices, setLoadingPrices] = useState(false);
     const [showAddTokenForm, setShowAddTokenForm] = useState(false);
@@ -383,13 +385,13 @@ function CreateAuctionPage() {
     // Helper function to calculate USD value for a given amount and token
     const calculateUSDValue = (amount, tokenAddress) => {
         if (!amount || isNaN(parseFloat(amount)) || !tokenAddress) return '0.00';
-        
+
         // For native VTRU (ZeroAddress), use WVTRU price lookup
         const priceKey = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
         const currentPrice = livePrice[priceKey];
-        
+
         if (!currentPrice || typeof currentPrice !== 'number') return 'Unknown';
-        
+
         if (tokenAddress === USDC_ADDRESS || tokenAddress === 'USDC') {
             return parseFloat(amount).toFixed(2);
         } else {
@@ -400,7 +402,7 @@ function CreateAuctionPage() {
     const handleChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
-        
+
         // Update USD calculations for price fields
         if (name === 'reservePrice') {
             setReservePriceUSD(calculateUSDValue(value, formData.paymentToken));
@@ -413,7 +415,7 @@ function CreateAuctionPage() {
     const handlePaymentTokenChange = (e) => {
         const tokenAddress = e.target.value;
         setFormData(prev => ({ ...prev, paymentToken: tokenAddress }));
-        
+
         // Recalculate USD values for both fields
         setStartPriceUSD(calculateUSDValue(formData.startPrice, tokenAddress));
         setReservePriceUSD(calculateUSDValue(formData.reservePrice, tokenAddress));
@@ -546,10 +548,9 @@ function CreateAuctionPage() {
             setPriceErrors(errors);
             setLastUpdateTime(new Date());
 
-            if (formData.reservePrice && formData.paymentToken && validated[formData.paymentToken]) {
-                const usdValue = (parseFloat(formData.reservePrice) * validated[formData.paymentToken]).toFixed(2);
-                setDisplayPrice((prev) => ({ ...prev, usd: usdValue }));
-            }
+            // Update USD displays rather than using an undefined setDisplayPrice
+            setStartPriceUSD(calculateUSDValue(formData.startPrice, formData.paymentToken));
+            setReservePriceUSD(calculateUSDValue(formData.reservePrice, formData.paymentToken));
         } catch (error) {
             if (retryCount < MAX_RETRIES && /(network|timeout|fetch)/i.test(error.message || '')) {
                 setTimeout(() => fetchUniswapPrices(retryCount + 1, activeTokenList), RETRY_DELAY);
@@ -593,12 +594,8 @@ function CreateAuctionPage() {
                     c.decimals().catch(() => 6),
                 ]);
                 initialTokens[USDC_ADDRESS] = { address: USDC_ADDRESS, symbol, name, decimals };
-                setLivePrice((prev) => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
-                setPriceSources((prev) => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
             } catch {
                 initialTokens[USDC_ADDRESS] = { address: USDC_ADDRESS, symbol: 'USDC', name: 'USD Coin', decimals: 6 };
-                setLivePrice((prev) => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
-                setPriceSources((prev) => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
             }
 
             const addToken = async (addr, fallbackSymbol, fallbackName, fallbackDecimals = 18) => {
@@ -739,14 +736,31 @@ function CreateAuctionPage() {
         }
     };
 
+    // Decode custom errors and reasons
+    const decodeRevert = (err) => {
+        try {
+            const data = err?.data || err?.error?.data;
+            if (data) {
+                const iface = new ethers.Interface(VtruMarketplaceArtifact.abi);
+                const parsed = iface.parseError(data);
+                if (parsed?.name) return parsed.name + (parsed.args?.length ? `(${parsed.args.map(a => String(a)).join(',')})` : '');
+            }
+        } catch { /* ignore */ }
+        const m = err?.reason || err?.message || String(err || '');
+        return m.replace(/execution reverted:?/i, '').trim() || 'Transaction reverted';
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
-        
+
         if (!wallet) {
             await connect();
             return;
         }
-
+        if (!isCorrectNetwork) {
+            setStatus('Error: Wrong network. Please switch to Vitruveo.');
+            return;
+        }
         if (!ownershipVerified) {
             setStatus('Error: Ownership not verified. You must own this NFT to create an auction.');
             return;
@@ -758,7 +772,7 @@ function CreateAuctionPage() {
                 return;
             }
 
-            if (!marketplaceAddress) {
+            if (!marketplaceAddress || marketplaceAddress === ethers.ZeroAddress) {
                 throw new Error("Marketplace contract not initialized");
             }
 
@@ -769,7 +783,6 @@ function CreateAuctionPage() {
                 setStatus('Error: Reserve price must be greater than 0');
                 return;
             }
-
             if (!formData.startPrice || parseFloat(formData.startPrice) <= 0) {
                 setStatus('Error: Starting price must be greater than 0');
                 return;
@@ -785,8 +798,9 @@ function CreateAuctionPage() {
             const reservePriceInWei = ethers.parseUnits(formData.reservePrice, token.decimals || 18);
             const startPriceInWei = ethers.parseUnits(formData.startPrice, token.decimals || 18);
 
-            // Calculate end time (current time + duration in hours)
-            const endTime = Math.floor(Date.now() / 1000) + (parseInt(formData.duration) * 3600);
+            // Compute start and end times
+            const startTimeSec = Math.floor(Date.now() / 1000);
+            const endTimeSec = startTimeSec + (parseInt(formData.duration) * 3600);
 
             // Check if this is an ERC721 or ERC1155
             let isERC1155 = false;
@@ -798,7 +812,7 @@ function CreateAuctionPage() {
                 );
                 await testContract.balanceOf(wallet, formData.tokenId);
                 isERC1155 = true;
-            } catch (e) {
+            } catch {
                 isERC1155 = false;
             }
 
@@ -820,7 +834,7 @@ function CreateAuctionPage() {
 
                 if (!isApprovedForAll) {
                     const approvedAddress = await nftContract721.getApproved(formData.tokenId);
-                    const isTokenApproved = approvedAddress.toLowerCase() === marketplaceAddress.toLowerCase();
+                    const isTokenApproved = String(approvedAddress || '').toLowerCase() === String(marketplaceAddress || '').toLowerCase();
 
                     if (!isTokenApproved) {
                         setStatus("Requesting approval to auction your NFT...");
@@ -833,93 +847,118 @@ function CreateAuctionPage() {
             }
 
             // Create marketplace contract instance
-            const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplaceContract = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, signer);
 
             setStatus("Creating auction...");
 
-            // Call createAuction function
-            const tx = await marketplaceContract.createAuction(
-                formData.nftContract,
-                formData.tokenId,
-                formData.quantity,
+            // Expected ABI (commonly):
+            // createAuction(
+            //  address nftContract,
+            //  uint256 tokenId,
+            //  uint256 quantity,
+            //  bool isERC1155,
+            //  address paymentToken,
+            //  uint256 reservePrice,
+            //  uint256 startPrice,
+            //  uint64 startTime,
+            //  uint64 endTime,
+            //  uint32 minIncrementBps,
+            //  uint32 antiSnipeWindow
+            // )
+            const args = [
+                ethers.getAddress(formData.nftContract),
+                BigInt(formData.tokenId),
+                BigInt(formData.quantity || '1'),
+                Boolean(isERC1155),
+                ethers.getAddress(formData.paymentToken),
                 reservePriceInWei,
                 startPriceInWei,
-                endTime,
-                formData.paymentToken,
-                formData.minBidIncrementBps,
-                formData.antiSnipeSeconds
-            );
+                BigInt(startTimeSec),
+                BigInt(endTimeSec),
+                BigInt(parseInt(formData.minBidIncrementBps || '500', 10)),
+                BigInt(parseInt(formData.antiSnipeSeconds || '600', 10)),
+            ];
 
+            // Preflight simulate
+            await contract.createAuction.staticCall(...args).catch((e) => {
+                throw new Error(decodeRevert(e));
+            });
+
+            // Estimate gas with buffer and set fees
+            const overrides = {};
+            try {
+                const gas = await contract.createAuction.estimateGas(...args);
+                overrides.gasLimit = (gas * 12n) / 10n; // +20%
+            } catch {
+                overrides.gasLimit = 1_200_000n; // fallback
+            }
+            try {
+                const fee = await provider.getFeeData();
+                if (fee?.maxFeePerGas) {
+                    overrides.maxFeePerGas = fee.maxFeePerGas;
+                    overrides.maxPriorityFeePerGas = fee.maxPriorityFeePerGas ?? 0n;
+                } else if (fee?.gasPrice) {
+                    overrides.gasPrice = fee.gasPrice;
+                }
+            } catch { /* ignore */ }
+
+            const tx = await contract.createAuction(...args, overrides);
             setStatus("Transaction submitted. Waiting for confirmation...");
             const receipt = await tx.wait();
             setStatus("Auction created successfully!");
-            
-            // Extract auction ID from transaction logs for caching
+
+            // Extract auction ID from logs
             try {
-                const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-                const iface = new ethers.Interface(VTRUNFTMarketplaceABI.default);
-                
-                // Find AuctionCreated event in transaction logs
+                const iface = new ethers.Interface(VtruMarketplaceArtifact.abi);
                 const auctionCreatedEvent = receipt.logs
-                    .map(log => {
-                        try {
-                            return iface.parseLog(log);
-                        } catch (e) {
-                            return null;
-                        }
-                    })
+                    .map(log => { try { return iface.parseLog(log); } catch { return null; } })
                     .find(event => event && event.name === 'AuctionCreated');
 
                 if (auctionCreatedEvent) {
                     const auctionId = auctionCreatedEvent.args.auctionId?.toString();
-                    
                     if (auctionId) {
-                        // Create auction object for caching
                         const auctionData = {
                             id: auctionId,
                             seller: wallet,
-                            nftContract: formData.nftContract,
-                            tokenId: formData.tokenId,
-                            quantity: formData.quantity,
+                            nftContract: ethers.getAddress(formData.nftContract),
+                            tokenId: String(formData.tokenId),
+                            quantity: String(formData.quantity),
                             reservePrice: reservePriceInWei.toString(),
                             startPrice: startPriceInWei.toString(),
-                            endTime: endTime,
-                            paymentToken: formData.paymentToken,
-                            minBidIncrementBps: parseInt(formData.minBidIncrementBps),
-                            antiSnipeSeconds: parseInt(formData.antiSnipeSeconds),
+                            startTime: startTimeSec,
+                            endTime: endTimeSec,
+                            paymentToken: ethers.getAddress(formData.paymentToken),
+                            minBidIncrementBps: parseInt(formData.minBidIncrementBps, 10),
+                            antiSnipeSeconds: parseInt(formData.antiSnipeSeconds, 10),
+                            isERC1155: Boolean(isERC1155),
                             highestBid: '0',
                             highestBidder: '0x0000000000000000000000000000000000000000',
                             settled: false,
                             transactionHash: receipt.hash,
                             blockNumber: receipt.blockNumber,
-                            logIndex: 0, // First occurrence in this transaction
+                            logIndex: 0,
                             timestamp: Math.floor(Date.now() / 1000),
-                            metadata: nftMetadata || {}
+                            metadata: metadata || {}
                         };
 
-                        // Cache the auction
-                        console.log('📦 Caching newly created auction:', auctionData);
                         await cacheAuctions([auctionData], marketplaceAddress);
                         setStatus("Auction created and cached successfully!");
                     }
                 }
             } catch (error) {
                 console.warn('Warning: Could not cache auction data:', error);
-                // Don't fail the entire process if caching fails
             }
-            
-            // Show success animation
+
+            // Show success animation then redirect
             setAuctionSuccess(true);
-            
-            // Reset success state after animation completes
             setTimeout(() => {
                 setAuctionSuccess(false);
-                navigate('/auctions/my');
-            }, 3000);
-            
+                navigate('/my-auctions');
+            }, 2500);
+
         } catch (error) {
-            setStatus(`Error: ${error.message || 'Could not create auction'}`);
+            const reason = decodeRevert(error);
+            setStatus(`Error: ${reason}`);
         }
     };
 
@@ -1152,7 +1191,7 @@ function CreateAuctionPage() {
                         <div style={{ flex: 1 }}>
                             <h3>{nftName}</h3>
                             <p>{metadata?.description || 'No description available'}</p>
-                            
+
                             {Array.isArray(metadata?.attributes) && metadata.attributes.length > 0 && (
                                 <div style={{ marginTop: '1rem' }}>
                                     <h4>Properties</h4>
@@ -1160,9 +1199,9 @@ function CreateAuctionPage() {
                                         {metadata.attributes.slice(0, 6).map((attr, index) => {
                                             const rarity = getTraitRarity(attr);
                                             return (
-                                                <div key={index} style={{ 
-                                                    padding: '0.5rem', 
-                                                    background: 'var(--bg-tertiary)', 
+                                                <div key={index} style={{
+                                                    padding: '0.5rem',
+                                                    background: 'var(--bg-tertiary)',
                                                     borderRadius: '6px',
                                                     border: `1px solid ${rarity.color}`
                                                 }}>
@@ -1226,7 +1265,7 @@ function CreateAuctionPage() {
                                         Fetch NFT Data
                                     </button>
                                 )}
-                                
+
                                 {loading && (
                                     <div className="form-group">
                                         <div className="skeleton text"></div>
