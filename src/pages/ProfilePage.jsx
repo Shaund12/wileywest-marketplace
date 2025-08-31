@@ -1,8 +1,8 @@
 ﻿import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
-import { isAuctionsEnabled } from '../utils/featureFlags';
 import { ethers } from 'ethers';
 import ListingCard from '../components/ListingCard';
 import { NFTScanner } from '../utils/nftScanner';
@@ -77,6 +77,7 @@ const timeAgo = (ms) => {
 };
 
 function ProfilePage() {
+    const navigate = useNavigate();
     const { wallet, connect, provider, signer, chainId } = useWallet();
     const {
         listings,
@@ -1389,14 +1390,12 @@ function ProfilePage() {
                                     >
                                         Create a Listing
                                     </button>
-                                    {isAuctionsEnabled() && (
-                                        <button
-                                            className="secondary-button"
-                                            onClick={() => window.location.href = '/auctions/create'}
-                                        >
-                                            Create Auction
-                                        </button>
-                                    )}
+                                    <button
+                                        className="secondary-button"
+                                        onClick={() => navigate('/auctions/create')}
+                                    >
+                                        Create Auction
+                                    </button>
                                 </div>
                             </div>
                         )}
@@ -1966,18 +1965,16 @@ function ProfilePage() {
                             >
                                 List for Sale
                             </button>
-                            {isAuctionsEnabled() && (
-                                <button
-                                    className="secondary-button full-width"
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        window.location.href = `/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`;
-                                    }}
-                                    style={{ marginTop: '0.5rem' }}
-                                >
-                                    Create Auction
-                                </button>
-                            )}
+                            <button
+                                className="secondary-button full-width"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`);
+                                }}
+                                style={{ marginTop: '0.5rem' }}
+                            >
+                                Create Auction
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -2033,14 +2030,12 @@ function ProfilePage() {
                         >
                             List for Sale
                         </button>
-                        {isAuctionsEnabled() && (
-                            <button
-                                className="secondary-button"
-                                onClick={() => window.location.href = `/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`}
-                            >
-                                Create Auction
-                            </button>
-                        )}
+                        <button
+                            className="secondary-button"
+                            onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
+                        >
+                            Create Auction
+                        </button>
                         <button
                             className="secondary-button"
                             onClick={(e) => {
@@ -2188,14 +2183,12 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
                                     >
                                         List for Sale
                                     </button>
-                                    {isAuctionsEnabled() && (
-                                        <button
-                                            className="secondary-button"
-                                            onClick={() => window.location.href = `/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`}
-                                        >
-                                            Create Auction
-                                        </button>
-                                    )}
+                                    <button
+                                        className="secondary-button"
+                                        onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
+                                    >
+                                        Create Auction
+                                    </button>
                                 </div>
                             </div>
                         )}

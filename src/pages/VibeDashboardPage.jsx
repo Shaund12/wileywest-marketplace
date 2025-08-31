@@ -1,11 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { isAuctionsEnabled } from '../utils/featureFlags';
 import { useSupabase } from '../context/SupabaseContext';
 import './AuctionStyles.css';
 
 function VibeDashboardPage() {
-    const navigate = useNavigate();
     const { supabase, isConnected } = useSupabase();
     const [stats, setStats] = useState({
         totalVTRUSent: '0',
@@ -25,13 +22,8 @@ function VibeDashboardPage() {
     const [timeframe, setTimeframe] = useState('7d');
 
     useEffect(() => {
-        if (!isAuctionsEnabled()) {
-            navigate('/marketplace');
-            return;
-        }
-
         loadDashboardData();
-    }, [navigate, timeframe]);
+    }, [timeframe]);
 
     const loadDashboardData = async () => {
         try {
@@ -313,10 +305,6 @@ function VibeDashboardPage() {
     const formatVTRU = (amount) => {
         return `${amount} VTRU`;
     };
-
-    if (!isAuctionsEnabled()) {
-        return null;
-    }
 
     return (
         <div className="hp" style={{ maxWidth: 1400, margin: '3rem auto', padding: '0 1.25rem' }}>

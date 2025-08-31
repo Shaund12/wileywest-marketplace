@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
-import { canPerformAuctionAction, isAuctionsEnabled } from '../utils/featureFlags';
 import { formatTokenAmount, getTokenInfo } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import './AuctionStyles.css';
@@ -246,13 +245,8 @@ function AuctionDetailPage() {
     }, []);
 
     useEffect(() => {
-        if (!isAuctionsEnabled()) {
-            navigate('/marketplace');
-            return;
-        }
-
         loadAuction();
-    }, [id, navigate]);
+    }, [id]);
 
     useEffect(() => {
         // Update countdown timer
@@ -307,11 +301,6 @@ function AuctionDetailPage() {
     };
 
     const handleSettle = async () => {
-        if (!canPerformAuctionAction(wallet, 'settle')) {
-            alert('You are not allowed to settle auctions');
-            return;
-        }
-
         // Note: Settlement functionality requires contract integration
         alert('Auction settlement will be available once contract integration is complete.');
     };
@@ -350,10 +339,6 @@ function AuctionDetailPage() {
         const i = Math.floor((((trait.trait_type?.length) || 0) + (String(trait.value || '').length)) % 5);
         return map[keys[i]];
     };
-
-    if (!isAuctionsEnabled()) {
-        return null;
-    }
 
     if (loading) {
         return (
@@ -659,7 +644,6 @@ function AuctionDetailPage() {
                                 <button 
                                     onClick={handleSettle}
                                     className="primary-button"
-                                    disabled={!canPerformAuctionAction(wallet, 'settle')}
                                 >
                                     Settle Auction
                                 </button>

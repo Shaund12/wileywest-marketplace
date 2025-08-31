@@ -4,7 +4,6 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
-import { isAuctionsEnabled } from '../utils/featureFlags';
 import './SellPage.css';
 
 /* =========================================================
@@ -1036,17 +1035,15 @@ function SellPage() {
             <div className="page-header">
                 <h1>Sell Your NFT</h1>
                 <p>Create a listing for your digital asset</p>
-                {isAuctionsEnabled() && (
-                    <div className="selling-options">
-                        <p className="options-intro">Choose how you want to sell:</p>
-                        <div className="sell-buttons">
-                            <span className="current-option">📋 Fixed Price Listing</span>
-                            <Link to="/auctions/create" className="alt-option">
-                                🔨 Create Auction
-                            </Link>
-                        </div>
+                <div className="selling-options">
+                    <p className="options-intro">Choose how you want to sell:</p>
+                    <div className="sell-buttons">
+                        <span className="current-option">📋 Fixed Price Listing</span>
+                        <Link to="/auctions/create" className="alt-option">
+                            🔨 Create Auction
+                        </Link>
                     </div>
-                )}
+                </div>
             </div>
 
             {/* Progress Stepper */}

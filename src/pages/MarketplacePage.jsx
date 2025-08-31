@@ -9,7 +9,6 @@ import MarketplaceStats from '../components/MarketplaceStats';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
-import { isAuctionsEnabled } from '../utils/featureFlags';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
@@ -1713,14 +1712,12 @@ function MarketplacePage() {
                                         deepRescan();
                                     }
                                 }}
-                                secondaryActionText={anyActiveFilter ? 'Deep Rescan' : isAuctionsEnabled() ? 'Create Auction' : 'List Your NFT'}
+                                secondaryActionText={anyActiveFilter ? 'Deep Rescan' : 'Create Auction'}
                                 onSecondaryAction={() => {
                                     if (anyActiveFilter) {
                                         deepRescan();
-                                    } else if (isAuctionsEnabled()) {
-                                        window.location.href = '/auctions/create';
                                     } else {
-                                        window.location.href = '/sell';
+                                        window.location.href = '/auctions/create';
                                     }
                                 }}
                                 className="marketplace"
@@ -1742,17 +1739,13 @@ function MarketplacePage() {
                         {wallet ? (
                             <>
                                 <a href="/sell" className="primary-button">Create a Listing</a>
-                                {isAuctionsEnabled() && (
-                                    <a href="/auctions/create" className="primary-button">Create Auction</a>
-                                )}
+                                <a href="/auctions/create" className="primary-button">Create Auction</a>
                             </>
                         ) : (
                             <button className="primary-button" onClick={connect}>Connect Wallet</button>
                         )}
                         <a href="/profile" className="secondary-button">View Your Profile</a>
-                        {isAuctionsEnabled() && (
-                            <a href="/vibe-dashboard" className="secondary-button">VIBE Analytics</a>
-                        )}
+                        <a href="/vibe-dashboard" className="secondary-button">VIBE Analytics</a>
                     </div>
                 </div>
                 <div className="cta-image">

@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS sales_history (
 CREATE TABLE IF NOT EXISTS auctions (
     id SERIAL PRIMARY KEY,
     auction_id TEXT UNIQUE NOT NULL,
+    marketplace_address TEXT NOT NULL,
     seller TEXT NOT NULL,
     nft_contract TEXT NOT NULL,
     token_id TEXT NOT NULL,

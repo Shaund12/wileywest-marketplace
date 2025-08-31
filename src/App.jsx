@@ -4,7 +4,6 @@ import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from '
 import { ethers } from 'ethers';
 import MarketplaceAbi from './abi/VTRUNFTMarketplace.json';
 import { createClient } from '@supabase/supabase-js';
-import { isAuctionsEnabled } from './utils/featureFlags';
 import { Analytics } from '@vercel/analytics/react';
 
 // Components
@@ -248,16 +247,12 @@ function App() {
                                             <Route path="/collections/:address" element={<CollectionPage />} />
                                             <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
 
-                                            {/* Auction routes - only show if feature flag is enabled */}
-                                            {isAuctionsEnabled() && (
-                                                <>
-                                                    <Route path="/auctions/create" element={<CreateAuctionPage />} />
-                                                    <Route path="/auctions/:id" element={<AuctionDetailPage />} />
-                                                    <Route path="/my-auctions" element={<MyAuctionsPage />} />
-                                                    <Route path="/admin/paths" element={<AdminPathsPage />} />
-                                                    <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
-                                                </>
-                                            )}
+                                            {/* Auction routes - always enabled */}
+                                            <Route path="/auctions/create" element={<CreateAuctionPage />} />
+                                            <Route path="/auctions/:id" element={<AuctionDetailPage />} />
+                                            <Route path="/my-auctions" element={<MyAuctionsPage />} />
+                                            <Route path="/admin/paths" element={<AdminPathsPage />} />
+                                            <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
 
                                             {/* Fallback */}
                                             <Route path="*" element={<Navigate to="/" replace />} />
