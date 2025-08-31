@@ -15,7 +15,8 @@ import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
 import blockdustLogo from '../assets/blockdust-logo.png';
 // IMPORTANT: use on-chain ABI with auction events/functions
-import VtruMarketplaceArtifact from '../../contracts/blockdustmarketplace/artifacts/contracts/VTRUNFTMarketplace.sol/VTRUNFTMarketplace.json';
+// IMPORTANT: use on-chain ABI with auction events/functions
+import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 
 /* =========================
    On-chain collection name resolver
