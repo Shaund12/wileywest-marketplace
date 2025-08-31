@@ -30,11 +30,8 @@ const ric = window.requestIdleCallback || ((cb) => setTimeout(cb, 250));
                 message: e?.message || String(e?.reason || e),
                 stack: e?.error?.stack || e?.reason?.stack || null,
             });
-            // Expose to devtools
             window.__APP_ERRORS__ = buf;
-            // Optional: dispatch event for in-app toasts
             window.dispatchEvent(new CustomEvent('app:error', { detail: buf[buf.length - 1] }));
-            // Keep console noise useful
             console.error('[AppError]', buf[buf.length - 1]);
         };
         window.addEventListener('error', push);
@@ -47,15 +44,12 @@ function installPerfObservers() {
     if (!('PerformanceObserver' in window)) return;
     try {
         const emit = (metric) => {
-            // Hook for external sink
             if (typeof window.__APP_METRICS_HOOK === 'function') {
                 try { window.__APP_METRICS_HOOK(metric); } catch { }
             }
-            // Dev-friendly console in non-prod
             if (!import.meta.env.PROD) console.info('[PerfMetric]', metric);
         };
 
-        // Largest Contentful Paint
         const lcpObs = new PerformanceObserver((entryList) => {
             const entries = entryList.getEntries();
             const last = entries[entries.length - 1];
@@ -63,7 +57,6 @@ function installPerfObservers() {
         });
         lcpObs.observe({ type: 'largest-contentful-paint', buffered: true });
 
-        // Cumulative Layout Shift
         let clsValue = 0;
         const clsObs = new PerformanceObserver((entryList) => {
             for (const e of entryList.getEntries()) {
@@ -73,7 +66,6 @@ function installPerfObservers() {
         });
         clsObs.observe({ type: 'layout-shift', buffered: true });
 
-        // First Input Delay (approx via first-input)
         const fidObs = new PerformanceObserver((entryList) => {
             const first = entryList.getEntries()[0];
             if (first) {
@@ -85,17 +77,18 @@ function installPerfObservers() {
     } catch { /* ignore */ }
 }
 
-// Optional PWA registration (safe if plugin not installed)
+// Optional PWA registration without plugin dependency
 function registerPWA() {
     if (!('serviceWorker' in navigator)) return;
+    // Only attempt if you actually ship /sw.js (set VITE_ENABLE_SW=1 to opt-in)
+    if (!import.meta.env.VITE_ENABLE_SW) return;
     ric(async () => {
         try {
-            // vite-plugin-pwa virtual module (wrapped so it won't crash if absent)
-            const mod = await import(/* @vite-ignore */ 'virtual:pwa-register').catch(() => null);
-            if (mod?.registerSW) {
-                mod.registerSW({ immediate: true, onRegistered(r) { if (!import.meta.env.PROD) console.log('[PWA] SW registered', r); } });
-            }
-        } catch { /* ignore */ }
+            const reg = await navigator.serviceWorker.register('/sw.js'); // safe even if 404 (caught)
+            if (!import.meta.env.PROD) console.log('[PWA] SW registered', reg);
+        } catch (e) {
+            if (!import.meta.env.PROD) console.log('[PWA] SW registration skipped:', e?.message || e);
+        }
     });
 }
 
@@ -111,7 +104,6 @@ function registerPWA() {
         return;
     }
 
-    // Mark render timing
     try { performance.mark('app-render-start'); } catch { }
 
     ReactDOM.createRoot(rootEl).render(
@@ -127,7 +119,6 @@ function registerPWA() {
         if (m && !import.meta.env.PROD) console.info('[PerfMetric]', { name: 'APP_RENDER_MS', value: Math.round(m.duration) });
     } catch { }
 
-    // Defer non-critical work
     ric(() => {
         installPerfObservers();
         registerPWA();
