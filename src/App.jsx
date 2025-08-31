@@ -1,7 +1,6 @@
 ﻿import './styles.css';
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
-import { ethers } from 'ethers';
 import MarketplaceAbi from './abi/VTRUNFTMarketplace.json';
 import { createClient } from '@supabase/supabase-js';
 import { Analytics } from '@vercel/analytics/react';
@@ -49,50 +48,59 @@ try {
 const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
 const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '';
 
-// Small index component (optional)
-function CollectionsIndex() {
-    return (
-        <div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
-            <div className="hp-section__head"><h2>Collections</h2></div>
-            <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
-        </div>
-    );
-}
-
 // Alias so /collection/:address also works
 function CollectionAliasRedirect() {
     const { address } = useParams();
     return <Navigate to={`/collections/${address}`} replace />;
 }
 
-// Scroll to top on route change
+// Scroll to hash (anchors) or top on route change
 function ScrollToTop() {
-    const { pathname } = useLocation();
-    useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }, [pathname]);
+    const { pathname, hash } = useLocation();
+    useEffect(() => {
+        if (hash && hash.length > 1) {
+            const el = document.getElementById(hash.slice(1));
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+            }
+        }
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }, [pathname, hash]);
     return null;
 }
 
-// Lightweight route change progress bar (no deps)
+// Lightweight route change progress bar (reduced-motion aware)
 function RouteProgressBar() {
     const { pathname } = useLocation();
     const [visible, setVisible] = useState(false);
     const [width, setWidth] = useState(0);
 
     useEffect(() => {
-        let raf = 0, hideT = 0, growT = 0;
+        const prefersReduced = typeof window !== 'undefined' &&
+            window.matchMedia &&
+            window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        let growT = 0, finT = 0, hideT = 0;
         setVisible(true);
-        setWidth(8);
-        growT = window.setInterval(() => {
-            setWidth((w) => (w < 85 ? Math.min(85, w + 7) : w));
-        }, 60);
-        raf = window.setTimeout(() => {
-            setWidth(100);
-            hideT = window.setTimeout(() => { setVisible(false); setWidth(0); }, 240);
-        }, 320);
+        setWidth(prefersReduced ? 100 : 8);
+
+        if (!prefersReduced) {
+            growT = window.setInterval(() => {
+                setWidth((w) => (w < 85 ? Math.min(85, w + 7) : w));
+            }, 60);
+            finT = window.setTimeout(() => {
+                setWidth(100);
+                hideT = window.setTimeout(() => { setVisible(false); setWidth(0); }, 240);
+            }, 320);
+        } else {
+            // No animation: show briefly
+            hideT = window.setTimeout(() => { setVisible(false); setWidth(0); }, 160);
+        }
 
         return () => {
             window.clearInterval(growT);
-            window.clearTimeout(raf);
+            window.clearTimeout(finT);
             window.clearTimeout(hideT);
         };
     }, [pathname]);
@@ -208,11 +216,37 @@ function TitleSetter() {
     return null;
 }
 
+// Idle route prefetch (speeds up subsequent navigations)
+function useIdleRoutePrefetch() {
+    useEffect(() => {
+        const preloaders = [
+            () => import('./pages/MarketplacePage'),
+            () => import('./pages/HotListingsPage'),
+            () => import('./pages/SellPage'),
+            () => import('./pages/ProfilePage'),
+            () => import('./pages/CreateAuctionPage'),
+            () => import('./pages/MyAuctionsPage'),
+            () => import('./pages/AuctionDetailPage'),
+            () => import('./pages/VibeDashboardPage'),
+            () => import('./pages/CollectionPage'),
+            () => import('./pages/TermsPage'),
+            () => import('./pages/PrivacyPage'),
+        ];
+        const run = () => preloaders.forEach((fn, i) => setTimeout(() => { try { fn(); } catch { /* ignore */ } }, 50 + i * 60));
+        const ri = (window.requestIdleCallback || ((cb) => setTimeout(cb, 250)));
+        const id = ri(run, { timeout: 1500 });
+        return () => clearTimeout(id);
+    }, []);
+}
+
 function App() {
+    useIdleRoutePrefetch();
+
     return (
         <SupabaseProvider>
             <WalletProvider rpcUrl={rpcUrl}>
-                <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi}>
+                {/* Pass ABI array, not the whole artifact */}
+                <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi.abi}>
                     <BrowserRouter>
                         <RouteProgressBar />
                         <ScrollToTop />
@@ -243,7 +277,10 @@ function App() {
                                             <Route path="/privacy" element={<PrivacyPage />} />
 
                                             {/* collections routes */}
-                                            <Route path="/collections" element={<CollectionsIndex />} />
+                                            <Route path="/collections" element={<div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
+                                                <div className="hp-section__head"><h2>Collections</h2></div>
+                                                <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
+                                            </div>} />
                                             <Route path="/collections/:address" element={<CollectionPage />} />
                                             <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
 
@@ -262,7 +299,7 @@ function App() {
                             </div>
                             <Footer />
                         </div>
-                        <Analytics />
+                        {import.meta.env.PROD && <Analytics />}
                     </BrowserRouter>
                 </MarketplaceProvider>
             </WalletProvider>
