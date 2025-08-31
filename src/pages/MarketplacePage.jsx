@@ -618,8 +618,9 @@ function MarketplacePage() {
     /* ----------------------------
        Persist listings to Supabase cache (deduped)
        ---------------------------- */
+    // Persist listings to Supabase cache (deduped)
     useEffect(() => {
-        if (!isConnected) return;
+        if (!supabaseConnected) return;
         if (!Array.isArray(listings) || listings.length === 0) return;
 
         const active = listings.filter((l) => l.active && !(canceledListings?.has?.(String(l.id))));
@@ -642,7 +643,7 @@ function MarketplacePage() {
         }, 300);
 
         return () => clearTimeout(t);
-    }, [isConnected, listings, canceledListings, cacheListings]);
+    }, [supabaseConnected, listings, canceledListings, cacheListings]);
 
     /* ----------------------------
        Auctions: load from Supabase (if present) + conservative on-chain scan (events)
