@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { formatTokenAmount, getTokenInfo } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import './AuctionStyles.css';
@@ -228,16 +229,21 @@ function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 
 }
 
 function AuctionDetailPage() {
-    const { id } = useParams();
+    const { id: auctionId } = useParams();
     const navigate = useNavigate();
-    const { wallet, connect, provider } = useWallet();
-    const { status } = useMarketplace();
+    const { wallet, connect, provider, signer } = useWallet();
+    const { status, marketplaceAddress } = useMarketplace();
+    const { getCachedAuctions, getAuctionBids } = useSupabase();
     const [auction, setAuction] = useState(null);
     const [loading, setLoading] = useState(true);
     const [bidAmount, setBidAmount] = useState('');
+    const [bidding, setBidding] = useState(false);
+    const [settling, setSettling] = useState(false);
     const [timeLeft, setTimeLeft] = useState(0);
     const [currentPrice, setCurrentPrice] = useState(null);
     const [activeTab, setActiveTab] = useState('details');
+    const [nftMetadata, setNftMetadata] = useState({});
+    const [bids, setBids] = useState([]);
 
     // Set document title
     useEffect(() => {
@@ -246,7 +252,7 @@ function AuctionDetailPage() {
 
     useEffect(() => {
         loadAuction();
-    }, [id]);
+    }, [auctionId, provider, marketplaceAddress]);
 
     useEffect(() => {
         // Update countdown timer
@@ -275,13 +281,120 @@ function AuctionDetailPage() {
             setLoading(true);
             setAuction(null); // Clear existing auction
             
-            // TODO: Implement real auction loading from contract
-            // For now, show auction not found since there's no contract integration yet
+            if (!auctionId || !provider || !marketplaceAddress) {
+                return;
+            }
+
+            // Load auction from database first
+            const cachedAuction = await getCachedAuctions(null, marketplaceAddress);
+            const auctionData = cachedAuction.find(a => a.id.toString() === auctionId);
+            
+            if (auctionData) {
+                setAuction(auctionData);
+                
+                // Load current bid data
+                const bids = await getAuctionBids(auctionId);
+                setBids(bids);
+                
+                // Load NFT metadata if not already present
+                if (!auctionData.metadata && auctionData.nftContract && auctionData.tokenId) {
+                    loadNFTMetadata(auctionData.nftContract, auctionData.tokenId);
+                }
+            } else {
+                // Try loading from contract directly
+                try {
+                    const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+                    const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, provider);
+                    
+                    const auctionInfo = await marketplace.auctions(auctionId);
+                    if (auctionInfo && auctionInfo.seller !== ethers.ZeroAddress) {
+                        const processedAuction = {
+                            id: auctionId,
+                            seller: auctionInfo.seller,
+                            nftContract: auctionInfo.nftContract,
+                            tokenId: auctionInfo.tokenId.toString(),
+                            startTime: Number(auctionInfo.startTime),
+                            endTime: Number(auctionInfo.endTime),
+                            startingBid: auctionInfo.startingBid.toString(),
+                            reservePrice: auctionInfo.reservePrice.toString(),
+                            highestBid: auctionInfo.highestBid.toString(),
+                            highestBidder: auctionInfo.highestBidder,
+                            paymentToken: auctionInfo.paymentToken,
+                            settled: auctionInfo.settled,
+                            canceled: auctionInfo.canceled
+                        };
+                        
+                        setAuction(processedAuction);
+                        loadNFTMetadata(processedAuction.nftContract, processedAuction.tokenId);
+                    }
+                } catch (contractError) {
+                    console.warn('Could not load auction from contract:', contractError);
+                }
+            }
             
         } catch (error) {
             console.error('Error loading auction:', error);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const loadNFTMetadata = async (nftContract, tokenId) => {
+        try {
+            if (provider) {
+                const contract = new ethers.Contract(
+                    nftContract,
+                    [
+                        'function tokenURI(uint256) view returns (string)',
+                        'function uri(uint256) view returns (string)', // ERC1155
+                        'function name() view returns (string)',
+                        'function symbol() view returns (string)'
+                    ],
+                    provider
+                );
+
+                let tokenURI = '';
+                try {
+                    tokenURI = await contract.tokenURI(tokenId);
+                } catch {
+                    try {
+                        tokenURI = await contract.uri(tokenId);
+                    } catch {
+                        console.warn(`Could not get tokenURI for ${nftContract}:${tokenId}`);
+                    }
+                }
+
+                let metadata = {};
+                if (tokenURI) {
+                    try {
+                        // Handle IPFS URIs
+                        let metadataUrl = tokenURI;
+                        if (tokenURI.startsWith('ipfs://')) {
+                            metadataUrl = `https://cloudflare-ipfs.com/ipfs/${tokenURI.replace('ipfs://', '')}`;
+                        }
+
+                        const response = await fetch(metadataUrl);
+                        if (response.ok) {
+                            metadata = await response.json();
+                        }
+                    } catch (error) {
+                        console.warn(`Error fetching metadata from ${tokenURI}:`, error);
+                    }
+                }
+
+                // Try to get collection name
+                try {
+                    const name = await contract.name();
+                    const symbol = await contract.symbol();
+                    metadata.collection = { name, symbol };
+                } catch (error) {
+                    console.warn(`Error fetching collection info:`, error);
+                }
+
+                setNftMetadata(metadata);
+            }
+        } catch (error) {
+            console.warn(`Error loading metadata for ${nftContract}:${tokenId}:`, error);
         }
     };
 
@@ -291,18 +404,60 @@ function AuctionDetailPage() {
             return;
         }
 
-        if (!bidAmount) {
+        if (!bidAmount || !auction) {
             alert('Please enter a bid amount');
             return;
         }
 
-        // Note: Bidding functionality requires contract integration
-        alert('Bidding will be available once contract integration is complete.');
+        try {
+            setBidding(true);
+            
+            const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+            const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            
+            // Convert bid amount to wei
+            const bidAmountWei = ethers.parseEther(bidAmount.toString());
+            
+            // Place bid
+            const tx = await marketplace.placeBid(auctionId, { value: bidAmountWei });
+            await tx.wait();
+            
+            // Refresh auction data
+            loadAuction();
+            setBidAmount('');
+            
+        } catch (error) {
+            console.error('Error placing bid:', error);
+            alert(`Error placing bid: ${error.message || 'Transaction failed'}`);
+        } finally {
+            setBidding(false);
+        }
     };
 
     const handleSettle = async () => {
-        // Note: Settlement functionality requires contract integration
-        alert('Auction settlement will be available once contract integration is complete.');
+        if (!auction || !signer) {
+            return;
+        }
+
+        try {
+            setSettling(true);
+            
+            const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+            const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            
+            // Settle auction
+            const tx = await marketplace.settleAuction(auctionId);
+            await tx.wait();
+            
+            // Refresh auction data
+            loadAuction();
+            
+        } catch (error) {
+            console.error('Error settling auction:', error);
+            alert(`Error settling auction: ${error.message || 'Transaction failed'}`);
+        } finally {
+            setSettling(false);
+        }
     };
 
     const formatTimeLeft = () => {

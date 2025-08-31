@@ -2,9 +2,9 @@
  * Feature flags and safety utilities for auction functionality
  */
 
-// Check if auctions are enabled
+// Auctions are permanently enabled
 export function isAuctionsEnabled() {
-    return import.meta.env.VITE_ENABLE_AUCTIONS === '1';
+    return true;
 }
 
 // Get wallet allowlist for auction creation/settlement
@@ -38,9 +38,9 @@ export function getFeatureFlags() {
 
 // Check if user can perform auction actions
 export function canPerformAuctionAction(walletAddress, action = 'create') {
-    if (!isAuctionsEnabled()) return false;
+    // Auctions are always enabled
     
-    // For bid actions, anyone can bid if auctions are enabled
+    // For bid actions, anyone can bid
     if (action === 'bid') return true;
     
     // For create/settle, check allowlist
