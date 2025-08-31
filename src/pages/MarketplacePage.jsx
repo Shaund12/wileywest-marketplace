@@ -9,10 +9,13 @@ import MarketplaceStats from '../components/MarketplaceStats';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
+import { isAuctionsEnabled } from '../utils/featureFlags';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
 import blockdustLogo from '../assets/blockdust-logo.png';
+// IMPORTANT: use on-chain ABI with auction events/functions
+import VtruMarketplaceArtifact from '../../contracts/blockdustmarketplace/artifacts/contracts/VTRUNFTMarketplace.sol/VTRUNFTMarketplace.json';
 
 /* =========================
    On-chain collection name resolver
@@ -20,6 +23,14 @@ import blockdustLogo from '../assets/blockdust-logo.png';
 const ERC721_METADATA_ABI = [
     'function name() view returns (string)',
     'function symbol() view returns (string)',
+];
+
+const ERC721_URI_ABI = [
+    'function tokenURI(uint256 tokenId) view returns (string)',
+];
+
+const ERC1155_URI_ABI = [
+    'function uri(uint256 id) view returns (string)',
 ];
 
 const shortAddr = (a = '') => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
@@ -313,6 +324,15 @@ function coerceMs(v) {
     }
     return NaN;
 }
+const timeLeft = (endMs) => {
+    const d = Math.max(0, endMs - Date.now());
+    const s = Math.floor(d / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    if (h > 0) return `${h}h ${m % 60}m`;
+    if (m > 0) return `${m}m ${s % 60}s`;
+    return `${s}s`;
+};
 
 /* =========================
    UI Prefs persistence
@@ -341,10 +361,11 @@ function MarketplacePage() {
         isInitialized,
         marketplaceStats,
         canceledListings,
+        marketplaceAddress, // + address for contracts
     } = useMarketplace();
 
     const { wallet, connect, provider } = useWallet();
-    const { cacheListings, isConnected } = useSupabase();
+    const { cacheListings, isConnected: supabaseConnected, supabase } = useSupabase();
 
     const prefs = useRef(loadPrefs());
 
@@ -382,6 +403,11 @@ function MarketplacePage() {
     const [autoRefreshMs, setAutoRefreshMs] = useState(prefs.current.autoRefreshMs || 60000);
     const [autoLoadNext, setAutoLoadNext] = useState(Boolean(prefs.current.autoLoadNext));
     const [nextRefreshAt, setNextRefreshAt] = useState(null);
+
+    // NEW: Auctions state
+    const [auctions, setAuctions] = useState([]);
+    const [isAuctionsLoading, setIsAuctionsLoading] = useState(false);
+    const auctionsEnabled = isAuctionsEnabled();
 
     const topRef = useRef(null);
     const hasLoadedRef = useRef(false);
@@ -440,8 +466,10 @@ function MarketplacePage() {
         for (const c of collections || []) if (c?.address) s.add(c.address.toLowerCase());
         if (featuredNFT?.nftContract) s.add(featuredNFT.nftContract.toLowerCase());
         for (const addr of selectedCollections || []) s.add(addr.toLowerCase());
+        // include auctions collections
+        for (const a of auctions || []) if (a.nftContract) s.add(a.nftContract.toLowerCase());
         return Array.from(s);
-    }, [collections, featuredNFT, selectedCollections]);
+    }, [collections, featuredNFT, selectedCollections, auctions]);
 
     const nameMap = useCollectionNames(addressesNeedingNames, provider);
 
@@ -519,6 +547,7 @@ function MarketplacePage() {
             setNextRefreshAt(Date.now() + autoRefreshMs);
             try {
                 await fetchListings(true);
+                if (auctionsEnabled) await fetchAuctions(false);
             } catch (e) {
                 console.warn('[Marketplace] Auto-refresh failed:', e);
             } finally {
@@ -529,20 +558,20 @@ function MarketplacePage() {
         };
         const id = setTimeout(tick, autoRefreshMs);
         return () => { active = false; clearTimeout(id); };
-    }, [autoRefreshEnabled, autoRefreshMs, fetchListings]);
+    }, [autoRefreshEnabled, autoRefreshMs, fetchListings, auctionsEnabled]);
 
     useEffect(() => {
         const onKey = (e) => {
             if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
             if (e.key === '/') { e.preventDefault(); searchInputRef.current?.focus(); }
-            if (e.key.toLowerCase() === 'r') { fetchListings(true); }
+            if (e.key.toLowerCase() === 'r') { fetchListings(true); if (auctionsEnabled) fetchAuctions(false); }
             if (e.key.toLowerCase() === 'd') { deepRescan(); }
             if (e.key.toLowerCase() === 'g') { setViewMode('grid'); }
             if (e.key.toLowerCase() === 'l') { setViewMode('list'); }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [fetchListings, deepRescan]);
+    }, [fetchListings, deepRescan, auctionsEnabled]);
 
     /* ----------------------------
        Load listings
@@ -553,6 +582,7 @@ function MarketplacePage() {
                 try {
                     setIsLoading(true);
                     await fetchListings();
+                    if (auctionsEnabled) await fetchAuctions(false);
                     hasLoadedRef.current = true;
                 } catch (error) {
                     console.error('[Marketplace] Error fetching listings:', error);
@@ -573,6 +603,7 @@ function MarketplacePage() {
                     await deepRescan();
                 } else {
                     await fetchListings(true);
+                    if (auctionsEnabled) await fetchAuctions(false);
                 }
             } catch (error) {
                 console.error('[Marketplace] Refresh error:', error);
@@ -581,7 +612,7 @@ function MarketplacePage() {
             }
         };
         return () => { delete window.refreshMarketplace; };
-    }, [isInitialized, fetchListings, setStatus, deepRescan]);
+    }, [isInitialized, fetchListings, setStatus, deepRescan, auctionsEnabled]);
 
     /* ----------------------------
        Persist listings to Supabase cache (deduped)
@@ -611,6 +642,162 @@ function MarketplacePage() {
 
         return () => clearTimeout(t);
     }, [isConnected, listings, canceledListings, cacheListings]);
+
+    /* ----------------------------
+       Auctions: load from Supabase (if present) + conservative on-chain scan (events)
+       ---------------------------- */
+    const resolveIpfs = (uri) => {
+        if (!uri) return null;
+        if (uri.startsWith('ipfs://')) return `${IPFS_GATEWAYS[0]}${uri.replace('ipfs://', '')}`;
+        return uri;
+    };
+    const fetchTokenMetadata = async (nftContract, tokenId, is1155) => {
+        try {
+            if (!provider) return {};
+            const abi = is1155 ? ERC1155_URI_ABI : ERC721_URI_ABI;
+            const c = new ethers.Contract(nftContract, abi, provider);
+            let tokenURI;
+            if (is1155) {
+                tokenURI = await c.uri(tokenId);
+                // replace {id} with 64-hex as per ERC1155 standard
+                const hexId = BigInt(tokenId).toString(16).padStart(64, '0');
+                tokenURI = tokenURI.replace('{id}', hexId);
+            } else {
+                tokenURI = await c.tokenURI(tokenId);
+            }
+            const url = resolveIpfs(tokenURI);
+            const r = await fetch(url, { headers: { Accept: 'application/json' } });
+            if (!r.ok) return {};
+            const j = await r.json();
+            let image = j.image || j.image_url || j.imageUrl || null;
+            if (image && image.startsWith('ipfs://')) image = resolveIpfs(image);
+            const name = j.name || '';
+            return { image, name, raw: j, tokenURI };
+        } catch {
+            return {};
+        }
+    };
+
+    const fetchAuctions = useCallback(async (showStatus = true) => {
+        if (!auctionsEnabled) { setAuctions([]); return; }
+        if (!provider || !marketplaceAddress) return;
+
+        setIsAuctionsLoading(true);
+        try {
+            // 1) Try Supabase tables if present (lightweight)
+            let rows = [];
+            if (supabaseConnected && supabase) {
+                const candidates = ['auctions', 'marketplace_auctions', 'auction_listings'];
+                for (const table of candidates) {
+                    try {
+                        const { data, error } = await supabase
+                            .from(table)
+                            .select('*')
+                            .order('created_at', { ascending: false })
+                            .limit(100);
+                        if (!error && Array.isArray(data) && data.length) {
+                            rows = data;
+                            break;
+                        }
+                    } catch { /* ignore */ }
+                }
+            }
+
+            const normalizedFromDb = rows.map(r => ({
+                source: 'db',
+                id: String(r.id ?? r.auction_id ?? ''),
+                nftContract: (r.nft_contract || r.contract || '').toLowerCase(),
+                tokenId: String(r.token_id ?? r.tokenId ?? ''),
+                seller: (r.seller || '').toLowerCase(),
+                paymentToken: r.payment_token || ethers.ZeroAddress,
+                reservePrice: String(r.reserve_price ?? r.reservePrice ?? '0'),
+                startPrice: String(r.start_price ?? r.startPrice ?? '0'),
+                startTime: Number(coerceMs(r.start_time || r.startTime)) || 0,
+                endTime: Number(coerceMs(r.end_time || r.ends_at || r.endTime)) || 0,
+                highestBid: String(r.highest_bid ?? r.highestBid ?? '0'),
+                highestBidder: (r.highest_bidder || r.highestBidder || '').toLowerCase(),
+                isERC1155: !!r.is_erc1155,
+                quantity: String(r.quantity ?? '1'),
+                image: r.image_url || null,
+                name: r.name || null,
+                status: (r.status || '').toLowerCase(),
+            }));
+
+            // 2) Conservative on-chain scan for AuctionCreated events (recent 50k blocks)
+            const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, provider);
+            let chainAuctions = [];
+            try {
+                const current = await provider.getBlockNumber();
+                const fromBlock = Math.max(0, current - 50000);
+                if (showStatus) setStatus?.(`Scanning recent auctions ${fromBlock}-${current}...`);
+                const created = await contract.queryFilter(contract.filters.AuctionCreated(), fromBlock, current);
+
+                // Limit processing to avoid heavy scanning
+                const toProcess = created.slice(-100); // last 100
+                // For each event, read current auction state from storage
+                chainAuctions = await Promise.all(toProcess.map(async (ev) => {
+                    try {
+                        const auctionId = String(ev.args?.auctionId?.toString?.() || ev.args?.[0]?.toString?.() || '');
+                        if (!auctionId) return null;
+                        const a = await contract.auctions(auctionId);
+                        // Active = started && !settled && now < endTime
+                        const endSec = Number(a.endTime || 0);
+                        const endMs = endSec ? endSec * 1000 : 0;
+                        const active = Boolean(a.started) && !Boolean(a.settled) && (endMs ? (Date.now() < endMs) : true);
+
+                        // Lightweight metadata fetch
+                        const meta = await fetchTokenMetadata(a.nftContract, a.tokenId?.toString?.() || '0', Boolean(a.isERC1155));
+
+                        return {
+                            source: 'chain',
+                            id: auctionId,
+                            nftContract: (a.nftContract || '').toLowerCase(),
+                            tokenId: String(a.tokenId?.toString?.() || '0'),
+                            seller: (a.seller || '').toLowerCase(),
+                            paymentToken: a.paymentToken || ethers.ZeroAddress,
+                            reservePrice: String(a.reservePrice || '0'),
+                            startPrice: String(a.startPrice || '0'),
+                            startTime: Number(a.startTime || 0) * 1000,
+                            endTime: endMs,
+                            highestBid: String(a.highestBid || '0'),
+                            highestBidder: (a.highestBidder || '').toLowerCase(),
+                            isERC1155: Boolean(a.isERC1155),
+                            quantity: String(a.quantity || '1'),
+                            image: meta.image || null,
+                            name: meta.name || null,
+                            active,
+                        };
+                    } catch {
+                        return null;
+                    }
+                }));
+                chainAuctions = chainAuctions.filter(Boolean);
+            } catch (e) {
+                console.warn('[Auctions] Chain scan failed:', e?.message || e);
+            }
+
+            // Merge DB + chain, prefer chain state for activeness and latest bids
+            const byId = new Map();
+            for (const a of normalizedFromDb) byId.set(a.id, a);
+            for (const a of chainAuctions) byId.set(a.id, { ...(byId.get(a.id) || {}), ...a });
+
+            // Only keep active or recently ended (last 6h) to avoid noise
+            const recentCutoff = Date.now() - 6 * 60 * 60 * 1000;
+            const merged = Array.from(byId.values())
+                .filter(a => {
+                    const endMs = a.endTime;
+                    if (!endMs) return true;
+                    if (Date.now() < endMs) return true;
+                    return endMs >= recentCutoff; // ended recently
+                })
+                .sort((a, b) => (a.endTime || 0) - (b.endTime || 0)); // ending soonest first
+
+            setAuctions(merged);
+            if (showStatus) setTimeout(() => setStatus?.(''), 2000);
+        } finally {
+            setIsAuctionsLoading(false);
+        }
+    }, [auctionsEnabled, provider, marketplaceAddress, supabaseConnected, supabase, setStatus]);
 
     /* ----------------------------
        Process listings & compute enhanced stats (incl. HOT/NEW signals)
@@ -711,9 +898,9 @@ function MarketplacePage() {
                             convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider)
                                 .then((usdcPrice) => {
                                     hasAnyUSDCRates = true;
-                                    return { listing, usdcPrice, hasRate: true, ts, isRecent };
+                                    return { listing, usdcPrice, hasRate: true, isRecent, ts };
                                 })
-                                .catch(() => ({ listing, usdcPrice: 0, hasRate: false, ts, isRecent }))
+                                .catch(() => ({ listing, usdcPrice: 0, hasRate: false, isRecent, ts }))
                         );
                     }
 
@@ -774,14 +961,13 @@ function MarketplacePage() {
                     }
                 } catch (error) {
                     console.error('Error processing listings with enhanced stats:', error);
-                    // Fallback (no USDC conversion): compute basic recency signals with native amounts
+                    // Fallback (no USDC conversion)
                     const activeListings = listings.filter(
                         (listing) => listing.active && !canceledListings.has(listing.id?.toString())
                     );
                     const collectionMap = {};
                     let totalVolume = 0;
                     let lowestPrice = Infinity;
-                    const cutoff = nowMs() - RECENT_WINDOW_MS;
 
                     activeListings.forEach((listing) => {
                         const collectionAddress = listing.nftContract;
@@ -820,7 +1006,7 @@ function MarketplacePage() {
                                 firstTs: Number.POSITIVE_INFINITY,
                                 lastTs: 0,
                                 recentListings: 0,
-                                recentVolume: 0, // in native units here
+                                recentVolume: 0,
                             };
                         }
 
@@ -833,7 +1019,7 @@ function MarketplacePage() {
                             coerceMs(listing.blockTimestamp) ??
                             coerceMs(listing.listedAt);
                         const ts = Number.isFinite(tsCandidate) ? tsCandidate : 0;
-                        const isRecent = ts >= cutoff && ts > 0;
+                        const isRecent = ts >= nowMs() - RECENT_WINDOW_MS && ts > 0;
 
                         collectionMap[collectionAddress].items.push(listing);
                         collectionMap[collectionAddress].totalVolume += priceInEth;
@@ -1201,6 +1387,79 @@ function MarketplacePage() {
                 </div>
             </div>
 
+            {/* Live Auctions */}
+            {auctionsEnabled && (
+                <section className="live-auctions">
+                    <div className="section-header">
+                        <h2>Live Auctions</h2>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <button
+                                className="refresh-button"
+                                onClick={() => fetchAuctions(true)}
+                                disabled={isAuctionsLoading}
+                                title="Refresh auctions"
+                            >
+                                <RefreshIcon /> {isAuctionsLoading ? 'Loading...' : 'Refresh Auctions'}
+                            </button>
+                            <Link to="/auctions/create" className="see-all-button">Create Auction →</Link>
+                        </div>
+                    </div>
+
+                    {auctions.length > 0 ? (
+                        <div className="auctions-grid">
+                            {auctions.slice(0, 8).map((a) => {
+                                const endMs = a.endTime || 0;
+                                const endsIn = endMs ? timeLeft(endMs) : '—';
+                                const hasBid = ethers.getBigInt(a.highestBid || 0) > 0n;
+                                const price = hasBid ? a.highestBid : a.startPrice;
+                                const title = a.name || `#${a.tokenId}`;
+                                const collectionLabel = labelForAddress(a.nftContract, '');
+                                return (
+                                    <Link
+                                        key={a.id}
+                                        to={`/collections/${a.nftContract}`}
+                                        className="auction-card"
+                                        aria-label={`Open auction ${title}`}
+                                    >
+                                        <div className="auction-image">
+                                            <SmartImage
+                                                srcList={[a.image]}
+                                                alt={title}
+                                                width={320}
+                                                height={200}
+                                                seed={`${a.nftContract}-${a.tokenId}`}
+                                                title={title}
+                                            />
+                                            <div className="auction-badge">AUCTION</div>
+                                        </div>
+                                        <div className="auction-details">
+                                            <h3 title={title}>{title}</h3>
+                                            <p className="auction-collection" title={collectionLabel}>{collectionLabel}</p>
+                                            <div className="auction-meta">
+                                                <div className="meta">
+                                                    <span className="label">{hasBid ? 'Highest Bid' : 'Start Price'}</span>
+                                                    <span className="value">{formatPrice(price)} VTRU</span>
+                                                </div>
+                                                <div className="meta">
+                                                    <span className="label">Ends In</span>
+                                                    <span className="value">{endsIn}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </Link>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="empty-state card" style={{ marginTop: 8 }}>
+                            <div className="empty-icon">🏷️</div>
+                            <h3>No live auctions</h3>
+                            <p>Auctions you create or bid on will appear here.</p>
+                        </div>
+                    )}
+                </section>
+            )}
+
             {/* Popular Collections Carousel */}
             <section className="hot-collections">
                 <div className="section-header">
@@ -1436,7 +1695,7 @@ function MarketplacePage() {
                     <div className="marketplace-actions">
                         <button
                             className="refresh-button"
-                            onClick={() => fetchListings(true)}
+                            onClick={() => { fetchListings(true); if (auctionsEnabled) fetchAuctions(true); }}
                             disabled={isLoading}
                             title="Refresh listings from blockchain (R)"
                         >
