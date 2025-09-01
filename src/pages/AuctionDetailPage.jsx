@@ -477,9 +477,9 @@ function AuctionDetailPage() {
             debugLog(`🔨 Placing bid for auction ${auctionId} with amount ${bidAmount} VTRU`);
             debugLog(`💰 Payment token: ${auction.paymentToken}, isNative: ${isNativeToken}`);
             
-            // Place bid with correct parameters (auctionId, amount)
+            // Place bid with correct parameters - for native tokens, amount should be 0 and value contains the bid
             const tx = isNativeToken 
-                ? await marketplace.bid(auctionId, bidAmountWei, { value: bidAmountWei })
+                ? await marketplace.bid(auctionId, 0, { value: bidAmountWei })
                 : await marketplace.bid(auctionId, bidAmountWei);
             
             debugLog(`✅ Bid transaction submitted: ${tx.hash}`);
