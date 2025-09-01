@@ -10,8 +10,8 @@ import { debugLog, debugWarn, criticalError } from './debugUtils';
  * Configuration for marketplace scanning and display
  */
 export const MARKETPLACE_CONFIG = {
-    // Scan range for marketplace listings (configurable)
-    MAX_LISTING_SCAN: parseInt(import.meta.env?.VITE_MAX_LISTING_SCAN) || 50,
+    // Scan range for marketplace listings (configurable) - Increased to find all active listings
+    MAX_LISTING_SCAN: parseInt(import.meta.env?.VITE_MAX_LISTING_SCAN) || 500,
     MIN_LISTING_SCAN: 1,
     
     // Contract call timeouts

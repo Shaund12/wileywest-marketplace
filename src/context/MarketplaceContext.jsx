@@ -1117,8 +1117,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             const res = [];
             const maxScanRange = MARKETPLACE_CONFIG.MAX_LISTING_SCAN;
             
-            debugLog(`🔍 Scanning listings from ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN} to ${maxScanRange}`);
-            setStatus(`Scanning listings ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN}-${maxScanRange}...`);
+            debugLog(`🔍 Scanning listings from ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN} to ${maxScanRange} (expanded range to find all active listings)`);
+            setStatus(`Scanning listings ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN}-${maxScanRange} (expanded range)...`);
             
             let activeListingsFound = 0;
             let scannedCount = 0;
@@ -1126,9 +1126,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             for (let i = MARKETPLACE_CONFIG.MIN_LISTING_SCAN; i <= maxScanRange; i++) {
                 scannedCount++;
                 
-                // Update progress every 10 listings
-                if (scannedCount % 10 === 0) {
-                    setStatus(`Scanned ${scannedCount}/${maxScanRange} listings, found ${activeListingsFound} active...`);
+                // Update progress every 25 listings for expanded range
+                if (scannedCount % 25 === 0 || scannedCount <= 50) {
+                    setStatus(`Found ${activeListingsFound} active listings out of ${scannedCount} scanned (${Math.round(scannedCount/maxScanRange*100)}% complete)...`);
                 }
                 try {
                     const listing = await marketplace.listings(i);
