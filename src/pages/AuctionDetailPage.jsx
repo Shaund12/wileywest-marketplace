@@ -334,7 +334,11 @@ function AuctionDetailPage() {
                 // Try loading from contract directly
                 try {
                     const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-                    const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, provider);
+                    const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+                    if (!abi || !Array.isArray(abi)) {
+                        throw new Error('Invalid ABI structure - ABI must be an array');
+                    }
+                    const marketplace = new ethers.Contract(marketplaceAddress, abi, provider);
                     
                     debugLog(`🔗 Calling marketplace.auctions(${auctionId})...`);
                     const auctionInfo = await marketplace.auctions(auctionId);
@@ -459,7 +463,11 @@ function AuctionDetailPage() {
             setBidding(true);
             
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplace = new ethers.Contract(marketplaceAddress, abi, signer);
             
             // Convert bid amount to wei
             const bidAmountWei = ethers.parseEther(bidAmount.toString());
@@ -489,7 +497,11 @@ function AuctionDetailPage() {
             setSettling(true);
             
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplace = new ethers.Contract(marketplaceAddress, abi, signer);
             
             // Settle auction
             const tx = await marketplace.settleAuction(auctionId);

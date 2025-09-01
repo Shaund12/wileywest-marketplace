@@ -412,7 +412,11 @@ function MyAuctionsPage() {
 
             // Import marketplace ABI and create contract instance
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplaceContract = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, signer);
 
             // Cancel the auction
             const tx = await marketplaceContract.cancelAuction(auction.id);
@@ -445,7 +449,11 @@ function MyAuctionsPage() {
 
             // Import marketplace ABI and create contract instance
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplaceContract = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, signer);
 
             // Settle the auction
             const tx = await marketplaceContract.settleAuction(auction.id);
