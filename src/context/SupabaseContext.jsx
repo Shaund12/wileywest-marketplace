@@ -831,15 +831,28 @@ export function SupabaseProvider({ children }) {
                 }
             }
 
-            // Try to order by timestamp, fallback to created_at if timestamp doesn't exist
-            try {
-                query = query.order('timestamp', { ascending: false });
-            } catch (timestampError) {
-                debugWarn('⚠️ timestamp column not found, using created_at instead');
-                query = query.order('created_at', { ascending: false });
-            }
+            // Try different ordering strategies based on available columns
+            let { data, error } = await query.order('created_at', { ascending: false });
 
-            const { data, error } = await query;
+            // If created_at fails, try id ordering as fallback
+            if (error && error.message?.includes('created_at')) {
+                debugWarn('⚠️ created_at column not found, trying id ordering...');
+                query = supabase.from('auctions').select('*');
+                
+                if (sellerAddress) {
+                    query = query.eq('seller', sellerAddress.toLowerCase());
+                }
+                if (marketplaceAddress) {
+                    const validMarketplaceAddress = marketplaceAddress.toLowerCase();
+                    if (validMarketplaceAddress && validMarketplaceAddress !== 'undefined' && validMarketplaceAddress !== 'null') {
+                        query = query.eq('marketplace_address', validMarketplaceAddress);
+                    }
+                }
+                
+                const fallbackResult = await query.order('id', { ascending: false });
+                data = fallbackResult.data;
+                error = fallbackResult.error;
+            }
 
             if (error) {
                 debugWarn('Error fetching cached auctions:', error);
@@ -852,18 +865,60 @@ export function SupabaseProvider({ children }) {
                     const localAuctions = keys.map(key => {
                         try {
                             const auctionData = JSON.parse(localStorage.getItem(key));
-                            // Ensure auction has valid ID
-                            if (!auctionData.id && !auctionData.auctionId && auctionData.auction_id) {
-                                auctionData.id = auctionData.auction_id;
-                                auctionData.auctionId = auctionData.auction_id;
-                            }
-                            return auctionData;
+                            // Normalize auction data structure
+                            const normalizedAuction = {
+                                id: auctionData.id || auctionData.auctionId || auctionData.auction_id,
+                                auctionId: auctionData.auctionId || auctionData.id || auctionData.auction_id,
+                                seller: auctionData.seller || '0x0000000000000000000000000000000000000000',
+                                nftContract: auctionData.nftContract || auctionData.nft_contract || '0x0000000000000000000000000000000000000000',
+                                tokenId: auctionData.tokenId || auctionData.token_id || '0',
+                                quantity: auctionData.quantity || '1',
+                                reservePrice: auctionData.reservePrice || auctionData.reserve_price || '0',
+                                startPrice: auctionData.startPrice || auctionData.start_price || auctionData.startingBid || '0',
+                                endTime: auctionData.endTime || auctionData.end_time || Math.floor(Date.now() / 1000) + 86400,
+                                paymentToken: auctionData.paymentToken || auctionData.payment_token || ethers.ZeroAddress,
+                                minBidIncrementBps: auctionData.minBidIncrementBps || auctionData.min_bid_increment_bps || 500,
+                                antiSnipeSeconds: auctionData.antiSnipeSeconds || auctionData.anti_snipe_seconds || 300,
+                                highestBid: auctionData.highestBid || auctionData.highest_bid || '0',
+                                highestBidder: auctionData.highestBidder || auctionData.highest_bidder || '0x0000000000000000000000000000000000000000',
+                                settled: auctionData.settled || false,
+                                transactionHash: auctionData.transactionHash || auctionData.transaction_hash || `0x${'0'.repeat(64)}`,
+                                blockNumber: auctionData.blockNumber || auctionData.block_number || 0,
+                                timestamp: auctionData.timestamp || Math.floor(Date.now() / 1000),
+                                metadata: auctionData.metadata || {}
+                            };
+                            
+                            return normalizedAuction;
                         } catch (e) {
+                            debugWarn('Error parsing localStorage auction:', e);
                             return null;
                         }
-                    }).filter(auction => auction && (auction.id || auction.auctionId));
+                    }).filter(auction => {
+                        if (!auction) return false;
+                        
+                        // Ensure auction has valid ID and is not undefined
+                        const hasValidId = auction.id && 
+                                         auction.id !== 'undefined' && 
+                                         auction.id !== 'null' && 
+                                         auction.id !== undefined &&
+                                         auction.id !== null;
+                        
+                        // Filter by seller if specified
+                        if (sellerAddress && auction.seller && auction.seller.toLowerCase() !== sellerAddress.toLowerCase()) {
+                            return false;
+                        }
+                        
+                        return hasValidId;
+                    });
                     
                     debugLog(`📦 Retrieved ${localAuctions.length} auctions from localStorage fallback`);
+                    if (localAuctions.length > 0) {
+                        setCache(cacheKey, localAuctions, 'auctions');
+                        
+                        // Log auction IDs for debugging
+                        const auctionIds = localAuctions.map(a => a.id || a.auctionId).filter(Boolean);
+                        debugLog(`🆔 Auction IDs found: [${auctionIds.join(', ')}]`);
+                    }
                     return localAuctions;
                 } catch (e) {
                     debugWarn('localStorage fallback error:', e);
@@ -940,15 +995,21 @@ export function SupabaseProvider({ children }) {
                 .select('*')
                 .eq('auction_id', auctionId);
 
-            // Try to order by timestamp, fallback to created_at if timestamp doesn't exist
-            try {
-                query = query.order('timestamp', { ascending: false });
-            } catch (timestampError) {
-                debugWarn('⚠️ timestamp column not found in auction_bids, using created_at instead');
-                query = query.order('created_at', { ascending: false });
-            }
+            // Try different ordering strategies based on available columns
+            let { data, error } = await query.order('created_at', { ascending: false });
 
-            const { data, error } = await query;
+            // If created_at fails, try id ordering as fallback
+            if (error && error.message?.includes('created_at')) {
+                debugWarn('⚠️ created_at column not found in auction_bids, trying id ordering...');
+                query = supabase
+                    .from('auction_bids')
+                    .select('*')
+                    .eq('auction_id', auctionId);
+                    
+                const fallbackResult = await query.order('id', { ascending: false });
+                data = fallbackResult.data;
+                error = fallbackResult.error;
+            }
 
             if (error) {
                 debugWarn('Error fetching auction bids:', error);

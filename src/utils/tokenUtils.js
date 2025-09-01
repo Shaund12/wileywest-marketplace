@@ -266,6 +266,11 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         throw new Error(`No USDC pool for token ${tokenAddress}`);
     }
     
+    // Validate token address first
+    if (!tokenAddress || tokenAddress === 'undefined' || tokenAddress === 'null') {
+        throw new Error(`No USDC pool for token ${tokenAddress}`);
+    }
+    
     const normalized = String(tokenAddress).toLowerCase();
 
     if (priceCache[normalized] && (now - priceCache[normalized].timestamp) < PRICE_CACHE_DURATION) {

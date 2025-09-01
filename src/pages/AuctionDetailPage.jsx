@@ -6,6 +6,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { formatTokenAmount, getTokenInfo } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
 import './SellPage.css';
@@ -14,25 +15,21 @@ import './SellPage.css';
    IPFS/IPNS/Arweave + SmartMedia (self-contained utilities)
    ========================================================= */
 const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/',
-    'https://cf-ipfs.com/ipfs/',
-    'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://infura-ipfs.io/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/',
-    'https://ipfs.io/ipfs/',
+    'https://ipfs.io/ipfs/',              // Official gateway - most reliable
+    'https://dweb.link/ipfs/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipfs/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
+    'https://4everland.io/ipfs/',         // 4everland gateway
 ];
 
 const IPNS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipns/',
-    'https://cf-ipfs.com/ipns/',
-    'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/',
-    'https://infura-ipfs.io/ipns/',
-    'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/',
-    'https://ipfs.io/ipns/',
+    'https://ipfs.io/ipns/',              // Official gateway - most reliable
+    'https://dweb.link/ipns/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipns/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipns/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipns/',      // NFT.Storage gateway
+    'https://4everland.io/ipns/',         // 4everland gateway
 ];
 
 const isString = (v) => typeof v === 'string' && v.trim().length > 0;
@@ -400,82 +397,20 @@ function AuctionDetailPage() {
     };
 
     const loadNFTMetadata = async (nftContract, tokenId) => {
+        if (!nftContract || !tokenId || !provider) {
+            debugWarn('Missing required parameters for metadata loading');
+            return;
+        }
+
         try {
-            if (!provider || !nftContract || tokenId === undefined || tokenId === null) {
-                debugWarn('Missing required params for metadata loading:', { provider: !!provider, nftContract, tokenId });
-                return;
-            }
-
-            debugLog(`🔍 Loading metadata for ${nftContract}:${tokenId}`);
-
-            const contract = new ethers.Contract(
-                nftContract,
-                [
-                    'function tokenURI(uint256) view returns (string)',
-                    'function uri(uint256) view returns (string)', // ERC1155
-                    'function name() view returns (string)',
-                    'function symbol() view returns (string)'
-                ],
-                provider
-            );
-
-            let tokenURI = '';
-            try {
-                tokenURI = await contract.tokenURI(tokenId);
-                debugLog(`📋 TokenURI: ${tokenURI}`);
-            } catch {
-                try {
-                    tokenURI = await contract.uri(tokenId);
-                    debugLog(`📋 URI (ERC1155): ${tokenURI}`);
-                } catch {
-                    debugWarn(`Could not get tokenURI for ${nftContract}:${tokenId}`);
-                }
-            }
-
-            let metadata = {};
-            if (tokenURI && tokenURI !== '') {
-                try {
-                    // Handle IPFS URIs and other formats
-                    let metadataUrl = tokenURI;
-                    if (tokenURI.startsWith('ipfs://')) {
-                        metadataUrl = `https://cloudflare-ipfs.com/ipfs/${tokenURI.replace('ipfs://', '')}`;
-                    } else if (tokenURI.startsWith('ar://')) {
-                        metadataUrl = `https://arweave.net/${tokenURI.slice(5)}`;
-                    }
-
-                    debugLog(`🌐 Fetching metadata from: ${metadataUrl}`);
-                    const response = await fetch(metadataUrl, { timeout: 10000 });
-                    if (response.ok) {
-                        metadata = await response.json();
-                        debugLog(`✅ Metadata loaded:`, metadata);
-                    } else {
-                        debugWarn(`Failed to fetch metadata: ${response.status} ${response.statusText}`);
-                    }
-                } catch (error) {
-                    debugWarn(`Error fetching metadata from ${tokenURI}:`, error);
-                }
-            }
-
-            // Try to get collection name
-            try {
-                const name = await contract.name();
-                const symbol = await contract.symbol();
-                metadata.collection = { name, symbol };
-                debugLog(`✅ Collection info: ${name} (${symbol})`);
-            } catch (error) {
-                debugWarn(`Error fetching collection info:`, error);
-            }
-
-            // Ensure we have at least basic metadata structure
-            if (!metadata.name && !metadata.image) {
-                metadata = {
-                    name: `Token #${tokenId}`,
-                    description: `NFT Token #${tokenId} from collection ${nftContract}`,
-                    image: null,
-                    ...metadata
-                };
-            }
-
+            debugLog(`🎨 Loading enhanced metadata for ${nftContract}:${tokenId}`);
+            
+            // Use the robust metadata loader with existing auction metadata as a starting point
+            const existingMetadata = auction?.metadata || nftMetadata;
+            const metadata = await loadMetadata(nftContract, tokenId, provider, existingMetadata);
+            
+            debugLog(`✅ Enhanced metadata loaded successfully:`, metadata);
+            
             setNftMetadata(metadata);
             // Also update the auction object with metadata for SmartMedia component
             setAuction(prev => ({
@@ -484,13 +419,24 @@ function AuctionDetailPage() {
             }));
 
         } catch (error) {
-            debugWarn(`Error loading metadata for ${nftContract}:${tokenId}:`, error);
+            criticalError(`Error loading enhanced metadata for ${nftContract}:${tokenId}:`, error);
+            
             // Set fallback metadata
             const fallbackMetadata = {
                 name: `Token #${tokenId}`,
                 description: `NFT Token #${tokenId}`,
-                image: null
+                image: 'https://picsum.photos/seed/default/300/300',
+                imageUrl: 'https://picsum.photos/seed/default/300/300',
+                attributes: [],
+                collection: null,
+                contractAddress: nftContract,
+                tokenId: tokenId,
+                loaded: true,
+                loading: false,
+                error: error.message,
+                timestamp: Date.now()
             };
+            
             setNftMetadata(fallbackMetadata);
             setAuction(prev => ({
                 ...prev,
