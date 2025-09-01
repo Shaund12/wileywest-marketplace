@@ -442,6 +442,11 @@ function AuctionDetailPage() {
                 }
 
                 setNftMetadata(metadata);
+                // Also update the auction object with metadata for SmartMedia component
+                setAuction(prev => ({
+                    ...prev,
+                    metadata: metadata
+                }));
             }
         } catch (error) {
             debugWarn(`Error loading metadata for ${nftContract}:${tokenId}:`, error);
@@ -473,7 +478,7 @@ function AuctionDetailPage() {
             const bidAmountWei = ethers.parseEther(bidAmount.toString());
             
             // Place bid
-            const tx = await marketplace.placeBid(auctionId, { value: bidAmountWei });
+            const tx = await marketplace.bid(auctionId, bidAmountWei, { value: bidAmountWei });
             await tx.wait();
             
             // Refresh auction data
@@ -605,7 +610,7 @@ function AuctionDetailPage() {
     return (
         <div className="sell-container">
             <div className="page-header">
-                <h1>{auction.metadata?.name || `Token #${auction.tokenId}`}</h1>
+                <h1>{auction.metadata?.name || nftMetadata?.name || `Token #${auction.tokenId}`}</h1>
                 <p>Auction #{auction.id}</p>
             </div>
 
@@ -636,17 +641,22 @@ function AuctionDetailPage() {
                                         auction.metadata?.imageUrl,
                                         auction.metadata?.animation_url,
                                         auction.metadata?.animationUrl,
+                                        nftMetadata?.image,
+                                        nftMetadata?.image_url,
+                                        nftMetadata?.imageUrl,
+                                        nftMetadata?.animation_url,
+                                        nftMetadata?.animationUrl,
                                     ]}
-                                    alt={auction.metadata?.name || `Token #${auction.tokenId}`}
+                                    alt={auction.metadata?.name || nftMetadata?.name || `Token #${auction.tokenId}`}
                                     width={640}
                                     height={460}
                                     seed={`${auction.nftContract}-${auction.tokenId}`}
-                                    title={auction.metadata?.name || `Token #${auction.tokenId}`}
+                                    title={auction.metadata?.name || nftMetadata?.name || `Token #${auction.tokenId}`}
                                     className="premium-image"
                                 />
                                 <div className="image-overlay">
                                     <a
-                                        href={expandToCandidateUrls(auction.metadata?.image)[0] || auction.metadata?.image}
+                                        href={expandToCandidateUrls(auction.metadata?.image || nftMetadata?.image)[0] || auction.metadata?.image || nftMetadata?.image}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="zoom-button"
@@ -661,7 +671,7 @@ function AuctionDetailPage() {
                         </div>
 
                         <div className="preview-title-section">
-                            <h2 className="preview-name">{auction.metadata?.name || `Token #${auction.tokenId}`}</h2>
+                            <h2 className="preview-name">{auction.metadata?.name || nftMetadata?.name || `Token #${auction.tokenId}`}</h2>
                             <div className="preview-contract">
                                 <span className="contract-label">Contract:</span>
                                 <span className="contract-address">{`${auction.nftContract.slice(0, 6)}...${auction.nftContract.slice(-4)}`}</span>
@@ -686,7 +696,7 @@ function AuctionDetailPage() {
                                 <div className="details-tab">
                                     <div className="preview-description">
                                         <h4>Description</h4>
-                                        <p>{auction.metadata?.description || 'No description available'}</p>
+                                        <p>{auction.metadata?.description || nftMetadata?.description || 'No description available'}</p>
                                     </div>
 
                                     <div className="preview-details">
@@ -716,11 +726,11 @@ function AuctionDetailPage() {
                                         </div>
                                     </div>
 
-                                    {isString(auction.metadata?.external_url) && (
+                                    {isString(auction.metadata?.external_url || nftMetadata?.external_url) && (
                                         <div className="external-link">
                                             <h4>External Link</h4>
-                                            <a href={auction.metadata.external_url} target="_blank" rel="noopener noreferrer">
-                                                {auction.metadata.external_url}
+                                            <a href={auction.metadata?.external_url || nftMetadata?.external_url} target="_blank" rel="noopener noreferrer">
+                                                {auction.metadata?.external_url || nftMetadata?.external_url}
                                             </a>
                                         </div>
                                     )}
@@ -730,9 +740,9 @@ function AuctionDetailPage() {
                             {activeTab === 'properties' && (
                                 <div className="properties-tab">
                                     <h4>Properties</h4>
-                                    {Array.isArray(auction.metadata?.attributes) && auction.metadata.attributes.length > 0 ? (
+                                    {Array.isArray(auction.metadata?.attributes || nftMetadata?.attributes) && (auction.metadata?.attributes || nftMetadata?.attributes).length > 0 ? (
                                         <div className="attributes-grid">
-                                            {auction.metadata.attributes.map((attr, index) => {
+                                            {(auction.metadata?.attributes || nftMetadata?.attributes).map((attr, index) => {
                                                 const rarity = getTraitRarity(attr);
                                                 return (
                                                     <div key={index} className="attribute-box" style={{ borderColor: rarity.color }}>
