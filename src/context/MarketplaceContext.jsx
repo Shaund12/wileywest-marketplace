@@ -1117,12 +1117,29 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             const res = [];
             const maxScanRange = MARKETPLACE_CONFIG.MAX_LISTING_SCAN;
             
+            debugLog(`🔍 Scanning listings from ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN} to ${maxScanRange}`);
+            setStatus(`Scanning listings ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN}-${maxScanRange}...`);
+            
+            let activeListingsFound = 0;
+            let scannedCount = 0;
+            
             for (let i = MARKETPLACE_CONFIG.MIN_LISTING_SCAN; i <= maxScanRange; i++) {
+                scannedCount++;
+                
+                // Update progress every 10 listings
+                if (scannedCount % 10 === 0) {
+                    setStatus(`Scanned ${scannedCount}/${maxScanRange} listings, found ${activeListingsFound} active...`);
+                }
                 try {
                     const listing = await marketplace.listings(i);
 
                     // Skip inactive listings
-                    if (!listing || !listing.active) continue;
+                    if (!listing || !listing.active) {
+                        continue;
+                    }
+                    
+                    activeListingsFound++;
+                    debugLog(`✅ Found active listing ${i}: ${listing.nftContract}:${listing.tokenId}`);
 
                     // For background updates, prioritize new listings
                     if (isBackgroundUpdate && existingIds.has(i)) {
@@ -1323,6 +1340,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     debugWarn(`Skipping listing ${i}:`, err.message);
                 }
             }
+
+            debugLog(`✅ Listing scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
+            setStatus(`Scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
 
             debugLog(`Successfully loaded ${res.length} listings from blockchain`);
             setListings(res);
