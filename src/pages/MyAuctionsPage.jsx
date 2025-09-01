@@ -235,6 +235,12 @@ function MyAuctionsPage() {
             const auctionsWithCurrentData = await Promise.all(
                 userAuctions.map(async (auction) => {
                     try {
+                        // Ensure auction has valid ID
+                        if (!auction.id || auction.id === 'undefined') {
+                            console.warn('⚠️ Auction missing valid ID, skipping bid retrieval');
+                            return auction;
+                        }
+                        
                         // Get latest bid data
                         const bids = await getAuctionBids(auction.id);
                         
@@ -285,7 +291,7 @@ function MyAuctionsPage() {
             
             try {
                 // Fetch NFT metadata from contract
-                if (provider) {
+                if (provider && auction.nftContract && auction.nftContract !== '0x0000000000000000000000000000000000000000') {
                     const nftContract = new ethers.Contract(
                         auction.nftContract,
                         [
@@ -299,10 +305,13 @@ function MyAuctionsPage() {
 
                     let tokenURI = '';
                     try {
-                        tokenURI = await nftContract.tokenURI(auction.tokenId);
+                        // Ensure tokenId is valid
+                        const tokenId = auction.tokenId || '0';
+                        tokenURI = await nftContract.tokenURI(tokenId);
                     } catch {
                         try {
-                            tokenURI = await nftContract.uri(auction.tokenId);
+                            const tokenId = auction.tokenId || '0';
+                            tokenURI = await nftContract.uri(tokenId);
                         } catch {
                             console.warn(`Could not get tokenURI for ${auction.nftContract}:${auction.tokenId}`);
                         }

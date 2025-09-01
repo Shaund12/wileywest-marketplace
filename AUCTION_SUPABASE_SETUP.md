@@ -2,6 +2,10 @@
 
 This guide provides step-by-step instructions for setting up Supabase to support the complete auction system in WileyWest Marketplace.
 
+## Critical Updates ⚠️
+
+**Important**: This guide includes fixes for database schema errors that were causing auction display issues. Please follow the schema migration steps if you have an existing deployment.
+
 ## Prerequisites
 
 - Supabase account (free tier is sufficient)
@@ -36,18 +40,22 @@ Create or update your `.env` file with your Supabase credentials:
 VITE_SUPABASE_URL=https://your-project-url.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key-here
 
-# Marketplace Configuration
+# Marketplace Configuration - Updated Address
 VITE_MARKETPLACE_ADDRESS=0xE4C31bCA890dcC1Dc038ac07a3d720A6A26877D1
 VITE_ENABLE_AUCTIONS=1
 ```
 
 **Important:** If you're using dummy values, auction functionality will not work properly.
 
-## 4. Set Up Database Schema
+## 4. Fixed Database Schema - CRITICAL UPDATE ⚠️
 
-Go to your Supabase dashboard → **SQL Editor** and run the complete schema from `supabase-schema.sql`:
+### Issues Resolved:
+- ✅ Fixed "column auctions.timestamp does not exist" error
+- ✅ Fixed "Could not find the 'metadata' column" error  
+- ✅ Fixed auction ID validation and null value handling
+- ✅ Enhanced error handling for production deployment
 
-### Key Schema Update for Metadata Support
+### Schema Migration
 
 **IMPORTANT:** If you're updating an existing auction table, you MUST add the metadata column:
 

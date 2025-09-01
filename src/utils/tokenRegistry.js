@@ -78,6 +78,11 @@ export const TOKEN_REGISTRY = {
 
 // Get token info by address
 export function getTokenInfo(address) {
+    // Handle null/undefined addresses
+    if (!address || address === 'null' || address === 'undefined') {
+        address = ethers.ZeroAddress;
+    }
+    
     const normalizedAddress = address === ethers.ZeroAddress ? ethers.ZeroAddress : address;
     return TOKEN_REGISTRY[normalizedAddress] || {
         symbol: 'UNKNOWN',
@@ -104,13 +109,33 @@ export function hasPathToWVTRU(tokenAddress, marketplace) {
 
 // Format token amount with proper decimals
 export function formatTokenAmount(amount, tokenAddress) {
+    // Handle null/undefined amounts
+    if (!amount || amount === 'null' || amount === 'undefined') {
+        amount = '0';
+    }
+    
     const tokenInfo = getTokenInfo(tokenAddress);
-    const value = ethers.formatUnits(amount, tokenInfo.decimals);
-    return `${value} ${tokenInfo.symbol}`;
+    try {
+        const value = ethers.formatUnits(amount, tokenInfo.decimals);
+        return `${value} ${tokenInfo.symbol}`;
+    } catch (error) {
+        console.warn('Error formatting token amount:', { amount, tokenAddress, error });
+        return `0 ${tokenInfo.symbol}`;
+    }
 }
 
 // Parse token amount with proper decimals
 export function parseTokenAmount(amount, tokenAddress) {
+    // Handle null/undefined amounts
+    if (!amount || amount === 'null' || amount === 'undefined') {
+        amount = '0';
+    }
+    
     const tokenInfo = getTokenInfo(tokenAddress);
-    return ethers.parseUnits(amount.toString(), tokenInfo.decimals);
+    try {
+        return ethers.parseUnits(amount.toString(), tokenInfo.decimals);
+    } catch (error) {
+        console.warn('Error parsing token amount:', { amount, tokenAddress, error });
+        return ethers.parseUnits('0', tokenInfo.decimals);
+    }
 }

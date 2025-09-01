@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { ethers } from 'ethers';
 
 const SupabaseContext = createContext();
 
@@ -614,42 +615,51 @@ export function SupabaseProvider({ children }) {
                 console.log(`💾 Caching ${auctions.length} auctions to Supabase for marketplace ${marketplaceAddress}...`);
 
                 const rows = auctions.map((auction) => {
+                    // Generate a valid auction ID if missing
+                    const auctionId = auction.id?.toString() || 
+                                    auction.auctionId?.toString() || 
+                                    `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    
                     return {
-                        auction_id: auction.id?.toString() || auction.auctionId?.toString(),
-                        marketplace_address: marketplaceAddress?.toLowerCase(),
-                        seller: auction.seller,
-                        nft_contract: auction.nftContract,
-                        token_id: auction.tokenId?.toString(),
+                        auction_id: auctionId,
+                        marketplace_address: marketplaceAddress?.toLowerCase() || '0x0000000000000000000000000000000000000000',
+                        seller: auction.seller || '0x0000000000000000000000000000000000000000',
+                        nft_contract: auction.nftContract || '0x0000000000000000000000000000000000000000',
+                        token_id: auction.tokenId?.toString() || '0',
                         quantity: auction.quantity?.toString() || '1',
-                        reserve_price: auction.reservePrice?.toString(),
-                        start_price: auction.startPrice?.toString(), 
-                        end_time: auction.endTime,
-                        payment_token: auction.paymentToken,
+                        reserve_price: auction.reservePrice?.toString() || '0',
+                        start_price: auction.startPrice?.toString() || '0', 
+                        end_time: auction.endTime || Math.floor(Date.now() / 1000) + 86400,
+                        payment_token: auction.paymentToken || '0x0000000000000000000000000000000000000000',
                         min_bid_increment_bps: auction.minBidIncrementBps || 500,
                         anti_snipe_seconds: auction.antiSnipeSeconds || 300,
                         highest_bid: auction.highestBid?.toString() || '0',
                         highest_bidder: auction.highestBidder || '0x0000000000000000000000000000000000000000',
                         settled: auction.settled || false,
-                        transaction_hash: auction.transactionHash,
-                        block_number: auction.blockNumber,
+                        transaction_hash: auction.transactionHash || `0x${'0'.repeat(64)}`,
+                        block_number: auction.blockNumber || 0,
                         log_index: auction.logIndex || 0,
                         timestamp: auction.timestamp || Math.floor(Date.now() / 1000),
                         metadata: auction.metadata || {}
                     };
                 });
 
-                // Filter invalid rows
+                // Filter invalid rows - ensure all required fields are present
                 const toSave = rows.filter(
                     (r) =>
                         r.auction_id &&
+                        r.auction_id !== 'undefined' &&
                         r.marketplace_address &&
                         r.seller &&
+                        r.seller !== '0x0000000000000000000000000000000000000000' &&
                         r.nft_contract &&
+                        r.nft_contract !== '0x0000000000000000000000000000000000000000' &&
                         r.token_id &&
                         r.reserve_price &&
                         r.start_price &&
                         r.end_time &&
-                        r.payment_token
+                        r.payment_token &&
+                        r.timestamp
                 );
 
                 if (toSave.length === 0) {
@@ -738,11 +748,40 @@ export function SupabaseProvider({ children }) {
                 const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_'));
                 const localAuctions = keys.map(key => {
                     try {
-                        return JSON.parse(localStorage.getItem(key));
+                        const auctionData = JSON.parse(localStorage.getItem(key));
+                        // Ensure auction has valid ID and normalize structure
+                        if (!auctionData.id && !auctionData.auctionId && auctionData.auction_id) {
+                            auctionData.id = auctionData.auction_id;
+                            auctionData.auctionId = auctionData.auction_id;
+                        }
+                        
+                        // Ensure all required fields are present with defaults
+                        return {
+                            id: auctionData.id || auctionData.auctionId || `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                            auctionId: auctionData.auctionId || auctionData.id,
+                            seller: auctionData.seller || '0x0000000000000000000000000000000000000000',
+                            nftContract: auctionData.nftContract || auctionData.nft_contract || '0x0000000000000000000000000000000000000000',
+                            tokenId: auctionData.tokenId || auctionData.token_id || '0',
+                            quantity: auctionData.quantity || '1',
+                            reservePrice: auctionData.reservePrice || auctionData.reserve_price || '0',
+                            startPrice: auctionData.startPrice || auctionData.start_price || '0',
+                            endTime: auctionData.endTime || auctionData.end_time || Math.floor(Date.now() / 1000) + 86400,
+                            paymentToken: auctionData.paymentToken || auctionData.payment_token || ethers.ZeroAddress,
+                            minBidIncrementBps: auctionData.minBidIncrementBps || auctionData.min_bid_increment_bps || 500,
+                            antiSnipeSeconds: auctionData.antiSnipeSeconds || auctionData.anti_snipe_seconds || 300,
+                            highestBid: auctionData.highestBid || auctionData.highest_bid || '0',
+                            highestBidder: auctionData.highestBidder || auctionData.highest_bidder || '0x0000000000000000000000000000000000000000',
+                            settled: auctionData.settled || false,
+                            transactionHash: auctionData.transactionHash || auctionData.transaction_hash || `0x${'0'.repeat(64)}`,
+                            blockNumber: auctionData.blockNumber || auctionData.block_number || 0,
+                            timestamp: auctionData.timestamp || Math.floor(Date.now() / 1000),
+                            metadata: auctionData.metadata || {}
+                        };
                     } catch (e) {
+                        console.warn('Error parsing localStorage auction:', e);
                         return null;
                     }
-                }).filter(Boolean);
+                }).filter(auction => auction && auction.id && auction.id !== 'undefined');
                 
                 console.log(`📦 Retrieved ${localAuctions.length} auctions from localStorage`);
                 if (localAuctions.length > 0) {
@@ -760,8 +799,7 @@ export function SupabaseProvider({ children }) {
             
             let query = supabase
                 .from('auctions')
-                .select('*')
-                .order('timestamp', { ascending: false });
+                .select('*');
 
             if (sellerAddress) {
                 query = query.eq('seller', sellerAddress);
@@ -769,6 +807,14 @@ export function SupabaseProvider({ children }) {
 
             if (marketplaceAddress) {
                 query = query.eq('marketplace_address', marketplaceAddress.toLowerCase());
+            }
+
+            // Try to order by timestamp, fallback to created_at if timestamp doesn't exist
+            try {
+                query = query.order('timestamp', { ascending: false });
+            } catch (timestampError) {
+                console.warn('⚠️ timestamp column not found, using created_at instead');
+                query = query.order('created_at', { ascending: false });
             }
 
             const { data, error } = await query;
@@ -783,11 +829,17 @@ export function SupabaseProvider({ children }) {
                     const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_'));
                     const localAuctions = keys.map(key => {
                         try {
-                            return JSON.parse(localStorage.getItem(key));
+                            const auctionData = JSON.parse(localStorage.getItem(key));
+                            // Ensure auction has valid ID
+                            if (!auctionData.id && !auctionData.auctionId && auctionData.auction_id) {
+                                auctionData.id = auctionData.auction_id;
+                                auctionData.auctionId = auctionData.auction_id;
+                            }
+                            return auctionData;
                         } catch (e) {
                             return null;
                         }
-                    }).filter(Boolean);
+                    }).filter(auction => auction && (auction.id || auction.auctionId));
                     
                     console.log(`📦 Retrieved ${localAuctions.length} auctions from localStorage fallback`);
                     return localAuctions;
@@ -799,27 +851,32 @@ export function SupabaseProvider({ children }) {
 
             console.log(`📦 Retrieved ${data.length} cached auctions from database`);
 
-            const auctions = data.map((item) => ({
-                id: item.auction_id,
-                auctionId: item.auction_id,
-                seller: item.seller,
-                nftContract: item.nft_contract,
-                tokenId: item.token_id,
-                quantity: item.quantity,
-                reservePrice: item.reserve_price,
-                startPrice: item.start_price,
-                endTime: item.end_time,
-                paymentToken: item.payment_token,
-                minBidIncrementBps: item.min_bid_increment_bps,
-                antiSnipeSeconds: item.anti_snipe_seconds,
-                highestBid: item.highest_bid || '0',
-                highestBidder: item.highest_bidder || '0x0000000000000000000000000000000000000000',
-                settled: item.settled || false,
-                transactionHash: item.transaction_hash,
-                blockNumber: item.block_number,
-                timestamp: item.timestamp,
-                metadata: item.metadata || {}
-            }));
+            const auctions = data.map((item) => {
+                // Ensure auction ID is properly set
+                const auctionId = item.auction_id || `db_${item.id}`;
+                
+                return {
+                    id: auctionId,
+                    auctionId: auctionId,
+                    seller: item.seller || '0x0000000000000000000000000000000000000000',
+                    nftContract: item.nft_contract || '0x0000000000000000000000000000000000000000',
+                    tokenId: item.token_id || '0',
+                    quantity: item.quantity || '1',
+                    reservePrice: item.reserve_price || '0',
+                    startPrice: item.start_price || '0',
+                    endTime: item.end_time || Math.floor(Date.now() / 1000) + 86400,
+                    paymentToken: item.payment_token || '0x0000000000000000000000000000000000000000',
+                    minBidIncrementBps: item.min_bid_increment_bps || 500,
+                    antiSnipeSeconds: item.anti_snipe_seconds || 300,
+                    highestBid: item.highest_bid || '0',
+                    highestBidder: item.highest_bidder || '0x0000000000000000000000000000000000000000',
+                    settled: item.settled || false,
+                    transactionHash: item.transaction_hash || `0x${'0'.repeat(64)}`,
+                    blockNumber: item.block_number || 0,
+                    timestamp: item.timestamp || Math.floor(Date.now() / 1000),
+                    metadata: item.metadata || {}
+                };
+            }).filter(auction => auction.id && auction.id !== 'undefined');
 
             const cacheKey = sellerAddress ? `auctions_${sellerAddress.toLowerCase()}` : 'all_auctions';
             setCache(cacheKey, auctions, 'auctions');
@@ -840,11 +897,26 @@ export function SupabaseProvider({ children }) {
         try {
             console.log(`🔍 Fetching bids for auction ${auctionId}...`);
             
-            const { data, error } = await supabase
+            // Handle undefined auctionId
+            if (!auctionId || auctionId === 'undefined') {
+                console.warn('⚠️ Invalid auction ID provided to getAuctionBids');
+                return [];
+            }
+            
+            let query = supabase
                 .from('auction_bids')
                 .select('*')
-                .eq('auction_id', auctionId)
-                .order('timestamp', { ascending: false });
+                .eq('auction_id', auctionId);
+
+            // Try to order by timestamp, fallback to created_at if timestamp doesn't exist
+            try {
+                query = query.order('timestamp', { ascending: false });
+            } catch (timestampError) {
+                console.warn('⚠️ timestamp column not found in auction_bids, using created_at instead');
+                query = query.order('created_at', { ascending: false });
+            }
+
+            const { data, error } = await query;
 
             if (error) {
                 console.warn('Error fetching auction bids:', error);

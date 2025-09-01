@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS auctions (
     transaction_hash TEXT NOT NULL,
     block_number BIGINT NOT NULL,
     log_index INTEGER NOT NULL,
+    timestamp BIGINT NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     
     UNIQUE(transaction_hash, log_index)
