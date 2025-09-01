@@ -17,6 +17,7 @@ import blockdustLogo from '../assets/blockdust-logo.png';
 // IMPORTANT: use on-chain ABI with auction events/functions
 // IMPORTANT: use on-chain ABI with auction events/functions
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 /* =========================
    On-chain collection name resolver
@@ -530,7 +531,7 @@ function MarketplacePage() {
                 await fetchListings(true);
             }
         } catch (error) {
-            console.error('[Marketplace] Deep rescan error:', error);
+            criticalError('[Marketplace] Deep rescan error:', error);
             setStatus && setStatus('Error force refreshing listings');
         } finally {
             setIsLoading(false);
@@ -550,7 +551,7 @@ function MarketplacePage() {
                 await fetchListings(true);
                 if (auctionsEnabled) await fetchAuctions(false);
             } catch (e) {
-                console.warn('[Marketplace] Auto-refresh failed:', e);
+                debugWarn('[Marketplace] Auto-refresh failed:', e);
             } finally {
                 if (active) {
                     setTimeout(tick, autoRefreshMs);
@@ -586,7 +587,7 @@ function MarketplacePage() {
                     if (auctionsEnabled) await fetchAuctions(false);
                     hasLoadedRef.current = true;
                 } catch (error) {
-                    console.error('[Marketplace] Error fetching listings:', error);
+                    criticalError('[Marketplace] Error fetching listings:', error);
                     setStatus('Error loading marketplace data');
                 } finally {
                     setIsLoading(false);
@@ -607,7 +608,7 @@ function MarketplacePage() {
                     if (auctionsEnabled) await fetchAuctions(false);
                 }
             } catch (error) {
-                console.error('[Marketplace] Refresh error:', error);
+                criticalError('[Marketplace] Refresh error:', error);
             } finally {
                 setIsLoading(false);
             }
@@ -639,7 +640,7 @@ function MarketplacePage() {
         cacheSigRef.current = sig;
 
         const t = setTimeout(() => {
-            try { cacheListings(active, canceledListings || new Set()); } catch (e) { console.warn('Cache listings error:', e); }
+            try { cacheListings(active, canceledListings || new Set()); } catch (e) { debugWarn('Cache listings error:', e); }
         }, 300);
 
         return () => clearTimeout(t);
@@ -775,7 +776,7 @@ function MarketplacePage() {
                 }));
                 chainAuctions = chainAuctions.filter(Boolean);
             } catch (e) {
-                console.warn('[Auctions] Chain scan failed:', e?.message || e);
+                debugWarn('[Auctions] Chain scan failed:', e?.message || e);
             }
 
             // Merge DB + chain, prefer chain state for activeness and latest bids
@@ -962,7 +963,7 @@ function MarketplacePage() {
                         setFeaturedNFT(highest.listing);
                     }
                 } catch (error) {
-                    console.error('Error processing listings with enhanced stats:', error);
+                    criticalError('Error processing listings with enhanced stats:', error);
                     // Fallback (no USDC conversion)
                     const activeListings = listings.filter(
                         (listing) => listing.active && !canceledListings.has(listing.id?.toString())

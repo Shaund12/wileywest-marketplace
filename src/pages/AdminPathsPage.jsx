@@ -4,6 +4,7 @@ import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { getSupportedTokens, getTokenInfo } from '../utils/tokenRegistry';
 import { ethers } from 'ethers';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 function AdminPathsPage() {
     const navigate = useNavigate();
@@ -55,7 +56,7 @@ function AdminPathsPage() {
             const results = await Promise.all(pathPromises);
             setPaths(results);
         } catch (error) {
-            console.error('Error loading paths:', error);
+            criticalError('Error loading paths:', error);
         } finally {
             setLoading(false);
         }
@@ -102,7 +103,7 @@ function AdminPathsPage() {
 
             setNewPath(prev => ({ ...prev, encoded }));
         } catch (error) {
-            console.error('Error encoding path:', error);
+            criticalError('Error encoding path:', error);
             setNewPath(prev => ({ ...prev, encoded: '' }));
         }
     };
@@ -124,7 +125,7 @@ function AdminPathsPage() {
             setNewPath({ token: '', path: [], encoded: '' });
             setPathBuilder([]);
         } catch (error) {
-            console.error('Error setting path:', error);
+            criticalError('Error setting path:', error);
             alert('Failed to set path: ' + error.message);
         }
     };

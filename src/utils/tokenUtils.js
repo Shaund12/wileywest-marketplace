@@ -1,5 +1,6 @@
 // utils/tokenUtils.js
 import { ethers } from 'ethers';
+import { debugLog, debugWarn, criticalError } from './debugUtils';
 
 /* ================================
    Minimal ABIs
@@ -82,7 +83,7 @@ export async function fetchTokenDetails(tokenAddress, provider) {
         tokenDetailsCache[addr] = out;
         return out;
     } catch (e) {
-        console.error(`Error fetching token details for ${tokenAddress}:`, e);
+        criticalError(`Error fetching token details for ${tokenAddress}:`, e);
         return { symbol: 'TOKEN', decimals: 6 };
     }
 }
@@ -158,7 +159,7 @@ export function formatTokenAmount(amount, tokenAddress) {
                 formatted = fracStr.length ? `${whole}.${fracStr}` : whole.toString();
             }
         } catch (convErr) {
-            console.warn(`formatTokenAmount conversion error for ${amountStr}`, convErr);
+            debugWarn(`formatTokenAmount conversion error for ${amountStr}`, convErr);
             const num = parseFloat(amountStr);
             const divisor = Math.pow(10, decimals);
             formatted = (num / divisor).toString();
@@ -175,7 +176,7 @@ export function formatTokenAmount(amount, tokenAddress) {
             return value.toFixed(Math.min(6, Math.max(2, countDecimals(value))));
         }
     } catch (e) {
-        console.error(`Error formatting amount ${amount} for ${tokenAddress}:`, e);
+        criticalError(`Error formatting amount ${amount} for ${tokenAddress}:`, e);
         try {
             const decimals = getTokenDecimals(tokenAddress);
             const num = parseFloat(amount?.toString?.() || '0');
@@ -205,7 +206,7 @@ export function parseTokenAmount(amount, tokenAddress) {
             return Math.floor(Number(amount) * mul).toString();
         }
     } catch (e) {
-        console.error(`Error parsing amount ${amount} for ${tokenAddress}:`, e);
+        criticalError(`Error parsing amount ${amount} for ${tokenAddress}:`, e);
         return '0';
     }
 }
@@ -233,7 +234,7 @@ async function getUniswapPool(tokenA, tokenB, provider) {
         }
         return { poolAddress: null, fee: null };
     } catch (error) {
-        console.error('Error getting pool address', error);
+        criticalError('Error getting pool address', error);
         return { poolAddress: null, fee: null };
     }
 }
@@ -294,7 +295,7 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
         priceCache[normalized] = { price: priceInUSDC, timestamp: now };
         return priceInUSDC;
     } catch (error) {
-        console.error(`Error fetching price for ${tokenAddress}:`, error);
+        criticalError(`Error fetching price for ${tokenAddress}:`, error);
         throw error;
     }
 }
@@ -320,7 +321,7 @@ export async function convertToUSDCValue(tokenAmount, tokenAddress, provider) {
         const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
         return amountNum * price;
     } catch (error) {
-        console.error(`Error converting ${tokenAmount} ${tokenAddress} to USDC:`, error);
+        criticalError(`Error converting ${tokenAmount} ${tokenAddress} to USDC:`, error);
         return 0;
     }
 }
@@ -345,7 +346,7 @@ export async function formatPriceWithUSDC(tokenAmount, tokenAddress, provider, s
                 usdcValue = await convertToUSDCValue(tokenAmount, tokenAddress, provider);
             }
         } catch (e) {
-            console.warn(`No USDC rate for ${tokenAddress}:`, e);
+            debugWarn(`No USDC rate for ${tokenAddress}:`, e);
             usdcValue = 0;
             hasUSDCRate = false;
         }
@@ -373,7 +374,7 @@ export async function formatPriceWithUSDC(tokenAmount, tokenAddress, provider, s
             hasUSDCRate
         };
     } catch (error) {
-        console.error('Error formatting price with USDC:', error);
+        criticalError('Error formatting price with USDC:', error);
         const tokenSymbol = getTokenSymbol(tokenAddress);
         const tokenAmountFormatted = formatTokenAmount(tokenAmount, tokenAddress);
         return {

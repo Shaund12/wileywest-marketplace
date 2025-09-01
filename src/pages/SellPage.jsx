@@ -4,6 +4,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './SellPage.css';
 
 /* =========================================================
@@ -576,7 +577,7 @@ function SellPage() {
             await fetchUniswapPrices(0, initialized);
         };
         init().catch((err) => {
-            console.error(err);
+            criticalError(err);
             setStatus('Error initializing tokens. Please refresh the page.');
         });
     }, [provider]);

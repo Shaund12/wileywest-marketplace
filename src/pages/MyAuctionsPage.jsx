@@ -5,6 +5,7 @@ import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { formatTokenAmount } from '../utils/tokenRegistry';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 /* =========================================================
    SmartMedia utilities (simplified version for auctions)
@@ -231,7 +232,7 @@ function MyAuctionsPage() {
             
             // Load auctions from database for the connected wallet and current marketplace
             const userAuctions = await getCachedAuctions(wallet, marketplaceAddress);
-            console.log(`📦 Loaded ${userAuctions.length} auctions for user ${wallet} on marketplace ${marketplaceAddress}`);
+            debugLog(`📦 Loaded ${userAuctions.length} auctions for user ${wallet} on marketplace ${marketplaceAddress}`);
             
             // Load current bids for each auction and update auction data from contract if needed
             const auctionsWithCurrentData = await Promise.all(
@@ -239,7 +240,7 @@ function MyAuctionsPage() {
                     try {
                         // Ensure auction has valid ID
                         if (!auction.id || auction.id === 'undefined') {
-                            console.warn('⚠️ Auction missing valid ID, skipping bid retrieval');
+                            debugWarn('⚠️ Auction missing valid ID, skipping bid retrieval');
                             return auction;
                         }
                         
@@ -260,7 +261,7 @@ function MyAuctionsPage() {
                         
                         return auction;
                     } catch (error) {
-                        console.warn(`Error loading bid data for auction ${auction.id}:`, error);
+                        debugWarn(`Error loading bid data for auction ${auction.id}:`, error);
                         return auction;
                     }
                 })
@@ -273,7 +274,7 @@ function MyAuctionsPage() {
             loadAuctionMetadata(auctionsWithCurrentData);
             
         } catch (error) {
-            console.error('Error loading user auctions:', error);
+            criticalError('Error loading user auctions:', error);
             setActionStatus('Failed to load auctions');
             setAuctions([]);
         } finally {
@@ -315,7 +316,7 @@ function MyAuctionsPage() {
                             const tokenId = auction.tokenId || '0';
                             tokenURI = await nftContract.uri(tokenId);
                         } catch {
-                            console.warn(`Could not get tokenURI for ${auction.nftContract}:${auction.tokenId}`);
+                            debugWarn(`Could not get tokenURI for ${auction.nftContract}:${auction.tokenId}`);
                         }
                     }
 
@@ -333,7 +334,7 @@ function MyAuctionsPage() {
                                 metadata = await response.json();
                             }
                         } catch (error) {
-                            console.warn(`Error fetching metadata from ${tokenURI}:`, error);
+                            debugWarn(`Error fetching metadata from ${tokenURI}:`, error);
                         }
                     }
 
@@ -343,7 +344,7 @@ function MyAuctionsPage() {
                         const symbol = await nftContract.symbol();
                         metadata.collection = { name, symbol };
                     } catch (error) {
-                        console.warn(`Error fetching collection info:`, error);
+                        debugWarn(`Error fetching collection info:`, error);
                     }
 
                     setAuctionMetadata(prev => ({
@@ -352,7 +353,7 @@ function MyAuctionsPage() {
                     }));
                 }
             } catch (error) {
-                console.warn(`Error loading metadata for auction ${auction.id}:`, error);
+                debugWarn(`Error loading metadata for auction ${auction.id}:`, error);
             } finally {
                 setLoadingMetadata(prev => {
                     const newSet = new Set(prev);
@@ -427,7 +428,7 @@ function MyAuctionsPage() {
             }, 2000);
             
         } catch (error) {
-            console.error('Error canceling auction:', error);
+            criticalError('Error canceling auction:', error);
             setActionStatus(`Error: ${error.message || 'Could not cancel auction'}`);
             setTimeout(() => setActionStatus(''), 5000);
         }
@@ -460,7 +461,7 @@ function MyAuctionsPage() {
             }, 2000);
             
         } catch (error) {
-            console.error('Error settling auction:', error);
+            criticalError('Error settling auction:', error);
             setActionStatus(`Error: ${error.message || 'Could not settle auction'}`);
             setTimeout(() => setActionStatus(''), 5000);
         }

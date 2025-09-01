@@ -6,6 +6,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { formatTokenAmount, getTokenInfo } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
 import './SellPage.css';
 
@@ -328,12 +329,12 @@ function AuctionDetailPage() {
                         loadNFTMetadata(processedAuction.nftContract, processedAuction.tokenId);
                     }
                 } catch (contractError) {
-                    console.warn('Could not load auction from contract:', contractError);
+                    debugWarn('Could not load auction from contract:', contractError);
                 }
             }
             
         } catch (error) {
-            console.error('Error loading auction:', error);
+            criticalError('Error loading auction:', error);
         } finally {
             setLoading(false);
         }
@@ -360,7 +361,7 @@ function AuctionDetailPage() {
                     try {
                         tokenURI = await contract.uri(tokenId);
                     } catch {
-                        console.warn(`Could not get tokenURI for ${nftContract}:${tokenId}`);
+                        debugWarn(`Could not get tokenURI for ${nftContract}:${tokenId}`);
                     }
                 }
 
@@ -378,7 +379,7 @@ function AuctionDetailPage() {
                             metadata = await response.json();
                         }
                     } catch (error) {
-                        console.warn(`Error fetching metadata from ${tokenURI}:`, error);
+                        debugWarn(`Error fetching metadata from ${tokenURI}:`, error);
                     }
                 }
 
@@ -388,13 +389,13 @@ function AuctionDetailPage() {
                     const symbol = await contract.symbol();
                     metadata.collection = { name, symbol };
                 } catch (error) {
-                    console.warn(`Error fetching collection info:`, error);
+                    debugWarn(`Error fetching collection info:`, error);
                 }
 
                 setNftMetadata(metadata);
             }
         } catch (error) {
-            console.warn(`Error loading metadata for ${nftContract}:${tokenId}:`, error);
+            debugWarn(`Error loading metadata for ${nftContract}:${tokenId}:`, error);
         }
     };
 
@@ -427,7 +428,7 @@ function AuctionDetailPage() {
             setBidAmount('');
             
         } catch (error) {
-            console.error('Error placing bid:', error);
+            criticalError('Error placing bid:', error);
             alert(`Error placing bid: ${error.message || 'Transaction failed'}`);
         } finally {
             setBidding(false);
@@ -453,7 +454,7 @@ function AuctionDetailPage() {
             loadAuction();
             
         } catch (error) {
-            console.error('Error settling auction:', error);
+            criticalError('Error settling auction:', error);
             alert(`Error settling auction: ${error.message || 'Transaction failed'}`);
         } finally {
             setSettling(false);

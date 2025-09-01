@@ -9,6 +9,7 @@ import { NFTScanner } from '../utils/nftScanner';
 import '../profile-page.css';
 import CacheStats from '../components/CacheStats';
 import { isAuctionsEnabled } from '../utils/featureFlags';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -371,7 +372,7 @@ function ProfilePage() {
             fetchListings();
 
         } catch (error) {
-            console.error("Error cancelling listing:", error);
+            criticalError("Error cancelling listing:", error);
             setStatus(`Error cancelling listing: ${error.message || error}`);
         } finally {
             setCancellingId(null);
@@ -406,7 +407,7 @@ function ProfilePage() {
 
                     await cacheProfileData(wallet, profileData);
                 } catch (cacheError) {
-                    console.warn("Failed to cache updated profile data:", cacheError);
+                    debugWarn("Failed to cache updated profile data:", cacheError);
                 }
             }
 
@@ -448,7 +449,7 @@ function ProfilePage() {
 
             return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Crect width='300' height='300' fill='%230f0f0f'/%3E%3Ccircle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/%3E%3Ccircle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/%3E%3Cpath d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/%3E%3Cpath d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/%3E%3Ccircle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/%3E%3Ctext x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'%3E%23${tokenId}%3C/text%3E%3Ctext x='150' y='170' font-family='monospace' font-size='18' fill='hsl(${hue1},80%,60%)' text-anchor='middle'%3E${shortName}%3C/text%3E%3Ctext x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'%3EWNFT%3C/text%3E%3C/svg%3E`;
         } catch (err) {
-            console.error("Error generating SVG:", err);
+            criticalError("Error generating SVG:", err);
             return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
         }
     };
@@ -617,7 +618,7 @@ function ProfilePage() {
             await Promise.all(
                 visibleNfts.map(nft =>
                     fetchNftMetadata(nft.contractAddress, nft.tokenId, nft.tokenURI)
-                        .catch(err => console.error(`Error fetching visible metadata for ${nft.tokenId}:`, err))
+                        .catch(err => criticalError(`Error fetching visible metadata for ${nft.tokenId}:`, err))
                 )
             );
         }
@@ -637,7 +638,7 @@ function ProfilePage() {
                 await Promise.all(
                     chunk.map(nft =>
                         fetchNftMetadata(nft.contractAddress, nft.tokenId, nft.tokenURI)
-                            .catch(err => console.error(`Error fetching background metadata for ${nft.tokenId}:`, err))
+                            .catch(err => criticalError(`Error fetching background metadata for ${nft.tokenId}:`, err))
                     )
                 );
             }
@@ -695,7 +696,7 @@ function ProfilePage() {
                 ...newContractInfo
             }));
         } catch (error) {
-            console.error("Error fetching contract info batch:", error);
+            criticalError("Error fetching contract info batch:", error);
         }
     };
 

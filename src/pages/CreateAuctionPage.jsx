@@ -7,6 +7,7 @@ import { useSupabase } from '../context/SupabaseContext';
 import { getSupportedTokens, formatTokenAmount } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
 import './SellPage.css';
 
@@ -419,7 +420,7 @@ function CreateAuctionPage() {
             await fetchUniswapPrices(0, initialized);
         };
         init().catch((err) => {
-            console.error(err);
+            criticalError(err);
             setStatus('Error initializing tokens. Please refresh the page.');
         });
     }, [provider]);
@@ -858,7 +859,7 @@ function CreateAuctionPage() {
                     }
                 }
             } catch (error) {
-                console.warn('Warning: Could not cache auction data:', error);
+                debugWarn('Warning: Could not cache auction data:', error);
             }
 
             setAuctionSuccess(true);
