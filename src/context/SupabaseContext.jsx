@@ -782,11 +782,15 @@ export function SupabaseProvider({ children }) {
                 }).filter(auction => {
                     if (!auction) return false;
                     
-                    // Ensure auction has valid ID
-                    const hasValidId = auction.id && auction.id !== 'undefined' && auction.id !== 'null';
+                    // Ensure auction has valid ID and is not undefined
+                    const hasValidId = auction.id && 
+                                     auction.id !== 'undefined' && 
+                                     auction.id !== 'null' && 
+                                     auction.id !== undefined &&
+                                     auction.id !== null;
                     
                     // Filter by seller if specified
-                    if (sellerAddress && auction.seller.toLowerCase() !== sellerAddress.toLowerCase()) {
+                    if (sellerAddress && auction.seller && auction.seller.toLowerCase() !== sellerAddress.toLowerCase()) {
                         return false;
                     }
                     
@@ -816,11 +820,15 @@ export function SupabaseProvider({ children }) {
                 .select('*');
 
             if (sellerAddress) {
-                query = query.eq('seller', sellerAddress);
+                query = query.eq('seller', sellerAddress.toLowerCase());
             }
 
             if (marketplaceAddress) {
-                query = query.eq('marketplace_address', marketplaceAddress.toLowerCase());
+                // Ensure marketplace address is properly formatted and valid
+                const validMarketplaceAddress = marketplaceAddress.toLowerCase();
+                if (validMarketplaceAddress && validMarketplaceAddress !== 'undefined' && validMarketplaceAddress !== 'null') {
+                    query = query.eq('marketplace_address', validMarketplaceAddress);
+                }
             }
 
             // Try to order by timestamp, fallback to created_at if timestamp doesn't exist
@@ -866,8 +874,11 @@ export function SupabaseProvider({ children }) {
             debugLog(`📦 Retrieved ${data.length} cached auctions from database`);
 
             const auctions = data.map((item) => {
-                // Ensure auction ID is properly set
-                const auctionId = item.auction_id || `db_${item.id}`;
+                // Ensure auction ID is properly set and not undefined
+                let auctionId = item.auction_id;
+                if (!auctionId || auctionId === 'undefined' || auctionId === 'null') {
+                    auctionId = `db_${item.id}`;
+                }
                 
                 return {
                     id: auctionId,
@@ -890,7 +901,14 @@ export function SupabaseProvider({ children }) {
                     timestamp: item.timestamp || Math.floor(Date.now() / 1000),
                     metadata: item.metadata || {}
                 };
-            }).filter(auction => auction.id && auction.id !== 'undefined');
+            }).filter(auction => {
+                // Ensure auction ID is valid and not undefined/null
+                return auction.id && 
+                       auction.id !== 'undefined' && 
+                       auction.id !== 'null' &&
+                       auction.id !== undefined &&
+                       auction.id !== null;
+            });
 
             const cacheKey = sellerAddress ? `auctions_${sellerAddress.toLowerCase()}` : 'all_auctions';
             setCache(cacheKey, auctions, 'auctions');

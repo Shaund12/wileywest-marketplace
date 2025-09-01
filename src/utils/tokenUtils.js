@@ -142,8 +142,16 @@ export function getTokenDecimals(tokenAddress) {
 =================================== */
 export function formatTokenAmount(amount, tokenAddress) {
     try {
-        if (!amount) return '0';
-        const amountStr = amount.toString();
+        // Handle null/undefined/invalid amounts
+        if (!amount || amount === 'null' || amount === 'undefined') {
+            return '0';
+        }
+        
+        const amountStr = String(amount);
+        if (amountStr === '0' || amountStr === '') {
+            return '0';
+        }
+        
         const decimals = getTokenDecimals(tokenAddress);
 
         let formatted;
@@ -161,6 +169,7 @@ export function formatTokenAmount(amount, tokenAddress) {
         } catch (convErr) {
             debugWarn(`formatTokenAmount conversion error for ${amountStr}`, convErr);
             const num = parseFloat(amountStr);
+            if (!isFinite(num)) return '0';
             const divisor = Math.pow(10, decimals);
             formatted = (num / divisor).toString();
         }
@@ -179,7 +188,8 @@ export function formatTokenAmount(amount, tokenAddress) {
         criticalError(`Error formatting amount ${amount} for ${tokenAddress}:`, e);
         try {
             const decimals = getTokenDecimals(tokenAddress);
-            const num = parseFloat(amount?.toString?.() || '0');
+            const num = parseFloat(String(amount || '0'));
+            if (!isFinite(num)) return '0';
             const divisor = Math.pow(10, decimals);
             const out = (num / divisor);
             return out.toFixed(decimals === 6 ? 2 : 4);
@@ -197,13 +207,19 @@ function countDecimals(value) {
 
 export function parseTokenAmount(amount, tokenAddress) {
     try {
-        if (!amount || isNaN(parseFloat(amount))) return '0';
+        // Handle null/undefined/invalid amounts
+        if (!amount || amount === 'null' || amount === 'undefined' || isNaN(parseFloat(String(amount)))) {
+            return '0';
+        }
+        
+        const amountStr = String(amount);
         const decimals = getTokenDecimals(tokenAddress);
+        
         if (ethers.parseUnits) {
-            return ethers.parseUnits(amount.toString(), decimals).toString();
+            return ethers.parseUnits(amountStr, decimals).toString();
         } else {
             const mul = 10 ** decimals;
-            return Math.floor(Number(amount) * mul).toString();
+            return Math.floor(Number(amountStr) * mul).toString();
         }
     } catch (e) {
         criticalError(`Error parsing amount ${amount} for ${tokenAddress}:`, e);
@@ -244,7 +260,13 @@ async function getUniswapPool(tokenA, tokenB, provider) {
 =================================== */
 export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
     const now = Date.now();
-    const normalized = (tokenAddress || '').toLowerCase();
+    
+    // Validate token address first
+    if (!tokenAddress || tokenAddress === 'undefined' || tokenAddress === 'null') {
+        throw new Error(`No USDC pool for token ${tokenAddress}`);
+    }
+    
+    const normalized = String(tokenAddress).toLowerCase();
 
     if (priceCache[normalized] && (now - priceCache[normalized].timestamp) < PRICE_CACHE_DURATION) {
         return priceCache[normalized].price;
@@ -260,7 +282,7 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
 
         // For native VTRU, price WVTRU against USDC
         const actualToken =
-            (tokenAddress || '').toLowerCase() === ethers.ZeroAddress.toLowerCase()
+            normalized === ethers.ZeroAddress.toLowerCase()
                 ? WVTRU_ADDRESS
                 : tokenAddress;
 

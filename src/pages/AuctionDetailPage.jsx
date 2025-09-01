@@ -270,10 +270,20 @@ function AuctionDetailPage() {
 
     useEffect(() => {
         // Fetch current token price
-        if (auction && provider) {
-            fetchTokenPriceInUSDC(auction.paymentToken, provider)
-                .then(price => setCurrentPrice(price))
-                .catch(() => setCurrentPrice(null));
+        if (auction && provider && auction.paymentToken) {
+            // Validate that auction.paymentToken is not undefined
+            const paymentToken = auction.paymentToken;
+            if (paymentToken && paymentToken !== 'undefined' && paymentToken !== 'null') {
+                fetchTokenPriceInUSDC(paymentToken, provider)
+                    .then(price => setCurrentPrice(price))
+                    .catch(err => {
+                        debugWarn('Failed to fetch token price:', err);
+                        setCurrentPrice(null);
+                    });
+            } else {
+                debugWarn('Invalid payment token:', paymentToken);
+                setCurrentPrice(null);
+            }
         }
     }, [auction, provider]);
 
@@ -311,7 +321,7 @@ function AuctionDetailPage() {
                     a.id?.toString(),
                     a.auctionId?.toString(),
                     a.auction_id?.toString()
-                ].filter(Boolean);
+                ].filter(id => id && id !== 'undefined' && id !== 'null');
                 
                 return candidateIds.some(id => id === auctionId.toString());
             });
