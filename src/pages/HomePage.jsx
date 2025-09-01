@@ -277,8 +277,88 @@ function HomePage() {
                 }
             }
 
+            // Load NFT metadata for auctions
+            const auctionsWithMetadata = await Promise.all(auctions.map(async (auction) => {
+                try {
+                    if (!auction.nftContract || auction.nftContract === '0x0000000000000000000000000000000000000000') {
+                        return auction;
+                    }
+
+                    // Fetch NFT metadata from contract
+                    const nftContract = new ethers.Contract(
+                        auction.nftContract,
+                        [
+                            'function tokenURI(uint256) view returns (string)',
+                            'function uri(uint256) view returns (string)', // ERC1155
+                            'function name() view returns (string)',
+                        ],
+                        provider
+                    );
+
+                    let tokenURI = '';
+                    let collectionName = '';
+                    
+                    try {
+                        tokenURI = await nftContract.tokenURI(auction.tokenId);
+                    } catch {
+                        try {
+                            tokenURI = await nftContract.uri(auction.tokenId);
+                        } catch {
+                            // No tokenURI available
+                        }
+                    }
+
+                    try {
+                        collectionName = await nftContract.name();
+                    } catch {
+                        // No collection name available
+                    }
+
+                    let metadata = {};
+                    if (tokenURI) {
+                        try {
+                            // Handle different URI schemes
+                            let metadataUrl = tokenURI;
+                            if (tokenURI.startsWith('ipfs://')) {
+                                metadataUrl = `https://ipfs.io/ipfs/${tokenURI.replace('ipfs://', '')}`;
+                            } else if (tokenURI.startsWith('ar://')) {
+                                metadataUrl = `https://arweave.net/${tokenURI.replace('ar://', '')}`;
+                            }
+
+                            const response = await fetch(metadataUrl, { timeout: 5000 });
+                            if (response.ok) {
+                                metadata = await response.json();
+                            }
+                        } catch (error) {
+                            console.warn(`Error fetching metadata from ${tokenURI}:`, error);
+                        }
+                    }
+
+                    // Resolve image URL
+                    let imageUrl = auction.image || metadata?.image || metadata?.image_url;
+                    if (imageUrl) {
+                        if (imageUrl.startsWith('ipfs://')) {
+                            imageUrl = `https://ipfs.io/ipfs/${imageUrl.replace('ipfs://', '')}`;
+                        } else if (imageUrl.startsWith('ar://')) {
+                            imageUrl = `https://arweave.net/${imageUrl.replace('ar://', '')}`;
+                        }
+                    }
+
+                    return {
+                        ...auction,
+                        image: imageUrl,
+                        name: metadata?.name || auction.name || `#${auction.tokenId}`,
+                        collectionName: collectionName || 'Unknown Collection',
+                        metadata
+                    };
+                } catch (error) {
+                    console.warn(`Error loading metadata for auction ${auction.id}:`, error);
+                    return auction;
+                }
+            }));
+
             // Only show active auctions
-            const activeAuctions = auctions.filter(a => {
+            const activeAuctions = auctionsWithMetadata.filter(a => {
                 const endMs = a.endTime;
                 return !endMs || Date.now() < endMs;
             });
@@ -803,11 +883,19 @@ function HomePage() {
                                         background: auction.image ? `url(${auction.image})` : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                                         backgroundSize: 'cover',
                                         backgroundPosition: 'center',
-                                        marginBottom: '12px'
-                                    }} />
+                                        marginBottom: '12px',
+                                        border: auction.image ? 'none' : '2px dashed rgba(255,255,255,0.3)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        color: 'rgba(255,255,255,0.7)',
+                                        fontSize: '14px'
+                                    }}>
+                                        {!auction.image && 'Loading NFT...'}
+                                    </div>
                                     <h4 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '600' }}>{title}</h4>
                                     <div style={{ fontSize: '14px', color: 'var(--hp-muted)', marginBottom: '12px' }}>
-                                        Collection: {shortAddr(auction.nftContract)}
+                                        Collection: {auction.collectionName || shortAddr(auction.nftContract)}
                                     </div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                         <div>
