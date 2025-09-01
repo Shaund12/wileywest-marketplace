@@ -341,7 +341,30 @@ const PREFS_KEY = 'marketplace_ui_prefs_v1';
 function loadPrefs() {
     try {
         const raw = localStorage.getItem(PREFS_KEY);
-        return raw ? JSON.parse(raw) : {};
+        if (!raw) return {};
+        
+        const prefs = JSON.parse(raw);
+        
+        // Clear potentially problematic filter states that might hide all listings
+        // These will be reset to empty/default values to ensure listings are visible
+        const cleanPrefs = {
+            ...prefs,
+            // Reset search and filters to prevent hiding all listings
+            searchTerm: '',
+            selectedCategories: [],
+            selectedCollections: [],
+            priceRange: { min: '', max: '' },
+            // Keep safe UI preferences
+            viewMode: prefs.viewMode || 'grid',
+            sortMethod: prefs.sortMethod || 'newest',
+            itemsPerPage: prefs.itemsPerPage || 12,
+            trendMode: prefs.trendMode || 'volume',
+            autoRefreshEnabled: Boolean(prefs.autoRefreshEnabled),
+            autoRefreshMs: prefs.autoRefreshMs || 60000,
+            autoLoadNext: Boolean(prefs.autoLoadNext)
+        };
+        
+        return cleanPrefs;
     } catch {
         return {};
     }
@@ -1172,6 +1195,14 @@ function MarketplacePage() {
        ---------------------------- */
     useEffect(() => {
         let result = [...listings];
+        
+        // Debug logging to help identify filtering issues
+        debugLog(`🔍 Filtering ${listings.length} listings with filters:`, {
+            searchTerm,
+            selectedCategories: selectedCategories.length,
+            selectedCollections: selectedCollections.length,
+            priceRange
+        });
 
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
@@ -1182,6 +1213,7 @@ function MarketplacePage() {
                     item.metadata?.description?.toLowerCase().includes(term) ||
                     item.tokenId.toString().includes(term)
             );
+            debugLog(`🔍 After search filter: ${result.length} listings remaining`);
         }
 
         if (selectedCategories.length > 0) {
@@ -1191,19 +1223,23 @@ function MarketplacePage() {
                     item.metadata?.attributes?.find((attr) => attr.trait_type === 'Category')?.value;
                 return category && selectedCategories.includes(String(category).toLowerCase());
             });
+            debugLog(`🔍 After category filter: ${result.length} listings remaining`);
         }
 
         if (selectedCollections.length > 0) {
             result = result.filter((item) => selectedCollections.includes(item.nftContract.toLowerCase()));
+            debugLog(`🔍 After collection filter: ${result.length} listings remaining`);
         }
 
         if (priceRange.min !== '') {
             const minWei = ethers.parseEther(priceRange.min.toString());
             result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) >= minWei);
+            debugLog(`🔍 After min price filter: ${result.length} listings remaining`);
         }
         if (priceRange.max !== '') {
             const maxWei = ethers.parseEther(priceRange.max.toString());
             result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) <= maxWei);
+            debugLog(`🔍 After max price filter: ${result.length} listings remaining`);
         }
 
         switch (sortMethod) {
@@ -1223,6 +1259,7 @@ function MarketplacePage() {
                 break;
         }
 
+        debugLog(`🔍 Final filtered result: ${result.length} listings for display`);
         setFilteredListings(result);
         setCurrentPage(1); // reset paging on filter/sort change
     }, [listings, searchTerm, sortMethod, selectedCategories, selectedCollections, priceRange]);
