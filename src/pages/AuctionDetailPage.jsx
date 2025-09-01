@@ -401,65 +401,101 @@ function AuctionDetailPage() {
 
     const loadNFTMetadata = async (nftContract, tokenId) => {
         try {
-            if (provider) {
-                const contract = new ethers.Contract(
-                    nftContract,
-                    [
-                        'function tokenURI(uint256) view returns (string)',
-                        'function uri(uint256) view returns (string)', // ERC1155
-                        'function name() view returns (string)',
-                        'function symbol() view returns (string)'
-                    ],
-                    provider
-                );
-
-                let tokenURI = '';
-                try {
-                    tokenURI = await contract.tokenURI(tokenId);
-                } catch {
-                    try {
-                        tokenURI = await contract.uri(tokenId);
-                    } catch {
-                        debugWarn(`Could not get tokenURI for ${nftContract}:${tokenId}`);
-                    }
-                }
-
-                let metadata = {};
-                if (tokenURI) {
-                    try {
-                        // Handle IPFS URIs
-                        let metadataUrl = tokenURI;
-                        if (tokenURI.startsWith('ipfs://')) {
-                            metadataUrl = `https://cloudflare-ipfs.com/ipfs/${tokenURI.replace('ipfs://', '')}`;
-                        }
-
-                        const response = await fetch(metadataUrl);
-                        if (response.ok) {
-                            metadata = await response.json();
-                        }
-                    } catch (error) {
-                        debugWarn(`Error fetching metadata from ${tokenURI}:`, error);
-                    }
-                }
-
-                // Try to get collection name
-                try {
-                    const name = await contract.name();
-                    const symbol = await contract.symbol();
-                    metadata.collection = { name, symbol };
-                } catch (error) {
-                    debugWarn(`Error fetching collection info:`, error);
-                }
-
-                setNftMetadata(metadata);
-                // Also update the auction object with metadata for SmartMedia component
-                setAuction(prev => ({
-                    ...prev,
-                    metadata: metadata
-                }));
+            if (!provider || !nftContract || tokenId === undefined || tokenId === null) {
+                debugWarn('Missing required params for metadata loading:', { provider: !!provider, nftContract, tokenId });
+                return;
             }
+
+            debugLog(`🔍 Loading metadata for ${nftContract}:${tokenId}`);
+
+            const contract = new ethers.Contract(
+                nftContract,
+                [
+                    'function tokenURI(uint256) view returns (string)',
+                    'function uri(uint256) view returns (string)', // ERC1155
+                    'function name() view returns (string)',
+                    'function symbol() view returns (string)'
+                ],
+                provider
+            );
+
+            let tokenURI = '';
+            try {
+                tokenURI = await contract.tokenURI(tokenId);
+                debugLog(`📋 TokenURI: ${tokenURI}`);
+            } catch {
+                try {
+                    tokenURI = await contract.uri(tokenId);
+                    debugLog(`📋 URI (ERC1155): ${tokenURI}`);
+                } catch {
+                    debugWarn(`Could not get tokenURI for ${nftContract}:${tokenId}`);
+                }
+            }
+
+            let metadata = {};
+            if (tokenURI && tokenURI !== '') {
+                try {
+                    // Handle IPFS URIs and other formats
+                    let metadataUrl = tokenURI;
+                    if (tokenURI.startsWith('ipfs://')) {
+                        metadataUrl = `https://cloudflare-ipfs.com/ipfs/${tokenURI.replace('ipfs://', '')}`;
+                    } else if (tokenURI.startsWith('ar://')) {
+                        metadataUrl = `https://arweave.net/${tokenURI.slice(5)}`;
+                    }
+
+                    debugLog(`🌐 Fetching metadata from: ${metadataUrl}`);
+                    const response = await fetch(metadataUrl, { timeout: 10000 });
+                    if (response.ok) {
+                        metadata = await response.json();
+                        debugLog(`✅ Metadata loaded:`, metadata);
+                    } else {
+                        debugWarn(`Failed to fetch metadata: ${response.status} ${response.statusText}`);
+                    }
+                } catch (error) {
+                    debugWarn(`Error fetching metadata from ${tokenURI}:`, error);
+                }
+            }
+
+            // Try to get collection name
+            try {
+                const name = await contract.name();
+                const symbol = await contract.symbol();
+                metadata.collection = { name, symbol };
+                debugLog(`✅ Collection info: ${name} (${symbol})`);
+            } catch (error) {
+                debugWarn(`Error fetching collection info:`, error);
+            }
+
+            // Ensure we have at least basic metadata structure
+            if (!metadata.name && !metadata.image) {
+                metadata = {
+                    name: `Token #${tokenId}`,
+                    description: `NFT Token #${tokenId} from collection ${nftContract}`,
+                    image: null,
+                    ...metadata
+                };
+            }
+
+            setNftMetadata(metadata);
+            // Also update the auction object with metadata for SmartMedia component
+            setAuction(prev => ({
+                ...prev,
+                metadata: metadata
+            }));
+
         } catch (error) {
             debugWarn(`Error loading metadata for ${nftContract}:${tokenId}:`, error);
+            // Set fallback metadata
+            const fallbackMetadata = {
+                name: `Token #${tokenId}`,
+                description: `NFT Token #${tokenId}`,
+                image: null
+            };
+            setNftMetadata(fallbackMetadata);
+            setAuction(prev => ({
+                ...prev,
+                metadata: fallbackMetadata
+            }));
         }
     };
 
@@ -487,8 +523,20 @@ function AuctionDetailPage() {
             // Convert bid amount to wei
             const bidAmountWei = ethers.parseEther(bidAmount.toString());
             
-            // Place bid
-            const tx = await marketplace.bid(auctionId, bidAmountWei, { value: bidAmountWei });
+            // Validate auction payment token - if it's native token (VTRU), send value
+            const isNativeToken = !auction.paymentToken || 
+                                auction.paymentToken === ethers.ZeroAddress || 
+                                auction.paymentToken === '0x0000000000000000000000000000000000000000';
+            
+            debugLog(`🔨 Placing bid for auction ${auctionId} with amount ${bidAmount} VTRU`);
+            debugLog(`💰 Payment token: ${auction.paymentToken}, isNative: ${isNativeToken}`);
+            
+            // Place bid with correct parameters (auctionId, amount)
+            const tx = isNativeToken 
+                ? await marketplace.bid(auctionId, bidAmountWei, { value: bidAmountWei })
+                : await marketplace.bid(auctionId, bidAmountWei);
+            
+            debugLog(`✅ Bid transaction submitted: ${tx.hash}`);
             await tx.wait();
             
             // Refresh auction data
