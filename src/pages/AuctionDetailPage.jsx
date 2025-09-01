@@ -282,15 +282,42 @@ function AuctionDetailPage() {
             setLoading(true);
             setAuction(null); // Clear existing auction
             
-            if (!auctionId || !provider || !marketplaceAddress) {
+            debugLog(`🔍 Loading auction ${auctionId}...`);
+            
+            if (!auctionId || auctionId === 'undefined') {
+                debugWarn('❌ Invalid auction ID provided');
                 return;
             }
 
-            // Load auction from database first
-            const cachedAuction = await getCachedAuctions(null, marketplaceAddress);
-            const auctionData = cachedAuction.find(a => a.id.toString() === auctionId);
+            if (!provider) {
+                debugWarn('❌ No provider available for auction loading');
+                return;
+            }
+
+            if (!marketplaceAddress) {
+                debugWarn('❌ No marketplace address configured');
+                return;
+            }
+
+            debugLog(`📋 Marketplace address: ${marketplaceAddress}`);
+
+            // Load auction from database/cache first - try multiple ID formats
+            const cachedAuctions = await getCachedAuctions(null, marketplaceAddress);
+            debugLog(`📦 Found ${cachedAuctions.length} cached auctions`);
+            
+            // Try multiple ID matching strategies
+            let auctionData = cachedAuctions.find(a => {
+                const candidateIds = [
+                    a.id?.toString(),
+                    a.auctionId?.toString(),
+                    a.auction_id?.toString()
+                ].filter(Boolean);
+                
+                return candidateIds.some(id => id === auctionId.toString());
+            });
             
             if (auctionData) {
+                debugLog(`✅ Found auction in cache: ${auctionData.id || auctionData.auctionId}`);
                 setAuction(auctionData);
                 
                 // Load current bid data
@@ -302,39 +329,57 @@ function AuctionDetailPage() {
                     loadNFTMetadata(auctionData.nftContract, auctionData.tokenId);
                 }
             } else {
+                debugLog('📡 Auction not found in cache, trying blockchain...');
+                
                 // Try loading from contract directly
                 try {
                     const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
                     const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, provider);
                     
+                    debugLog(`🔗 Calling marketplace.auctions(${auctionId})...`);
                     const auctionInfo = await marketplace.auctions(auctionId);
-                    if (auctionInfo && auctionInfo.seller !== ethers.ZeroAddress) {
+                    
+                    debugLog('📋 Raw auction info from contract:', auctionInfo);
+                    
+                    if (auctionInfo && auctionInfo.seller && auctionInfo.seller !== ethers.ZeroAddress) {
                         const processedAuction = {
                             id: auctionId,
+                            auctionId: auctionId,
                             seller: auctionInfo.seller,
                             nftContract: auctionInfo.nftContract,
                             tokenId: auctionInfo.tokenId.toString(),
                             startTime: Number(auctionInfo.startTime),
                             endTime: Number(auctionInfo.endTime),
-                            startingBid: auctionInfo.startingBid.toString(),
+                            startPrice: auctionInfo.startPrice?.toString() || auctionInfo.startingBid?.toString() || '0',
                             reservePrice: auctionInfo.reservePrice.toString(),
                             highestBid: auctionInfo.highestBid.toString(),
                             highestBidder: auctionInfo.highestBidder,
                             paymentToken: auctionInfo.paymentToken,
+                            minBidIncrementBps: Number(auctionInfo.minBidIncrementBps || auctionInfo.minIncrementBps || 500),
+                            antiSnipeSeconds: Number(auctionInfo.antiSnipeSeconds || auctionInfo.antiSnipeWindow || 300),
                             settled: auctionInfo.settled,
-                            canceled: auctionInfo.canceled
+                            canceled: auctionInfo.canceled || false
                         };
                         
+                        debugLog('✅ Successfully loaded auction from contract:', processedAuction);
                         setAuction(processedAuction);
                         loadNFTMetadata(processedAuction.nftContract, processedAuction.tokenId);
+                    } else {
+                        debugWarn('❌ Auction not found on contract or has zero address seller');
+                        debugLog('🔍 Auction info details:', {
+                            exists: !!auctionInfo,
+                            seller: auctionInfo?.seller,
+                            isZeroAddress: auctionInfo?.seller === ethers.ZeroAddress
+                        });
                     }
                 } catch (contractError) {
-                    debugWarn('Could not load auction from contract:', contractError);
+                    debugWarn('❌ Could not load auction from contract:', contractError);
+                    criticalError('Contract loading failed:', contractError);
                 }
             }
             
         } catch (error) {
-            criticalError('Error loading auction:', error);
+            criticalError('❌ Error loading auction:', error);
         } finally {
             setLoading(false);
         }
@@ -478,9 +523,13 @@ function AuctionDetailPage() {
     const getMinNextBid = () => {
         if (!auction) return '0';
         
-        const currentBid = auction.highestBid === '0' ? auction.startPrice : auction.highestBid;
-        const increment = (BigInt(currentBid) * BigInt(auction.minBidIncrementBps)) / BigInt(10000);
-        return BigInt(currentBid) + increment;
+        const currentBid = auction.highestBid === '0' ? 
+            (auction.startPrice || auction.startingBid || '0') : 
+            auction.highestBid;
+        
+        const incrementBps = auction.minBidIncrementBps || 500; // 5% default
+        const increment = (BigInt(currentBid) * BigInt(incrementBps)) / BigInt(10000);
+        return (BigInt(currentBid) + increment).toString();
     };
 
     const getTraitRarity = (trait) => {
@@ -535,7 +584,9 @@ function AuctionDetailPage() {
     const hasReserveMet = BigInt(auction.highestBid) >= BigInt(auction.reservePrice);
     const minNextBid = getMinNextBid();
 
-    const currentBidValue = auction.highestBid === '0' ? auction.startPrice : auction.highestBid;
+    const currentBidValue = auction.highestBid === '0' ? 
+        (auction.startPrice || auction.startingBid || '0') : 
+        auction.highestBid;
     const currentBidInToken = ethers.formatEther(currentBidValue);
     const currentBidInUSD = currentPrice ? (parseFloat(currentBidInToken) * currentPrice).toFixed(2) : 'Unknown';
 
@@ -700,7 +751,7 @@ function AuctionDetailPage() {
                                             <div className="activity-icon">🔨</div>
                                             <div className="activity-details">
                                                 <div className="activity-title">Auction Started</div>
-                                                <div className="activity-meta">Starting price: {ethers.formatEther(auction.startPrice)} VTRU</div>
+                                                <div className="activity-meta">Starting price: {ethers.formatEther(auction.startPrice || auction.startingBid || '0')} VTRU</div>
                                                 <div className="activity-time">2 hours ago</div>
                                             </div>
                                         </div>

@@ -746,26 +746,21 @@ export function SupabaseProvider({ children }) {
         if (!supabase) {
             debugLog('🔍 Supabase unavailable, checking localStorage for auctions...');
             try {
-                const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_'));
+                const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_') || key.startsWith('cache_auction'));
                 const localAuctions = keys.map(key => {
                     try {
                         const auctionData = JSON.parse(localStorage.getItem(key));
-                        // Ensure auction has valid ID and normalize structure
-                        if (!auctionData.id && !auctionData.auctionId && auctionData.auction_id) {
-                            auctionData.id = auctionData.auction_id;
-                            auctionData.auctionId = auctionData.auction_id;
-                        }
                         
-                        // Ensure all required fields are present with defaults
-                        return {
-                            id: auctionData.id || auctionData.auctionId || `local_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                            auctionId: auctionData.auctionId || auctionData.id,
+                        // Normalize auction data structure
+                        const normalizedAuction = {
+                            id: auctionData.id || auctionData.auctionId || auctionData.auction_id,
+                            auctionId: auctionData.auctionId || auctionData.id || auctionData.auction_id,
                             seller: auctionData.seller || '0x0000000000000000000000000000000000000000',
                             nftContract: auctionData.nftContract || auctionData.nft_contract || '0x0000000000000000000000000000000000000000',
                             tokenId: auctionData.tokenId || auctionData.token_id || '0',
                             quantity: auctionData.quantity || '1',
                             reservePrice: auctionData.reservePrice || auctionData.reserve_price || '0',
-                            startPrice: auctionData.startPrice || auctionData.start_price || '0',
+                            startPrice: auctionData.startPrice || auctionData.start_price || auctionData.startingBid || '0',
                             endTime: auctionData.endTime || auctionData.end_time || Math.floor(Date.now() / 1000) + 86400,
                             paymentToken: auctionData.paymentToken || auctionData.payment_token || ethers.ZeroAddress,
                             minBidIncrementBps: auctionData.minBidIncrementBps || auctionData.min_bid_increment_bps || 500,
@@ -778,15 +773,33 @@ export function SupabaseProvider({ children }) {
                             timestamp: auctionData.timestamp || Math.floor(Date.now() / 1000),
                             metadata: auctionData.metadata || {}
                         };
+                        
+                        return normalizedAuction;
                     } catch (e) {
                         debugWarn('Error parsing localStorage auction:', e);
                         return null;
                     }
-                }).filter(auction => auction && auction.id && auction.id !== 'undefined');
+                }).filter(auction => {
+                    if (!auction) return false;
+                    
+                    // Ensure auction has valid ID
+                    const hasValidId = auction.id && auction.id !== 'undefined' && auction.id !== 'null';
+                    
+                    // Filter by seller if specified
+                    if (sellerAddress && auction.seller.toLowerCase() !== sellerAddress.toLowerCase()) {
+                        return false;
+                    }
+                    
+                    return hasValidId;
+                });
                 
-                debugLog(`📦 Retrieved ${localAuctions.length} auctions from localStorage`);
+                debugLog(`📦 Retrieved ${localAuctions.length} auctions from localStorage fallback`);
                 if (localAuctions.length > 0) {
                     setCache(cacheKey, localAuctions, 'auctions');
+                    
+                    // Log auction IDs for debugging
+                    const auctionIds = localAuctions.map(a => a.id || a.auctionId).filter(Boolean);
+                    debugLog(`🆔 Auction IDs found: [${auctionIds.join(', ')}]`);
                 }
                 return localAuctions;
             } catch (e) {
@@ -827,7 +840,7 @@ export function SupabaseProvider({ children }) {
                 // Fallback to localStorage on Supabase error
                 debugLog('🔄 Supabase error, falling back to localStorage...');
                 try {
-                    const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_'));
+                    const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_') || key.startsWith('cache_auction'));
                     const localAuctions = keys.map(key => {
                         try {
                             const auctionData = JSON.parse(localStorage.getItem(key));
@@ -864,7 +877,7 @@ export function SupabaseProvider({ children }) {
                     tokenId: item.token_id || '0',
                     quantity: item.quantity || '1',
                     reservePrice: item.reserve_price || '0',
-                    startPrice: item.start_price || '0',
+                    startPrice: item.start_price || item.starting_bid || '0',
                     endTime: item.end_time || Math.floor(Date.now() / 1000) + 86400,
                     paymentToken: item.payment_token || '0x0000000000000000000000000000000000000000',
                     minBidIncrementBps: item.min_bid_increment_bps || 500,
