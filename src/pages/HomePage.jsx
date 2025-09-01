@@ -4,10 +4,12 @@ import { Link } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { convertToUSDCValue, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
 import ListingCard from '../components/ListingCard';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
+import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import './HomePage.css';
 
 /* -------------------------------
@@ -150,6 +152,17 @@ function useCollectionNames(addresses = [], provider) {
 const shortAddr = (a) => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
 const fmtToken = (n) => Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : '—';
 
+// Auction time formatting
+const timeLeft = (endMs) => {
+    const d = Math.max(0, endMs - Date.now());
+    const s = Math.floor(d / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    if (h > 0) return `${h}h ${m % 60}m`;
+    if (m > 0) return `${m}m ${s % 60}s`;
+    return `${s}s`;
+};
+
 /* -------------------------------
    HomePage
 -------------------------------- */
@@ -161,9 +174,15 @@ function HomePage() {
         status,
         marketplaceStats = {},
         fetchListings,
+        marketplaceAddress,
     } = useMarketplace();
 
     const { provider } = useWallet();
+    const { supabase, isConnected: supabaseConnected } = useSupabase();
+
+    // Auctions state
+    const [auctions, setAuctions] = useState([]);
+    const [isAuctionsLoading, setIsAuctionsLoading] = useState(false);
 
     // Ensure data on cold landings
     useEffect(() => {
@@ -171,6 +190,110 @@ function HomePage() {
             fetchListings().catch(() => { });
         }
     }, [isInitialized, fetchListings]);
+
+    // Fetch auctions for homepage
+    const fetchAuctions = useCallback(async () => {
+        if (!provider || !marketplaceAddress) return;
+
+        setIsAuctionsLoading(true);
+        try {
+            // Try Supabase first if available
+            let auctions = [];
+            if (supabaseConnected && supabase) {
+                try {
+                    const { data, error } = await supabase
+                        .from('auctions')
+                        .select('*')
+                        .eq('marketplace_address', marketplaceAddress.toLowerCase())
+                        .order('created_at', { ascending: false })
+                        .limit(6);
+                    
+                    if (!error && Array.isArray(data)) {
+                        auctions = data.map(a => ({
+                            id: String(a.id || a.auction_id || ''),
+                            nftContract: (a.nft_contract || '').toLowerCase(),
+                            tokenId: String(a.token_id || ''),
+                            seller: (a.seller || '').toLowerCase(),
+                            paymentToken: a.payment_token || ethers.ZeroAddress,
+                            reservePrice: String(a.reserve_price || '0'),
+                            startPrice: String(a.start_price || '0'),
+                            startTime: Number(a.start_time || 0) * 1000,
+                            endTime: Number(a.end_time || 0) * 1000,
+                            highestBid: String(a.highest_bid || '0'),
+                            highestBidder: (a.highest_bidder || '').toLowerCase(),
+                            image: a.image_url || null,
+                            name: a.name || `#${a.token_id || ''}`,
+                            status: (a.status || '').toLowerCase(),
+                            active: true
+                        }));
+                    }
+                } catch (e) {
+                    console.warn('Supabase auction fetch failed:', e);
+                }
+            }
+
+            // If no auctions from Supabase, try on-chain (limited scan)
+            if (auctions.length === 0) {
+                try {
+                    const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, provider);
+                    const current = await provider.getBlockNumber();
+                    const fromBlock = Math.max(0, current - 10000); // Last 10k blocks only for homepage
+                    
+                    const created = await contract.queryFilter(contract.filters.AuctionCreated(), fromBlock, current);
+                    const recent = created.slice(-6); // Last 6 auctions
+                    
+                    auctions = await Promise.all(recent.map(async (ev) => {
+                        try {
+                            const auctionId = String(ev.args?.auctionId?.toString?.() || '');
+                            if (!auctionId) return null;
+                            
+                            const a = await contract.auctions(auctionId);
+                            const endMs = Number(a.endTime || 0) * 1000;
+                            const active = Boolean(a.started) && !Boolean(a.settled) && (endMs ? Date.now() < endMs : true);
+                            
+                            return {
+                                id: auctionId,
+                                nftContract: (a.nftContract || '').toLowerCase(),
+                                tokenId: String(a.tokenId || '0'),
+                                seller: (a.seller || '').toLowerCase(),
+                                paymentToken: a.paymentToken || ethers.ZeroAddress,
+                                reservePrice: String(a.reservePrice || '0'),
+                                startPrice: String(a.startPrice || '0'),
+                                startTime: Number(a.startTime || 0) * 1000,
+                                endTime: endMs,
+                                highestBid: String(a.highestBid || '0'),
+                                highestBidder: (a.highestBidder || '').toLowerCase(),
+                                image: null,
+                                name: `#${a.tokenId || '0'}`,
+                                active
+                            };
+                        } catch {
+                            return null;
+                        }
+                    }));
+                    auctions = auctions.filter(Boolean);
+                } catch (e) {
+                    console.warn('Chain auction fetch failed:', e);
+                }
+            }
+
+            // Only show active auctions
+            const activeAuctions = auctions.filter(a => {
+                const endMs = a.endTime;
+                return !endMs || Date.now() < endMs;
+            });
+
+            setAuctions(activeAuctions);
+        } finally {
+            setIsAuctionsLoading(false);
+        }
+    }, [provider, marketplaceAddress, supabaseConnected, supabase]);
+
+    useEffect(() => {
+        if (provider && marketplaceAddress) {
+            fetchAuctions();
+        }
+    }, [fetchAuctions]);
 
     // Activity feed (simple, local)
     const activity = useMemo(() => {
@@ -622,6 +745,99 @@ function HomePage() {
                     <Link to="/hot-listings" className="hp-link">View all →</Link>
                 </div>
                 {renderFeaturedListings()}
+            </section>
+
+            {/* LIVE AUCTIONS */}
+            <section className="hp-featured">
+                <div className="hp-section__head">
+                    <h2>Live Auctions</h2>
+                    <Link to="/my-auctions" className="hp-link">View all →</Link>
+                </div>
+                {isAuctionsLoading ? (
+                    <LoadingSkeleton type="card" count={3} className="grid" />
+                ) : auctions.length > 0 ? (
+                    <div className="hp-featured-grid">
+                        {auctions.slice(0, 3).map((auction) => {
+                            const endMs = auction.endTime || 0;
+                            const endsIn = endMs ? timeLeft(endMs) : '—';
+                            const hasBid = ethers.getBigInt(auction.highestBid || 0) > 0n;
+                            const price = hasBid ? auction.highestBid : auction.startPrice;
+                            const title = auction.name || `#${auction.tokenId}`;
+                            
+                            return (
+                                <Link
+                                    key={auction.id}
+                                    to={`/auctions/${auction.id}`}
+                                    className="auction-preview-card"
+                                    style={{
+                                        display: 'block',
+                                        padding: '1rem',
+                                        borderRadius: '12px',
+                                        background: 'var(--hp-card-bg)',
+                                        border: '1px solid var(--hp-border)',
+                                        textDecoration: 'none',
+                                        color: 'inherit',
+                                        transition: 'all 0.2s ease',
+                                        position: 'relative'
+                                    }}
+                                >
+                                    <div style={{
+                                        position: 'absolute',
+                                        top: '8px',
+                                        right: '8px',
+                                        background: 'linear-gradient(45deg, #ff6b35, #f7931e)',
+                                        color: 'white',
+                                        fontSize: '11px',
+                                        fontWeight: '600',
+                                        padding: '4px 8px',
+                                        borderRadius: '6px',
+                                        textTransform: 'uppercase',
+                                        letterSpacing: '0.5px'
+                                    }}>
+                                        AUCTION
+                                    </div>
+                                    <div style={{
+                                        width: '100%',
+                                        height: '200px',
+                                        borderRadius: '8px',
+                                        background: auction.image ? `url(${auction.image})` : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                                        backgroundSize: 'cover',
+                                        backgroundPosition: 'center',
+                                        marginBottom: '12px'
+                                    }} />
+                                    <h4 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '600' }}>{title}</h4>
+                                    <div style={{ fontSize: '14px', color: 'var(--hp-muted)', marginBottom: '12px' }}>
+                                        Collection: {shortAddr(auction.nftContract)}
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div>
+                                            <div style={{ fontSize: '12px', color: 'var(--hp-muted)' }}>
+                                                {hasBid ? 'Highest Bid' : 'Starting Bid'}
+                                            </div>
+                                            <div style={{ fontWeight: '600', color: 'var(--hp-accent)' }}>
+                                                {fmtToken(parseFloat(ethers.formatEther(price)))} VTRU
+                                            </div>
+                                        </div>
+                                        <div style={{ textAlign: 'right' }}>
+                                            <div style={{ fontSize: '12px', color: 'var(--hp-muted)' }}>Ends In</div>
+                                            <div style={{ fontWeight: '600', color: 'var(--hp-accent)' }}>{endsIn}</div>
+                                        </div>
+                                    </div>
+                                </Link>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    <EmptyState
+                        icon="🏷️"
+                        title="No Live Auctions"
+                        description="Create or participate in auctions to see them here."
+                        actionText="Create Auction"
+                        onAction={() => (window.location.href = '/auctions/create')}
+                        secondaryActionText="View All Auctions"
+                        onSecondaryAction={() => (window.location.href = '/my-auctions')}
+                    />
+                )}
             </section>
 
             {/* NEXT-LEVEL: MARKET INSIGHTS */}

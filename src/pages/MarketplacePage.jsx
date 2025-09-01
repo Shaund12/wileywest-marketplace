@@ -1420,7 +1420,7 @@ function MarketplacePage() {
                                 return (
                                     <Link
                                         key={a.id}
-                                        to={`/collections/${a.nftContract}`}
+                                        to={`/auctions/${a.id}`}
                                         className="auction-card"
                                         aria-label={`Open auction ${title}`}
                                     >
