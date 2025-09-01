@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
@@ -198,6 +199,7 @@ function SmartMedia({ srcList = [], alt = '', width = 200, height = 200, seed = 
 }
 
 function MyAuctionsPage() {
+    const navigate = useNavigate();
     const { wallet, connect, signer, provider } = useWallet();
     const { status, marketplaceAddress } = useMarketplace();
     const { getCachedAuctions, getAuctionBids } = useSupabase();
