@@ -1413,141 +1413,142 @@ const ERC1155_APPROVAL_ABI = [
 ];
 
     // Replace the current buyListing with this version
+// Drop-in replacement for buyListing
 const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) => {
-    if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
-    if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
+  if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
+  if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
 
-    // Ensure ABI actually contains buy()
-    const ensureBuyAvailable = async (contract) => {
-        try {
-            contract.interface.getFunction('buy');
-            return contract;
-        } catch {
-            setStatus('Marketplace ABI missing buy(). Reinitializing...');
-            const resolvedAbi = await resolveMarketplaceAbi(abi);
-            const fixed = new ethers.Contract(marketplaceAddress, resolvedAbi, signer);
-            setMarketplace(fixed);
-            fixed.interface.getFunction('buy');
-            return fixed;
-        }
-    };
-
-    try {
-        // Ensure connected instance and presence of method
-        let contract = marketplace.connect(signer);
-        contract = await ensureBuyAvailable(contract);
-        const buyMethod = contract.getFunction('buy');
-
-        // 1) Load authoritative on-chain listing
-        const l = await contract.listings(id);
-        if (!l || !l.active) { setStatus('Error: Listing is inactive'); return; }
-
-        // 2) Validate quantity against listing type
-        const is1155 = !!l.isERC1155;
-        const listedQty = BigInt(l.quantity?.toString?.() ?? String(l.quantity ?? '0'));
-        const qty = BigInt(String(quantity || 1));
-        if (!is1155 && qty !== 1n) { setStatus('Error: ERC-721 quantity must be 1'); return; }
-        if (is1155 && (qty <= 0n || qty > listedQty)) { setStatus('Error: Requested quantity exceeds available'); return; }
-
-        // 3) Compute payment details strictly from chain
-        const unit = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
-        const total = unit * qty;
-        const paymentToken = l.paymentToken;
-        const isNative = !paymentToken || String(paymentToken).toLowerCase() === ethers.ZeroAddress.toLowerCase();
-
-        // 4) ERC-20 balance/allowance (if needed)
-        if (!isNative) {
-            setStatus('Checking token balance and approval...');
-            const token = new ethers.Contract(paymentToken, [
-                'function symbol() view returns (string)',
-                'function balanceOf(address) view returns (uint256)',
-                'function allowance(address,address) view returns (uint256)',
-                'function approve(address,uint256) returns (bool)'
-            ], signer);
-
-            const [symbol, balance, allowance] = await Promise.all([
-                token.symbol().catch(() => 'TOKEN'),
-                token.balanceOf(wallet),
-                token.allowance(wallet, marketplaceAddress),
-            ]);
-
-            if (BigInt(balance.toString()) < total) {
-                setStatus(`Error: Insufficient ${symbol} balance for this purchase`);
-                return;
-            }
-            if (BigInt(allowance.toString()) < total) {
-                setStatus(`Requesting ${symbol} approval...`);
-                try {
-                    const txApprove = await token.approve(marketplaceAddress, ethers.MaxUint256);
-                    setStatus(`Approving ${symbol} in your wallet...`);
-                    await txApprove.wait();
-                    setStatus(`${symbol} approved. Preparing purchase...`);
-                } catch (err) {
-                    if (String(err?.message || '').toLowerCase().includes('user rejected')) {
-                        setStatus('Token approval was rejected');
-                        return;
-                    }
-                    throw new Error(`Failed to approve ${symbol}: ${err.message || err}`);
-                }
-            }
-        }
-
-        // 5) Preflight estimate using correct msg.value for native
-        setStatus('Estimating gas...');
-        try {
-            const overrides = isNative ? { value: total } : {};
-            await buyMethod.estimateGas(id, Number(qty), overrides);
-        } catch (estErr) {
-            const msg = (estErr?.reason || estErr?.message || '').toLowerCase();
-            if (msg.includes('wrong msg.value') || msg.includes('insufficient funds')) {
-                setStatus('Error: Insufficient native funds or wrong msg.value');
-            } else if (msg.includes('allowance') || msg.includes('transfer amount exceeds')) {
-                setStatus('Error: Token allowance/transfer failed. Try approving again.');
-            } else {
-                setStatus('Purchase simulation failed. Listing may be inactive or sold out.');
-            }
-            throw estErr;
-        }
-
-        // 6) Send transaction with correct overrides
-        setStatus('Buying...');
-        const tx = await buyMethod(id, Number(qty), isNative ? { value: total } : {});
-        setStatus('Transaction submitted. Waiting for confirmation...');
-        await tx.wait();
-        setStatus('Purchase successful! Updating listings...');
-
-        if (supabaseConnected && cacheListings) {
-            await fetchListings(true);
-        } else {
-            fetchListings();
-        }
-
-        setTimeout(async () => {
-            try {
-                await fetchPastSalesEvents(marketplace);
-                setStatus('Purchase successful! Marketplace updated.');
-                setTimeout(() => setStatus(''), 3000);
-            } catch {
-                setStatus('Purchase successful!');
-                setTimeout(() => setStatus(''), 3000);
-            }
-        }, 1500);
-    } catch (e) {
-        criticalError('Error in buyListing:', e);
-        const em = String(e?.message || '').toLowerCase();
-        if (em.includes('user rejected')) {
-            setStatus('Transaction was rejected in your wallet');
-        } else if (em.includes('insufficient funds')) {
-            setStatus('Error: Insufficient funds for this purchase');
-        } else if (em.includes('allowance') || em.includes('transfer amount')) {
-            setStatus('Error: Token allowance/transfer failed. Please approve again or check token balance.');
-        } else if (em.includes('no abi with buy') || em.includes('missing buy')) {
-            setStatus('Error: ABI missing buy(). Check marketplace ABI/address.');
-        } else {
-            setStatus('Buy failed: ' + (e.message || e));
-        }
+  try {
+    // 0) Sanity: is there code at the marketplace address?
+    const code = await provider.getCode(marketplaceAddress);
+    if (!code || code === '0x') {
+      setStatus('Error: Marketplace address has no contract code');
+      return;
     }
+
+    // 1) Pull authoritative listing from chain
+    const l = await marketplace.listings(id);
+    if (!l || !l.active) { setStatus('Error: Listing is inactive'); return; }
+
+    const is1155 = !!l.isERC1155;
+    const listedQty = BigInt(l.quantity?.toString?.() ?? String(l.quantity ?? '0'));
+    const qty = BigInt(String(quantity || 1));
+    if (!is1155 && qty !== 1n) { setStatus('Error: ERC-721 quantity must be 1'); return; }
+    if (is1155 && (qty <= 0n || qty > listedQty)) { setStatus('Error: Requested quantity exceeds available'); return; }
+
+    const unit = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
+    const total = unit * qty;
+
+    const paymentToken = l.paymentToken;
+    const isNative = !paymentToken || String(paymentToken).toLowerCase() === ethers.ZeroAddress.toLowerCase();
+
+    // 2) For ERC20, ensure balance + allowance
+    if (!isNative) {
+      setStatus('Checking token balance and approval...');
+      const token = new ethers.Contract(paymentToken, [
+        'function symbol() view returns (string)',
+        'function balanceOf(address) view returns (uint256)',
+        'function allowance(address,address) view returns (uint256)',
+        'function approve(address,uint256) returns (bool)'
+      ], signer);
+
+      const [symbol, balance, allowance] = await Promise.all([
+        token.symbol().catch(() => 'TOKEN'),
+        token.balanceOf(wallet),
+        token.allowance(wallet, marketplaceAddress),
+      ]);
+
+      if (BigInt(balance.toString()) < total) {
+        setStatus(`Error: Insufficient ${symbol} balance for this purchase`);
+        return;
+      }
+      if (BigInt(allowance.toString()) < total) {
+        setStatus(`Requesting ${symbol} approval...`);
+        const txApprove = await token.approve(marketplaceAddress, ethers.MaxUint256);
+        setStatus(`Approving ${symbol} in your wallet...`);
+        await txApprove.wait();
+        setStatus(`${symbol} approved. Preparing purchase...`);
+      }
+    } else {
+      // For native listings, pre-check native balance to avoid “missing revert data” from RPCs
+      const bal = await provider.getBalance(wallet);
+      if (bal < total) {
+        setStatus('Error: Insufficient native balance for item price + gas');
+        return;
+      }
+    }
+
+    // 3) Gas estimate (use the canonical v6 path; include value for native)
+    setStatus('Estimating gas...');
+    try {
+      if (isNative) {
+        await marketplace.estimateGas.buy(id, qty, { value: total });
+      } else {
+        await marketplace.estimateGas.buy(id, qty);
+      }
+    } catch (estErr) {
+      // Try to extract a reason; if node gave no data, do a static call to get something helpful
+      try {
+        if (isNative) {
+          await marketplace.getFunction('buy').staticCall(id, qty, { value: total });
+        } else {
+          await marketplace.getFunction('buy').staticCall(id, qty);
+        }
+        // If staticCall succeeds but estimateGas failed, we still proceed with a conservative gas limit.
+      } catch (staticErr) {
+        const msg = (staticErr?.reason || staticErr?.message || '').toLowerCase();
+        if (msg.includes('wrong msg.value')) {
+          setStatus('Error: Wrong amount of native sent. Please retry.');
+          return;
+        }
+        if (msg.includes('inactive')) { setStatus('Error: Listing is inactive'); return; }
+        if (msg.includes('not enough')) { setStatus('Error: Not enough quantity left'); return; }
+        if (msg.includes('721 qty')) { setStatus('Error: ERC-721 listings must be bought with quantity 1'); return; }
+        // Generic fallback
+        setStatus('Purchase simulation failed (token transfer / allowance / price).');
+        throw estErr; // keep original estimate error for console
+      }
+    }
+
+    // 4) Send the tx (include msg.value for native)
+    setStatus('Buying...');
+    const overrides = isNative ? { value: total } : undefined;
+    const tx = await marketplace.getFunction('buy')(id, qty, overrides);
+    setStatus('Transaction submitted. Waiting for confirmation...');
+    await tx.wait();
+
+    setStatus('Purchase successful! Updating listings...');
+    if (supabaseConnected && cacheListings) {
+      await fetchListings(true);
+    } else {
+      fetchListings();
+    }
+
+    setTimeout(async () => {
+      try {
+        await fetchPastSalesEvents(marketplace);
+        setStatus('Purchase successful! Marketplace updated.');
+        setTimeout(() => setStatus(''), 3000);
+      } catch {
+        setStatus('Purchase successful!');
+        setTimeout(() => setStatus(''), 3000);
+      }
+    }, 1200);
+  } catch (e) {
+    criticalError('Error in buyListing:', e);
+    const em = String(e?.message || '').toLowerCase();
+    if (em.includes('user rejected')) {
+      setStatus('Transaction was rejected in your wallet');
+    } else if (em.includes('insufficient funds')) {
+      setStatus('Error: Insufficient funds for this purchase');
+    } else if (em.includes('no contract code')) {
+      setStatus('Error: Marketplace address has no contract code');
+    } else {
+      setStatus('Buy failed: ' + (e.message || e));
+    }
+  }
 };
+
 
     const createListing = async (nftContract, tokenId, quantity, price, paymentToken) => {
         try {
