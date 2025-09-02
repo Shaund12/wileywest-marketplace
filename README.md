@@ -1,4 +1,4 @@
-# WileyW€$T NFT Marketplace
+# BlockDust NFT Marketplace
 
 <div align="center">
   <h2>🌆 Cyberpunk NFT Trading Platform 🌆</h2>
@@ -13,13 +13,15 @@
 ## 🚀 Features
 
 - **🎨 NFT Trading**: Buy, sell, and discover unique digital assets
+- **🏁 Auction System**: Complete auction platform with bidding, reserves, and settlements
 - **🔗 Blockchain Integration**: Built on the Vitruveo network with Web3 wallet support
-- **⚡ High Performance**: Lightning-fast React 18 with Vite build system
+- **⚡ High Performance**: Lightning-fast React 18 with Vite build system and code splitting
 - **🎮 Cyberpunk Theme**: Immersive futuristic design and user experience
 - **📱 Responsive Design**: Optimized for desktop and mobile devices
 - **🔒 Secure**: Smart contract-based transactions with MetaMask integration
 - **📊 Real-time Data**: Live marketplace statistics and price tracking
-- **🗃️ Optional Backend**: Supabase integration for enhanced features
+- **🗃️ Smart Caching**: Intelligent data persistence with rate limiting
+- **🚀 Production Ready**: Comprehensive error handling and optimized performance
 
 ## 📋 Table of Contents
 

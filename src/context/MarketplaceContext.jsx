@@ -178,25 +178,49 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const lastCachedSalesCount = useRef(0);
     useEffect(() => {
         if (salesHistory.length > 0) {
-            try {
-                // Always persist to localStorage for immediate access
-                localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
-                debugLog("Persisted sales history to localStorage:", salesHistory.length, "transactions");
-                
-                // Check if content has actually changed using signature
-                const currentSignature = createContentSignature({ salesHistory });
-                if (lastCacheSignature !== currentSignature) {
-                    setLastCacheSignature(currentSignature);
-                    debugLog("Sales history content changed, signature updated");
+            // Use async function inside useEffect
+            const cacheSales = async () => {
+                try {
+                    // Always persist to localStorage for immediate access
+                    localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
+                    debugLog("Persisted sales history to localStorage:", salesHistory.length, "transactions");
+                    
+                    // Check if content has actually changed using signature
+                    const currentSignature = createContentSignature({ salesHistory });
+                    if (lastCacheSignature !== currentSignature) {
+                        setLastCacheSignature(currentSignature);
+                        debugLog("Sales history content changed, signature updated");
+                    }
+                    
+                    // Smart sales history caching with reasonable limits
+                    const MAX_SAFE_SALES_CACHE = 500; // Reasonable limit for sales history
+                    const shouldCacheSales = supabaseConnected && salesHistory.length > 0 && 
+                                           salesHistory.length <= MAX_SAFE_SALES_CACHE && 
+                                           lastCacheSignature !== currentSignature;
+                    
+                    if (shouldCacheSales && cacheSalesHistory) {
+                        try {
+                            debugLog(`💾 Smart caching ${salesHistory.length} sales (within safe limit)...`);
+                            await cacheSalesHistory(salesHistory);
+                            debugLog(`✅ Successfully cached sales history`);
+                        } catch (cacheError) {
+                            debugWarn("❌ Failed to cache sales history:", cacheError);
+                        }
+                    } else if (salesHistory.length > MAX_SAFE_SALES_CACHE) {
+                        debugLog(`📋 Skipping sales cache - count (${salesHistory.length}) exceeds safe limit (${MAX_SAFE_SALES_CACHE})`);
+                    } else if (lastCacheSignature === currentSignature) {
+                        debugLog("📋 No sales cache update needed - data unchanged");
+                    } else if (!supabaseConnected) {
+                        debugLog("📋 Skipping sales cache - Supabase not connected");
+                    }
+                    
+                } catch (error) {
+                    criticalError("Error persisting sales history:", error);
                 }
-                
-                // Supabase caching disabled to prevent mass data collection
-                debugLog("Auto-caching to Supabase DISABLED to prevent mass data collection");
-                debugLog(`${salesHistory.length} sales in memory - Supabase auto-cache disabled`);
-                
-            } catch (error) {
-                criticalError("Error persisting sales history:", error);
-            }
+            };
+            
+            // Call the async function
+            cacheSales();
         }
     }, [salesHistory]); // Removed supabaseConnected from dependencies as noted in original
 
@@ -207,7 +231,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const canceledArray = Array.from(canceledListings);
                 localStorage.setItem('marketplace_canceled_listings', JSON.stringify(canceledArray));
             } catch (error) {
-                console.error("Error persisting canceled listings:", error);
+                criticalError("Error persisting canceled listings:", error);
             }
         }
     }, [canceledListings]);
@@ -226,11 +250,11 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         await provider.getNetwork();
                         // Event listeners and blockchain scanning disabled for production
                     } catch (networkError) {
-                        console.warn("Network connectivity issue - event listeners not set up:", networkError.message);
+                        debugWarn("Network connectivity issue - event listeners not set up:", networkError.message);
                         setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
                     }
                 } catch (error) {
-                    console.error("Error initializing marketplace contract:", error);
+                    criticalError("Error initializing marketplace contract:", error);
                     setStatus("Failed to initialize marketplace contract");
                 }
             }
@@ -270,13 +294,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         
         try {
             setStatus("🚀 Starting optimized blockchain scan with parallel processing...");
-            console.log("🚀 Starting optimized blockchain scan with parallel processing...");
+            debugLog("🚀 Starting optimized blockchain scan with parallel processing...");
             
             // Test network connectivity first
             try {
                 await provider.getNetwork();
             } catch (networkError) {
-                console.warn("Network connectivity issue - skipping past events fetch");
+                debugWarn("Network connectivity issue - skipping past events fetch");
                 setStatus("");
                 return;
             }
@@ -287,8 +311,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // CONSERVATIVE SCAN: Only scan recent blocks to avoid massive data collection
             const fromBlock = Math.max(currentBlock - 50000, lastScannedBlock); // Only last 50k blocks
             
-            console.log(`🔍 CONSERVATIVE BLOCKCHAIN SCAN: Recent blocks only from ${fromBlock} to ${currentBlock}`);
-            console.log(`⚡ Limiting scan to recent 50k blocks to prevent mass data collection`);
+            debugLog(`🔍 CONSERVATIVE BLOCKCHAIN SCAN: Recent blocks only from ${fromBlock} to ${currentBlock}`);
+            debugLog(`⚡ Limiting scan to recent 50k blocks to prevent mass data collection`);
             setStatus(`⚡ Conservative scan: recent blocks ${fromBlock} to ${currentBlock} only...`);
             
             let purchasedEvents = [];
@@ -305,7 +329,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 chunks.push({ start: chunkStart, end: chunkEnd });
             }
             
-            console.log(`📊 Processing ${chunks.length} chunks with ${MAX_CONCURRENT_CHUNKS} concurrent workers`);
+            debugLog(`📊 Processing ${chunks.length} chunks with ${MAX_CONCURRENT_CHUNKS} concurrent workers`);
             
             // Process chunks in parallel batches
             for (let i = 0; i < chunks.length; i += MAX_CONCURRENT_CHUNKS) {
@@ -317,14 +341,14 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 
                 // Process one chunk at a time to reduce load
                 const chunk = batch[0]; // Only process first chunk since MAX_CONCURRENT_CHUNKS = 1
-                console.log(`⚡ Processing chunk ${batchNumber}/${totalBatches}: ${chunk.start}-${chunk.end}`);
+                debugLog(`⚡ Processing chunk ${batchNumber}/${totalBatches}: ${chunk.start}-${chunk.end}`);
                 const chunkPromise = async () => {
                     const { start, end } = chunk;
                     
                     // Skip if we've already processed this chunk
                     const chunkKey = `${start}-${end}`;
                     if (processedBlocksCache.has(chunkKey)) {
-                        console.log(`⚡ Skipping cached chunk: ${chunkKey}`);
+                        debugLog(`⚡ Skipping cached chunk: ${chunkKey}`);
                         return { purchased: [], canceled: [] };
                     }
                     
@@ -345,11 +369,11 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         // Cache this chunk as processed
                         setProcessedBlocksCache(prev => new Set([...prev, chunkKey]));
                         
-                        console.log(`✅ Chunk ${chunkKey}: ${chunkPurchased.length} purchases, ${chunkCanceled.length} cancellations`);
+                        debugLog(`✅ Chunk ${chunkKey}: ${chunkPurchased.length} purchases, ${chunkCanceled.length} cancellations`);
                         return { purchased: chunkPurchased, canceled: chunkCanceled };
                         
                     } catch (chunkError) {
-                        console.warn(`⚠️ Error in chunk ${chunkKey}:`, chunkError);
+                        debugWarn(`⚠️ Error in chunk ${chunkKey}:`, chunkError);
                         return { purchased: [], canceled: [] };
                     }
                 };
@@ -378,16 +402,16 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // Update last scanned block
             setLastScannedBlock(currentBlock);
             
-            console.log(`🎉 CONSERVATIVE SCAN COMPLETE:`);
-            console.log(`⚡ Found ${purchasedEvents.length} total purchase events using conservative scanning`);
-            console.log(`❌ Found ${canceledEvents.length} total canceled events`);
-            console.log(`🚀 Performance: Processed ${chunks.length} chunks conservatively to prevent data overload`);
+            debugLog(`🎉 CONSERVATIVE SCAN COMPLETE:`);
+            debugLog(`⚡ Found ${purchasedEvents.length} total purchase events using conservative scanning`);
+            debugLog(`❌ Found ${canceledEvents.length} total canceled events`);
+            debugLog(`🚀 Performance: Processed ${chunks.length} chunks conservatively to prevent data overload`);
             
             setStatus(`🎉 Conservative scan complete! Processing ${purchasedEvents.length} purchase events and ${canceledEvents.length} canceled events...`);
             
             // Process all events with enhanced performance
             const pastSales = [];
-            console.log(`🔄 Fast processing ${purchasedEvents.length} purchase events...`);
+            debugLog(`🔄 Fast processing ${purchasedEvents.length} purchase events...`);
             
             // Batch process events for better performance
             const BATCH_SIZE = 20;
@@ -411,7 +435,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             transactionHash: event.transactionHash
                         };
                     } catch (eventError) {
-                        console.warn(`⚠️ Error processing purchase event ${i + batchIndex + 1}:`, eventError);
+                        debugWarn(`⚠️ Error processing purchase event ${i + batchIndex + 1}:`, eventError);
                         // Fallback data
                         return {
                             listingId: event.args.listingId.toString(),
@@ -432,18 +456,18 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 
                 // Progress feedback
                 if ((i + BATCH_SIZE) % 100 === 0 || i + BATCH_SIZE >= purchasedEvents.length) {
-                    console.log(`📊 Processed ${Math.min(i + BATCH_SIZE, purchasedEvents.length)}/${purchasedEvents.length} transactions`);
+                    debugLog(`📊 Processed ${Math.min(i + BATCH_SIZE, purchasedEvents.length)}/${purchasedEvents.length} transactions`);
                 }
             }
             
             // Fast process canceled events
-            console.log(`🔄 Processing ${canceledEvents.length} canceled events...`);
+            debugLog(`🔄 Processing ${canceledEvents.length} canceled events...`);
             const pastCanceled = new Set();
             canceledEvents.forEach(event => {
                 try {
                     pastCanceled.add(event.args.listingId.toString());
                 } catch (eventError) {
-                    console.warn(`⚠️ Error processing canceled event:`, eventError);
+                    debugWarn(`⚠️ Error processing canceled event:`, eventError);
                 }
             });
             
@@ -453,39 +477,39 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const newSales = pastSales.filter(sale => !existingHashes.has(sale.transactionHash));
                 const merged = [...prev, ...newSales].sort((a, b) => b.timestamp - a.timestamp);
                 
-                console.log(`📊 OPTIMIZED SCAN RESULTS:`);
-                console.log(`💾 Previous sales: ${prev.length}`);
-                console.log(`🆕 New sales from blockchain: ${newSales.length}`);
-                console.log(`📈 Total sales history: ${merged.length} transactions`);
-                console.log(`⚡ Performance: Used parallel processing and smart caching`);
+                debugLog(`📊 OPTIMIZED SCAN RESULTS:`);
+                debugLog(`💾 Previous sales: ${prev.length}`);
+                debugLog(`🆕 New sales from blockchain: ${newSales.length}`);
+                debugLog(`📈 Total sales history: ${merged.length} transactions`);
+                debugLog(`⚡ Performance: Used parallel processing and smart caching`);
                 
                 return merged;
             });
             
             setCanceledListings(prev => {
                 const merged = new Set([...prev, ...pastCanceled]);
-                console.log(`❌ Updated canceled listings: ${merged.size} total`);
+                debugLog(`❌ Updated canceled listings: ${merged.size} total`);
                 return merged;
             });
             
             // Enhanced success message with performance metrics
             const totalEventsFound = pastSales.length + pastCanceled.size;
             if (totalEventsFound > 0) {
-                console.log(`🎉 OPTIMIZED BLOCKCHAIN SCAN COMPLETE!`);
-                console.log(`📈 Total transactions found: ${pastSales.length}`);
-                console.log(`❌ Total cancellations found: ${pastCanceled.size}`);
-                console.log(`⚡ Performance improvement: Parallel chunk processing used`);
+                debugLog(`🎉 OPTIMIZED BLOCKCHAIN SCAN COMPLETE!`);
+                debugLog(`📈 Total transactions found: ${pastSales.length}`);
+                debugLog(`❌ Total cancellations found: ${pastCanceled.size}`);
+                debugLog(`⚡ Performance improvement: Parallel chunk processing used`);
                 
                 setStatus(`✅ Optimized scan complete! Found ${pastSales.length} transactions and ${pastCanceled.size} cancellations using parallel processing.`);
                 setTimeout(() => setStatus(""), 8000);
             } else {
-                console.log(`📋 Optimized scan complete - no transaction history found in smart contract`);
+                debugLog(`📋 Optimized scan complete - no transaction history found in smart contract`);
                 setStatus("✅ Optimized scan complete - no historical transactions found. This could mean the marketplace is new or transactions happened on a different contract.");
                 setTimeout(() => setStatus(""), 8000);
             }
             
         } catch (error) {
-            console.error("❌ Error in optimized blockchain scan:", error);
+            criticalError("❌ Error in optimized blockchain scan:", error);
             setStatus(`❌ Error in optimized scan: ${error.message}. Check console for details.`);
             setTimeout(() => setStatus(""), 10000);
         }
@@ -537,7 +561,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             });
             
         } catch (error) {
-            console.warn("Error processing partial sales data:", error);
+            debugWarn("Error processing partial sales data:", error);
         }
     };
 
@@ -546,7 +570,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         try {
             // Listen for purchases (sales)
             contract.on("NFTPurchased", async (listingId, buyer, quantity, totalPrice, paymentToken, event) => {
-                console.log("NFT Purchased event:", { listingId, buyer, quantity, totalPrice, paymentToken });
+                debugLog("NFT Purchased event:", { listingId, buyer, quantity, totalPrice, paymentToken });
                 
                 try {
                     // Get block information for timestamp
@@ -568,17 +592,17 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         // Check if this transaction already exists
                         const exists = prev.some(sale => sale.transactionHash === saleData.transactionHash);
                         if (exists) {
-                            console.log("Sale event already recorded, skipping duplicate");
+                            debugLog("Sale event already recorded, skipping duplicate");
                             return prev;
                         }
                         
                         const updated = [saleData, ...prev].sort((a, b) => b.timestamp - a.timestamp);
-                        console.log("Added new sale to history:", saleData);
-                        console.log("Total sales history now:", updated.length, "transactions");
+                        debugLog("Added new sale to history:", saleData);
+                        debugLog("Total sales history now:", updated.length, "transactions");
                         return updated;
                     });
                 } catch (error) {
-                    console.error("Error processing NFTPurchased event:", error);
+                    criticalError("Error processing NFTPurchased event:", error);
                     // Fallback without block info
                     const saleData = {
                         listingId: listingId.toString(),
@@ -596,20 +620,20 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
             // Listen for canceled listings
             contract.on("ListingCanceled", (listingId) => {
-                console.log("Listing Canceled event:", { listingId });
+                debugLog("Listing Canceled event:", { listingId });
                 setCanceledListings(prev => new Set([...prev, listingId.toString()]));
             });
 
             // Listen for new listings
             contract.on("ListingCreated", (listingId, seller, nftContract, tokenId, quantity, pricePerUnit, paymentToken, isERC1155) => {
-                console.log("New listing created:", { listingId, seller, nftContract });
+                debugLog("New listing created:", { listingId, seller, nftContract });
                 // Refresh listings when new ones are created
                 setTimeout(fetchListings, 2000);
             });
 
-            console.log("Event listeners set up successfully");
+            debugLog("Event listeners set up successfully");
         } catch (error) {
-            console.error("Error setting up event listeners:", error);
+            criticalError("Error setting up event listeners:", error);
         }
     };
 
@@ -623,7 +647,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             try {
                 await provider.getNetwork();
             } catch (networkError) {
-                console.warn("Network issue - calculating stats with fallback values");
+                debugWarn("Network issue - calculating stats with fallback values");
                 
                 // Enhanced fallback calculations with more timeframes and analytics
                 const now = Date.now();
@@ -710,7 +734,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             sales30d++;
                         }
                     } catch (error) {
-                        console.warn("Error parsing sale price:", error);
+                        debugWarn("Error parsing sale price:", error);
                     }
                 }
                 
@@ -725,7 +749,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         const nativeValue = parseFloat(ethers.formatEther(listing.pricePerUnit));
                         currentListingVolumeNative += nativeValue;
                     } catch (error) {
-                        console.warn("Error parsing listing price:", error);
+                        debugWarn("Error parsing listing price:", error);
                     }
                 }
 
@@ -870,7 +894,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     topTokensMap[tokenKey].volume += usdcValue;
                     topTokensMap[tokenKey].sales += 1;
                 } catch (error) {
-                    console.warn("Error calculating sale value:", error);
+                    debugWarn("Error calculating sale value:", error);
                 }
             }
 
@@ -892,7 +916,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     sellerStatsMap[listing.seller].listingsCount += 1;
                     sellerStatsMap[listing.seller].totalVolume += usdcValue;
                 } catch (error) {
-                    console.warn("Error calculating listing value:", error);
+                    debugWarn("Error calculating listing value:", error);
                 }
             }
 
@@ -1009,7 +1033,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         
         try {
             // Step 1: ALWAYS fetch from blockchain first for real-time data
-            console.log("🌐 Always fetching from blockchain for real-time data...");
+            debugLog("🌐 Always fetching from blockchain for real-time data...");
             await fetchListingsFromBlockchain(false, []);
             lastCacheUpdateRef.current = Date.now();
 
@@ -1023,7 +1047,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         debugLog(`Found ${cachedListings.length} listings in cache (used for comparison only)`);
                     }
                 } catch (cacheError) {
-                    console.warn("Cache check failed, continuing with blockchain data:", cacheError.message);
+                    debugWarn("Cache check failed, continuing with blockchain data:", cacheError.message);
                 }
             }
             
@@ -1033,7 +1057,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // Fallback: try to use cached data if blockchain fails
             if (supabaseConnected && getCachedListings && !forceRefresh) {
                 try {
-                    console.log("🔄 Blockchain failed, trying cache as fallback...");
+                    debugLog("🔄 Blockchain failed, trying cache as fallback...");
                     cachedListings = await getCachedListings();
                     
                     if (cachedListings && cachedListings.length > 0) {
@@ -1046,7 +1070,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         setStatus('Failed to fetch listings - no cache available');
                     }
                 } catch (fallbackError) {
-                    console.error("Both blockchain and cache failed:", fallbackError);
+                    criticalError("Both blockchain and cache failed:", fallbackError);
                     setStatus('Failed to fetch listings from all sources');
                 }
             } else {
@@ -1069,7 +1093,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             try {
                 await provider.getNetwork();
             } catch (networkError) {
-                console.warn("Network connectivity issue:", networkError.message);
+                debugWarn("Network connectivity issue:", networkError.message);
                 
                 if (existingListings.length > 0) {
                     // We have cached data, use it
@@ -1093,12 +1117,29 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             const res = [];
             const maxScanRange = MARKETPLACE_CONFIG.MAX_LISTING_SCAN;
             
+            debugLog(`🔍 Scanning listings from ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN} to ${maxScanRange} (expanded range to find all active listings)`);
+            setStatus(`Scanning listings ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN}-${maxScanRange} (expanded range)...`);
+            
+            let activeListingsFound = 0;
+            let scannedCount = 0;
+            
             for (let i = MARKETPLACE_CONFIG.MIN_LISTING_SCAN; i <= maxScanRange; i++) {
+                scannedCount++;
+                
+                // Update progress every 25 listings for expanded range
+                if (scannedCount % 25 === 0 || scannedCount <= 50) {
+                    setStatus(`Found ${activeListingsFound} active listings out of ${scannedCount} scanned (${Math.round(scannedCount/maxScanRange*100)}% complete)...`);
+                }
                 try {
                     const listing = await marketplace.listings(i);
 
                     // Skip inactive listings
-                    if (!listing || !listing.active) continue;
+                    if (!listing || !listing.active) {
+                        continue;
+                    }
+                    
+                    activeListingsFound++;
+                    debugLog(`✅ Found active listing ${i}: ${listing.nftContract}:${listing.tokenId}`);
 
                     // For background updates, prioritize new listings
                     if (isBackgroundUpdate && existingIds.has(i)) {
@@ -1132,12 +1173,12 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             const contractName = await nftContract.name();
                             if (contractName && contractName.trim() !== '') {
                                 collectionName = contractName.trim();
-                                console.log(`✅ Collection name from contract for ${listing.nftContract}: ${collectionName}`);
+                                debugLog(`✅ Collection name from contract for ${listing.nftContract}: ${collectionName}`);
                             } else {
-                                console.warn(`⚠️ Contract ${listing.nftContract} returned empty name`);
+                                debugWarn(`⚠️ Contract ${listing.nftContract} returned empty name`);
                             }
                         } catch (nameError) {
-                            console.warn(`❌ Failed to get contract name for ${listing.nftContract}:`, nameError.message);
+                            debugWarn(`❌ Failed to get contract name for ${listing.nftContract}:`, nameError.message);
                             // Continue with fallback resolution below
                         }
 
@@ -1217,7 +1258,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             // Try metadata.collection.name first
                             if (metadata?.collection?.name && metadata.collection.name.trim() !== '') {
                                 collectionName = metadata.collection.name.trim();
-                                console.log(`📋 Using collection name from metadata: ${collectionName}`);
+                                debugLog(`📋 Using collection name from metadata: ${collectionName}`);
                             } 
                             // Try metadata.name if it doesn't look like a token name
                             else if (metadata?.name && 
@@ -1226,7 +1267,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                                      !metadata.name.toLowerCase().includes('nft') &&
                                      metadata.name.trim() !== '') {
                                 collectionName = metadata.name.trim();
-                                console.log(`📝 Using NFT name as collection name: ${collectionName}`);
+                                debugLog(`📝 Using NFT name as collection name: ${collectionName}`);
                             }
                             // Try to extract from description
                             else if (metadata?.description && metadata.description.trim() !== '') {
@@ -1235,11 +1276,11 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                                 if (words.length >= 2 && words.length <= 4) {
                                     // If description is short enough, it might be a collection name
                                     collectionName = description;
-                                    console.log(`📖 Using description as collection name: ${collectionName}`);
+                                    debugLog(`📖 Using description as collection name: ${collectionName}`);
                                 } else {
                                     // Extract first few words
                                     collectionName = words.slice(0, 3).join(' ');
-                                    console.log(`🔤 Using first words of description: ${collectionName}`);
+                                    debugLog(`🔤 Using first words of description: ${collectionName}`);
                                 }
                             }
                         }
@@ -1300,34 +1341,38 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 }
             }
 
+            debugLog(`✅ Listing scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
+            setStatus(`Scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
+
             debugLog(`Successfully loaded ${res.length} listings from blockchain`);
             setListings(res);
             setHotListings(res.slice(0, 5));
             
-            // Enhanced caching with content-based validation
-            debugLog(`Auto-caching DISABLED to prevent mass data collection to Supabase`);
-            debugLog(`Found ${res.length} listings - caching disabled to prevent database overload`);
-
-            // Auto-caching disabled to prevent mass data collection
-            const shouldCache = false;
+            // Smart caching with intelligent limits for production use
+            const MAX_SAFE_CACHE_SIZE = 200; // Reasonable limit for production
+            const shouldCache = supabaseConnected && res.length > 0 && res.length <= MAX_SAFE_CACHE_SIZE && newListingsFound > 0;
             
-            if (shouldCache && supabaseConnected && res.length > 0 && cacheListings) {
+            if (shouldCache && cacheListings) {
                 try {
-                    console.log(`💾 Caching ${res.length} listings (${newListingsFound} new)...`);
+                    debugLog(`💾 Smart caching ${res.length} listings (${newListingsFound} new, within safe limit)...`);
                     await cacheListings(res);
-                    console.log(`✅ Successfully cached ${res.length} listings`);
+                    debugLog(`✅ Successfully cached ${res.length} listings`);
                 } catch (cacheError) {
-                    console.warn("❌ Failed to cache listings:", cacheError);
+                    debugWarn("❌ Failed to cache listings:", cacheError);
                 }
-            } else if (!shouldCache) {
-                console.log("📋 No cache update needed - data unchanged");
+            } else if (res.length > MAX_SAFE_CACHE_SIZE) {
+                debugLog(`📋 Skipping cache - listing count (${res.length}) exceeds safe limit (${MAX_SAFE_CACHE_SIZE})`);
+            } else if (!shouldCache && newListingsFound === 0) {
+                debugLog("📋 No cache update needed - no new listings found");
+            } else if (!supabaseConnected) {
+                debugLog("📋 Skipping cache - Supabase not connected");
             }
             
             // Clear status after delay
             setTimeout(() => setStatus(''), isBackgroundUpdate ? 2000 : 3000);
             
         } catch (error) {
-            console.error("Error in fetchListingsFromBlockchain:", error);
+            criticalError("Error in fetchListingsFromBlockchain:", error);
             
             // If we have existing data and this was a background update, keep showing it
             if (isBackgroundUpdate && existingListings.length > 0) {
@@ -1410,7 +1455,7 @@ const ERC1155_APPROVAL_ABI = [
                         setStatus('Token approval was rejected');
                         return;
                     }
-                    console.error('Error in token approval:', error);
+                    criticalError('Error in token approval:', error);
                     throw new Error(`Failed to approve token: ${error.message}`);
                 }
             }
@@ -1418,7 +1463,7 @@ const ERC1155_APPROVAL_ABI = [
             // Now proceed with the purchase
             setStatus('Buying...');
             
-            console.log(`Buying listing ${id} for ${ethers.formatEther(pricePerUnit)} ${
+            debugLog(`Buying listing ${id} for ${ethers.formatEther(pricePerUnit)} ${
                 paymentToken === ethers.ZeroAddress ? 'VTRU' : 'tokens'}`);
             
             const tx = await marketplaceWithSigner.buy(id, 1, {
@@ -1431,7 +1476,7 @@ const ERC1155_APPROVAL_ABI = [
             
             // Invalidate cache and refresh listings
             if (supabaseConnected && cacheListings) {
-                console.log("💾 Invalidating cache due to purchase...");
+                debugLog("💾 Invalidating cache due to purchase...");
                 // Force refresh from blockchain to get latest state
                 await fetchListings(true);
             } else {
@@ -1448,14 +1493,14 @@ const ERC1155_APPROVAL_ABI = [
                     // Clear status after a few seconds
                     setTimeout(() => setStatus(''), 3000);
                 } catch (eventError) {
-                    console.warn("Error fetching updated events after purchase:", eventError);
+                    debugWarn("Error fetching updated events after purchase:", eventError);
                     setStatus('Purchase successful!');
                     setTimeout(() => setStatus(''), 3000);
                 }
             }, 2000);
             
         } catch (e) {
-            console.error('Error in buyListing:', e);
+            criticalError('Error in buyListing:', e);
             
             if (e.message.includes('user rejected transaction')) {
                 setStatus('Transaction was rejected in your wallet');
@@ -1481,7 +1526,7 @@ const ERC1155_APPROVAL_ABI = [
             }
 
             setStatus("Preparing listing...");
-            console.log("Creating listing with parameters:", {
+            debugLog("Creating listing with parameters:", {
                 nftContract,
                 tokenId,
                 quantity,
@@ -1500,10 +1545,10 @@ const ERC1155_APPROVAL_ABI = [
                 );
                 await testContract.balanceOf(wallet, tokenId);
                 isERC1155 = true;
-                console.log(`Detected ${nftContract} as ERC1155`);
+                debugLog(`Detected ${nftContract} as ERC1155`);
             } catch (e) {
                 // If that fails, assume it's ERC721
-                console.log(`Detected ${nftContract} as ERC721`);
+                debugLog(`Detected ${nftContract} as ERC721`);
                 isERC1155 = false;
             }
 
@@ -1517,7 +1562,7 @@ const ERC1155_APPROVAL_ABI = [
 
                 if (!isApproved) {
                     setStatus("Requesting approval to sell your NFTs...");
-                    console.log("Requesting ERC1155 approval for marketplace");
+                    debugLog("Requesting ERC1155 approval for marketplace");
 
                     const approvalTx = await nftContract1155.setApprovalForAll(marketplaceAddress, true);
 
@@ -1539,7 +1584,7 @@ const ERC1155_APPROVAL_ABI = [
 
                     if (!isTokenApproved) {
                         setStatus("Requesting approval to sell your NFT...");
-                        console.log("Requesting ERC721 approval for marketplace");
+                        debugLog("Requesting ERC721 approval for marketplace");
 
                         // Use setApprovalForAll for convenience (approves all tokens)
                         const approvalTx = await nftContract721.setApprovalForAll(marketplaceAddress, true);
@@ -1557,7 +1602,7 @@ const ERC1155_APPROVAL_ABI = [
             // Make sure we're using the contract with the signer
             const marketplaceWithSigner = marketplace.connect(signer);
 
-            console.log("Sending create listing transaction...");
+            debugLog("Sending create listing transaction...");
             const tx = await marketplaceWithSigner.createListing(
                 nftContract,
                 tokenId,
@@ -1572,7 +1617,7 @@ const ERC1155_APPROVAL_ABI = [
 
             // Invalidate cache and refresh listings
             if (supabaseConnected && cacheListings) {
-                console.log("💾 Invalidating cache due to new listing...");
+                debugLog("💾 Invalidating cache due to new listing...");
                 // Force refresh from blockchain to get latest state
                 await fetchListings(true);
             } else {
@@ -1581,7 +1626,7 @@ const ERC1155_APPROVAL_ABI = [
             }
 
         } catch (error) {
-            console.error("Error in createListing:", error);
+            criticalError("Error in createListing:", error);
 
             // Better error handling
             if (error.message.includes("user rejected")) {

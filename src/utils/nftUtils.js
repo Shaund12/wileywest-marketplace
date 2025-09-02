@@ -10,8 +10,8 @@ import { debugLog, debugWarn, criticalError } from './debugUtils';
  * Configuration for marketplace scanning and display
  */
 export const MARKETPLACE_CONFIG = {
-    // Scan range for marketplace listings (configurable)
-    MAX_LISTING_SCAN: parseInt(import.meta.env?.VITE_MAX_LISTING_SCAN) || 50,
+    // Scan range for marketplace listings (configurable) - Increased to find all active listings
+    MAX_LISTING_SCAN: parseInt(import.meta.env?.VITE_MAX_LISTING_SCAN) || 500,
     MIN_LISTING_SCAN: 1,
     
     // Contract call timeouts
@@ -26,14 +26,15 @@ export const MARKETPLACE_CONFIG = {
     MAX_CONCURRENT_METADATA_FETCHES: 3,
     MAX_CONCURRENT_CONTRACT_CALLS: 2,
     
-    // Fallback settings - Updated with more CORS-friendly gateways  
+    // Fallback settings - Updated with working gateways  
     DEFAULT_NFT_PLACEHOLDER: 'https://picsum.photos/seed/default/300/300',
     IPFS_GATEWAYS: [
-        'https://cloudflare-ipfs.com/ipfs/',  // Most reliable for CORS
-        'https://ipfs.io/ipfs/',              // Official gateway
+        'https://ipfs.io/ipfs/',              // Official gateway - most reliable
         'https://dweb.link/ipfs/',            // Protocol Labs gateway
-        'https://gateway.pinata.cloud/ipfs/', // Pinata gateway
-        'https://ipfs.fleek.co/ipfs/'         // Fleek gateway
+        'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
+        'https://w3s.link/ipfs/',             // Web3.Storage gateway
+        'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
+        'https://4everland.io/ipfs/',         // 4everland gateway
     ]
 };
 
@@ -206,20 +207,78 @@ export const resolveCollectionName = (listing, contractInfo = {}) => {
 };
 
 /**
- * Resolve IPFS URLs with multiple gateway fallbacks
+ * Resolve IPFS URLs with multiple gateway fallbacks and retry logic
  * @param {string} uri - Original URI
+ * @param {number} gatewayIndex - Which gateway to use (for fallback rotation)
  * @returns {string} Resolved HTTP URL
  */
-export const resolveIPFSUrl = (uri) => {
+export const resolveIPFSUrl = (uri, gatewayIndex = 0) => {
     if (!uri || typeof uri !== 'string') return uri;
     
     if (uri.startsWith('ipfs://')) {
         const hash = uri.replace('ipfs://', '');
-        // Use the first IPFS gateway by default
-        return `${MARKETPLACE_CONFIG.IPFS_GATEWAYS[0]}${hash}`;
+        // Use specific gateway index, or default to first available
+        const gateways = MARKETPLACE_CONFIG.IPFS_GATEWAYS;
+        const gateway = gateways[gatewayIndex % gateways.length] || gateways[0];
+        return `${gateway}${hash}`;
+    }
+    
+    // Handle ar:// Arweave URIs
+    if (uri.startsWith('ar://')) {
+        const hash = uri.replace('ar://', '');
+        return `https://arweave.net/${hash}`;
     }
     
     return uri;
+};
+
+/**
+ * Fetch metadata with IPFS gateway rotation and retry logic
+ * @param {string} uri - Metadata URI
+ * @param {number} maxRetries - Maximum retry attempts
+ * @returns {Promise<Object>} Metadata object
+ */
+export const fetchMetadataWithFallback = async (uri, maxRetries = 3) => {
+    if (!uri) throw new Error('No URI provided');
+    
+    const gateways = MARKETPLACE_CONFIG.IPFS_GATEWAYS;
+    let lastError;
+    
+    // Try each gateway
+    for (let gatewayIndex = 0; gatewayIndex < gateways.length && gatewayIndex < maxRetries; gatewayIndex++) {
+        try {
+            const resolvedUrl = resolveIPFSUrl(uri, gatewayIndex);
+            
+            debugLog(`🌐 Fetching metadata from ${resolvedUrl.split('/')[2]} (attempt ${gatewayIndex + 1}/${maxRetries})`);
+            
+            const response = await fetch(resolvedUrl, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                },
+                signal: AbortSignal.timeout(MARKETPLACE_CONFIG.METADATA_FETCH_TIMEOUT)
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const metadata = await response.json();
+            debugLog(`✅ Successfully fetched metadata from ${resolvedUrl.split('/')[2]}`);
+            return metadata;
+            
+        } catch (error) {
+            lastError = error;
+            debugWarn(`❌ Gateway ${gatewayIndex + 1} failed:`, error.message);
+            
+            // Don't retry on timeout or network errors for the same gateway
+            if (error.name === 'TimeoutError' || error.name === 'TypeError') {
+                continue;
+            }
+        }
+    }
+    
+    throw new Error(`All IPFS gateways failed. Last error: ${lastError?.message || 'Unknown error'}`);
 };
 
 /**
@@ -264,15 +323,37 @@ export const normalizeNFTMetadata = (rawMetadata, contractAddress, tokenId) => {
         // Process description with normalization
         normalized.description = normalizeDescription(rawMetadata.description);
         
-        // Process image with IPFS resolution
+        // Process image with IPFS resolution and fallback
         if (rawMetadata.image) {
-            normalized.image = resolveIPFSUrl(rawMetadata.image);
-            normalized.imageUrl = normalized.image;
+            try {
+                normalized.image = resolveIPFSUrl(rawMetadata.image);
+                normalized.imageUrl = normalized.image;
+            } catch (e) {
+                debugWarn('Error resolving image URL:', e);
+                normalized.image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+                normalized.imageUrl = normalized.image;
+            }
         } else if (rawMetadata.image_url) {
-            normalized.image = resolveIPFSUrl(rawMetadata.image_url);
-            normalized.imageUrl = normalized.image;
+            try {
+                normalized.image = resolveIPFSUrl(rawMetadata.image_url);
+                normalized.imageUrl = normalized.image;
+            } catch (e) {
+                debugWarn('Error resolving image_url:', e);
+                normalized.image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+                normalized.imageUrl = normalized.image;
+            }
         } else if (rawMetadata.imageUrl) {
-            normalized.image = resolveIPFSUrl(rawMetadata.imageUrl);
+            try {
+                normalized.image = resolveIPFSUrl(rawMetadata.imageUrl);
+                normalized.imageUrl = normalized.image;
+            } catch (e) {
+                debugWarn('Error resolving imageUrl:', e);
+                normalized.image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+                normalized.imageUrl = normalized.image;
+            }
+        } else {
+            // No image found, use placeholder
+            normalized.image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
             normalized.imageUrl = normalized.image;
         }
         

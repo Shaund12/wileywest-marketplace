@@ -3,6 +3,7 @@
  */
 
 import { ethers } from 'ethers';
+import { debugWarn } from './debugUtils';
 
 // Token addresses on Vitruveo mainnet
 export const TOKEN_ADDRESSES = {
@@ -119,7 +120,7 @@ export function formatTokenAmount(amount, tokenAddress) {
         const value = ethers.formatUnits(amount, tokenInfo.decimals);
         return `${value} ${tokenInfo.symbol}`;
     } catch (error) {
-        console.warn('Error formatting token amount:', { amount, tokenAddress, error });
+        debugWarn('Error formatting token amount:', { amount, tokenAddress, error });
         return `0 ${tokenInfo.symbol}`;
     }
 }
@@ -135,7 +136,7 @@ export function parseTokenAmount(amount, tokenAddress) {
     try {
         return ethers.parseUnits(amount.toString(), tokenInfo.decimals);
     } catch (error) {
-        console.warn('Error parsing token amount:', { amount, tokenAddress, error });
+        debugWarn('Error parsing token amount:', { amount, tokenAddress, error });
         return ethers.parseUnits('0', tokenInfo.decimals);
     }
 }

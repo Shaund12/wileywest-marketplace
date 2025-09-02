@@ -1,22 +1,22 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { formatTokenAmount } from '../utils/tokenRegistry';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 /* =========================================================
    SmartMedia utilities (simplified version for auctions)
    ========================================================= */
 const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/',
-    'https://cf-ipfs.com/ipfs/',
-    'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://infura-ipfs.io/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/',
-    'https://ipfs.io/ipfs/',
+    'https://ipfs.io/ipfs/',              // Official gateway - most reliable
+    'https://dweb.link/ipfs/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipfs/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
+    'https://4everland.io/ipfs/',         // 4everland gateway
 ];
 
 const isString = (v) => typeof v === 'string' && v.trim().length > 0;
@@ -198,6 +198,7 @@ function SmartMedia({ srcList = [], alt = '', width = 200, height = 200, seed = 
 }
 
 function MyAuctionsPage() {
+    const navigate = useNavigate();
     const { wallet, connect, signer, provider } = useWallet();
     const { status, marketplaceAddress } = useMarketplace();
     const { getCachedAuctions, getAuctionBids } = useSupabase();
@@ -227,22 +228,181 @@ function MyAuctionsPage() {
             setLoading(true);
             setActionStatus('Loading your auctions...');
             
-            // Load auctions from database for the connected wallet and current marketplace
-            const userAuctions = await getCachedAuctions(wallet, marketplaceAddress);
-            console.log(`📦 Loaded ${userAuctions.length} auctions for user ${wallet} on marketplace ${marketplaceAddress}`);
+            debugLog(`🔍 Looking for auctions for wallet: ${wallet} on marketplace: ${marketplaceAddress}`);
+            
+            // First, try to load auctions directly from the contract
+            let contractAuctions = [];
+            if (provider && marketplaceAddress) {
+                try {
+                    setActionStatus('Scanning blockchain for your auctions...');
+                    
+                    // Import marketplace ABI and create contract instance
+                    const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+                    const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+                    if (abi && Array.isArray(abi)) {
+                        const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, provider);
+                        
+                        // Get recent auction creation events
+                        const currentBlock = await provider.getBlockNumber();
+                        const fromBlock = Math.max(0, currentBlock - 50000); // Last 50k blocks
+                        
+                        debugLog(`🔍 Scanning blocks ${fromBlock} to ${currentBlock} for AuctionCreated events...`);
+                        
+                        try {
+                            const auctionCreatedEvents = await marketplaceContract.queryFilter(
+                                marketplaceContract.filters.AuctionCreated(),
+                                fromBlock,
+                                currentBlock
+                            );
+                            
+                            debugLog(`📦 Found ${auctionCreatedEvents.length} total auction creation events`);
+                            
+                            // Filter events for current user and get auction data
+                            const userAuctionEvents = auctionCreatedEvents.filter(event => 
+                                event.args?.seller?.toLowerCase() === wallet.toLowerCase()
+                            );
+                            
+                            debugLog(`📦 Found ${userAuctionEvents.length} auction events for current user`);
+                            
+                            if (userAuctionEvents.length > 0) {
+                                setActionStatus('Loading auction details from blockchain...');
+                                
+                                contractAuctions = await Promise.all(
+                                    userAuctionEvents.map(async (event) => {
+                                        try {
+                                            const auctionId = event.args?.auctionId?.toString() || '';
+                                            if (!auctionId) return null;
+                                            
+                                            debugLog(`📦 Loading auction ${auctionId} details...`);
+                                            const auctionData = await marketplaceContract.auctions(auctionId);
+                                            
+                                            return {
+                                                id: auctionId,
+                                                auctionId: auctionId,
+                                                seller: auctionData.seller,
+                                                nftContract: auctionData.nftContract,
+                                                tokenId: auctionData.tokenId.toString(),
+                                                quantity: auctionData.quantity?.toString() || '1',
+                                                reservePrice: auctionData.reservePrice.toString(),
+                                                startPrice: auctionData.startPrice.toString(),
+                                                endTime: Number(auctionData.endTime),
+                                                paymentToken: auctionData.paymentToken,
+                                                highestBid: auctionData.highestBid.toString(),
+                                                highestBidder: auctionData.highestBidder,
+                                                settled: auctionData.settled,
+                                                timestamp: Number(event.args?.timestamp || Math.floor(Date.now() / 1000)),
+                                                blockNumber: event.blockNumber,
+                                                transactionHash: event.transactionHash
+                                            };
+                                        } catch (error) {
+                                            debugWarn(`Error loading auction ${event.args?.auctionId}:`, error);
+                                            return null;
+                                        }
+                                    })
+                                );
+                                
+                                contractAuctions = contractAuctions.filter(Boolean);
+                                debugLog(`✅ Successfully loaded ${contractAuctions.length} auctions from contract`);
+                            }
+                        } catch (error) {
+                            debugWarn('Error querying auction events:', error);
+                        }
+                    }
+                } catch (error) {
+                    debugWarn('Error loading auctions from contract:', error);
+                }
+            }
+            
+            // If we found auctions from contract, use those
+            let userAuctions = contractAuctions;
+            
+            // If no contract auctions, try database/cache as fallback
+            if (userAuctions.length === 0) {
+                setActionStatus('Checking auction cache...');
+                debugLog('🔍 No contract auctions found, checking cached auctions...');
+                
+                // Load auctions from database for the connected wallet and current marketplace
+                userAuctions = await getCachedAuctions(wallet.toLowerCase(), marketplaceAddress.toLowerCase());
+                debugLog(`📦 Loaded ${userAuctions.length} auctions from cache for user ${wallet} on marketplace ${marketplaceAddress}`);
+                
+                // Also try without marketplace filtering in case the marketplace address wasn't stored correctly
+                if (userAuctions.length === 0) {
+                    debugLog('🔍 No auctions found with marketplace filter, trying without marketplace filter...');
+                    const allUserAuctions = await getCachedAuctions(wallet.toLowerCase(), null);
+                    debugLog(`📦 Found ${allUserAuctions.length} auctions without marketplace filter`);
+                    
+                    // Filter by seller manually
+                    const filteredAuctions = allUserAuctions.filter(auction => 
+                        auction.seller && auction.seller.toLowerCase() === wallet.toLowerCase()
+                    );
+                    debugLog(`📦 Filtered to ${filteredAuctions.length} auctions matching seller address`);
+                    
+                    if (filteredAuctions.length > 0) {
+                        userAuctions.push(...filteredAuctions);
+                    }
+                }
+                
+                // Also check localStorage for any cached auctions
+                if (userAuctions.length === 0) {
+                    debugLog('🔍 No auctions found in database, checking localStorage...');
+                    try {
+                        const localStorageKeys = Object.keys(localStorage).filter(key => 
+                            key.startsWith('auction_') || key.startsWith('cache_auction')
+                        );
+                        
+                        const localAuctions = localStorageKeys.map(key => {
+                            try {
+                                const auctionData = JSON.parse(localStorage.getItem(key));
+                                
+                                // Normalize auction data and check if it belongs to current user
+                                if (auctionData.seller && auctionData.seller.toLowerCase() === wallet.toLowerCase()) {
+                                    return {
+                                        id: auctionData.id || auctionData.auctionId || auctionData.auction_id,
+                                        auctionId: auctionData.auctionId || auctionData.id || auctionData.auction_id,
+                                        seller: auctionData.seller,
+                                        nftContract: auctionData.nftContract || auctionData.nft_contract,
+                                        tokenId: auctionData.tokenId || auctionData.token_id,
+                                        quantity: auctionData.quantity || '1',
+                                        reservePrice: auctionData.reservePrice || auctionData.reserve_price || '0',
+                                        startPrice: auctionData.startPrice || auctionData.start_price || '0',
+                                        endTime: auctionData.endTime || auctionData.end_time || Math.floor(Date.now() / 1000) + 86400,
+                                        paymentToken: auctionData.paymentToken || auctionData.payment_token || ethers.ZeroAddress,
+                                        highestBid: auctionData.highestBid || auctionData.highest_bid || '0',
+                                        highestBidder: auctionData.highestBidder || auctionData.highest_bidder || ethers.ZeroAddress,
+                                        settled: auctionData.settled || false,
+                                        timestamp: auctionData.timestamp || Math.floor(Date.now() / 1000)
+                                    };
+                                }
+                                return null;
+                            } catch (e) {
+                                debugWarn('Error parsing localStorage auction:', e);
+                                return null;
+                            }
+                        }).filter(Boolean);
+                        
+                        debugLog(`📦 Found ${localAuctions.length} auctions in localStorage for current user`);
+                        if (localAuctions.length > 0) {
+                            userAuctions.push(...localAuctions);
+                        }
+                    } catch (e) {
+                        debugWarn('Error checking localStorage auctions:', e);
+                    }
+                }
+            }
             
             // Load current bids for each auction and update auction data from contract if needed
             const auctionsWithCurrentData = await Promise.all(
                 userAuctions.map(async (auction) => {
                     try {
                         // Ensure auction has valid ID
-                        if (!auction.id || auction.id === 'undefined') {
-                            console.warn('⚠️ Auction missing valid ID, skipping bid retrieval');
+                        const auctionId = auction.id || auction.auctionId;
+                        if (!auctionId || auctionId === 'undefined' || auctionId === 'null') {
+                            debugWarn('⚠️ Auction missing valid ID, skipping bid retrieval');
                             return auction;
                         }
                         
                         // Get latest bid data
-                        const bids = await getAuctionBids(auction.id);
+                        const bids = await getAuctionBids(auctionId);
                         
                         // Update highest bid from bid history if available
                         if (bids.length > 0) {
@@ -253,12 +413,12 @@ function MyAuctionsPage() {
                         
                         setAuctionBids(prev => ({
                             ...prev,
-                            [auction.id]: bids
+                            [auctionId]: bids
                         }));
                         
                         return auction;
                     } catch (error) {
-                        console.warn(`Error loading bid data for auction ${auction.id}:`, error);
+                        debugWarn(`Error loading bid data for auction ${auction.id || auction.auctionId}:`, error);
                         return auction;
                     }
                 })
@@ -267,11 +427,17 @@ function MyAuctionsPage() {
             setAuctions(auctionsWithCurrentData);
             setActionStatus('');
             
-            // Load NFT metadata for each auction
-            loadAuctionMetadata(auctionsWithCurrentData);
+            debugLog(`✅ Final auction count: ${auctionsWithCurrentData.length}`);
+            
+            if (auctionsWithCurrentData.length === 0) {
+                setActionStatus('No auctions found. Create your first auction to get started!');
+            } else {
+                // Load NFT metadata for each auction
+                loadAuctionMetadata(auctionsWithCurrentData);
+            }
             
         } catch (error) {
-            console.error('Error loading user auctions:', error);
+            criticalError('Error loading user auctions:', error);
             setActionStatus('Failed to load auctions');
             setAuctions([]);
         } finally {
@@ -313,7 +479,7 @@ function MyAuctionsPage() {
                             const tokenId = auction.tokenId || '0';
                             tokenURI = await nftContract.uri(tokenId);
                         } catch {
-                            console.warn(`Could not get tokenURI for ${auction.nftContract}:${auction.tokenId}`);
+                            debugWarn(`Could not get tokenURI for ${auction.nftContract}:${auction.tokenId}`);
                         }
                     }
 
@@ -323,15 +489,17 @@ function MyAuctionsPage() {
                             // Handle IPFS URIs
                             let metadataUrl = tokenURI;
                             if (tokenURI.startsWith('ipfs://')) {
-                                metadataUrl = `https://cloudflare-ipfs.com/ipfs/${tokenURI.replace('ipfs://', '')}`;
+                                metadataUrl = `https://ipfs.io/ipfs/${tokenURI.replace('ipfs://', '')}`;
+                            } else if (tokenURI.startsWith('ar://')) {
+                                metadataUrl = `https://arweave.net/${tokenURI.replace('ar://', '')}`;
                             }
 
-                            const response = await fetch(metadataUrl);
+                            const response = await fetch(metadataUrl, { timeout: 5000 });
                             if (response.ok) {
                                 metadata = await response.json();
                             }
                         } catch (error) {
-                            console.warn(`Error fetching metadata from ${tokenURI}:`, error);
+                            debugWarn(`Error fetching metadata from ${tokenURI}:`, error);
                         }
                     }
 
@@ -341,7 +509,7 @@ function MyAuctionsPage() {
                         const symbol = await nftContract.symbol();
                         metadata.collection = { name, symbol };
                     } catch (error) {
-                        console.warn(`Error fetching collection info:`, error);
+                        debugWarn(`Error fetching collection info:`, error);
                     }
 
                     setAuctionMetadata(prev => ({
@@ -350,7 +518,7 @@ function MyAuctionsPage() {
                     }));
                 }
             } catch (error) {
-                console.warn(`Error loading metadata for auction ${auction.id}:`, error);
+                debugWarn(`Error loading metadata for auction ${auction.id}:`, error);
             } finally {
                 setLoadingMetadata(prev => {
                     const newSet = new Set(prev);
@@ -404,15 +572,25 @@ function MyAuctionsPage() {
             return;
         }
 
+        const auctionId = auction.id || auction.auctionId;
+        if (!auctionId || auctionId === 'undefined' || auctionId === 'null') {
+            setActionStatus('Invalid auction ID');
+            return;
+        }
+
         try {
             setActionStatus('Canceling auction...');
 
             // Import marketplace ABI and create contract instance
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplaceContract = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, signer);
 
             // Cancel the auction
-            const tx = await marketplaceContract.cancelAuction(auction.id);
+            const tx = await marketplaceContract.cancelAuction(auctionId);
             setActionStatus('Transaction submitted. Waiting for confirmation...');
             
             await tx.wait();
@@ -425,7 +603,7 @@ function MyAuctionsPage() {
             }, 2000);
             
         } catch (error) {
-            console.error('Error canceling auction:', error);
+            criticalError('Error canceling auction:', error);
             setActionStatus(`Error: ${error.message || 'Could not cancel auction'}`);
             setTimeout(() => setActionStatus(''), 5000);
         }
@@ -437,15 +615,25 @@ function MyAuctionsPage() {
             return;
         }
 
+        const auctionId = auction.id || auction.auctionId;
+        if (!auctionId || auctionId === 'undefined' || auctionId === 'null') {
+            setActionStatus('Invalid auction ID');
+            return;
+        }
+
         try {
             setActionStatus('Settling auction...');
 
             // Import marketplace ABI and create contract instance
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplaceContract = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, signer);
 
             // Settle the auction
-            const tx = await marketplaceContract.settleAuction(auction.id);
+            const tx = await marketplaceContract.settleAuction(auctionId);
             setActionStatus('Transaction submitted. Waiting for confirmation...');
             
             await tx.wait();
@@ -458,7 +646,7 @@ function MyAuctionsPage() {
             }, 2000);
             
         } catch (error) {
-            console.error('Error settling auction:', error);
+            criticalError('Error settling auction:', error);
             setActionStatus(`Error: ${error.message || 'Could not settle auction'}`);
             setTimeout(() => setActionStatus(''), 5000);
         }
@@ -530,23 +718,38 @@ function MyAuctionsPage() {
                     <h3>No auctions found</h3>
                     <p>
                         {filter === 'all' 
-                            ? "You haven't created any auctions yet."
+                            ? (auctions.length === 0 
+                                ? "You haven't created any auctions yet. Get started by creating your first auction!"
+                                : `No ${filter} auctions found.`
+                              )
                             : `No ${filter} auctions found.`
                         }
                     </p>
+                    {auctions.length === 0 && (
+                        <div style={{ marginBottom: '1rem', padding: '1rem', background: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}>
+                            <h4 style={{ color: '#f1f5f9', margin: '0 0 0.5rem 0' }}>How to create an auction:</h4>
+                            <ol style={{ color: '#94a3b8', margin: 0, paddingLeft: '1.5rem' }}>
+                                <li>Make sure you own an NFT on the Vitruveo network</li>
+                                <li>Click "Create New Auction" below</li>
+                                <li>Select your NFT and set auction parameters</li>
+                                <li>Approve the transaction to start your auction</li>
+                            </ol>
+                        </div>
+                    )}
                     <button 
                         onClick={() => navigate('/auctions/create')}
                         className="hp-btn hp-btn--primary"
                     >
-                        Create Your First Auction
+                        {auctions.length === 0 ? 'Create Your First Auction' : 'Create New Auction'}
                     </button>
                 </div>
             ) : (
                 <div className="auctions-grid">
                     {filteredAuctions.map(auction => {
+                        const auctionId = auction.id || auction.auctionId;
                         const metadataKey = `${auction.nftContract}-${auction.tokenId}`;
                         const metadata = auctionMetadata[metadataKey] || {};
-                        const bids = auctionBids[auction.id] || [];
+                        const bids = auctionBids[auctionId] || [];
                         const auctionStatus = getAuctionStatus(auction);
                         const isActive = auctionStatus === 'Active';
                         const isEnded = auctionStatus === 'Ended';
@@ -554,7 +757,7 @@ function MyAuctionsPage() {
                         const canSettle = isEnded && !auction.settled;
                         
                         return (
-                            <div key={auction.id} className="auction-card">
+                            <div key={auctionId || `${auction.nftContract}-${auction.tokenId}-${Date.now()}`} className="auction-card">
                                 <div className="auction-image">
                                     <SmartMedia
                                         srcList={[
@@ -612,7 +815,7 @@ function MyAuctionsPage() {
 
                                     <div className="auction-actions">
                                         <button 
-                                            onClick={() => navigate(`/auctions/${auction.id}`)}
+                                            onClick={() => navigate(`/auctions/${auction.id || auction.auctionId}`)}
                                             className="hp-btn"
                                         >
                                             View Details

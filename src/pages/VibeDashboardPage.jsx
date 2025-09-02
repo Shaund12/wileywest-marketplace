@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSupabase } from '../context/SupabaseContext';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
 
 function VibeDashboardPage() {
@@ -30,7 +31,7 @@ function VibeDashboardPage() {
             setLoading(true);
             
             if (!isConnected || !supabase) {
-                console.warn('Supabase not connected, showing no data');
+                debugWarn('Supabase not connected, showing no data');
                 setStats({
                     totalVTRUSent: '0',
                     vtruSent24h: '0',
@@ -72,7 +73,7 @@ function VibeDashboardPage() {
                 .order('timestamp', { ascending: false });
 
             if (vibeError) {
-                console.error('Error fetching vibe flows:', vibeError);
+                criticalError('Error fetching vibe flows:', vibeError);
             }
 
             // Fetch fee conversions (ERC20 → wVTRU)
@@ -82,7 +83,7 @@ function VibeDashboardPage() {
                 .order('timestamp', { ascending: false });
 
             if (feeError) {
-                console.error('Error fetching fee conversions:', feeError);
+                criticalError('Error fetching fee conversions:', feeError);
             }
 
             // Fetch breakdown data for collections
@@ -94,8 +95,8 @@ function VibeDashboardPage() {
                 .from('sale_breakdowns')
                 .select('listing_id, platform_fee, royalty, vibe_amount, timestamp, transaction_hash');
 
-            if (auctionError) console.error('Error fetching auction breakdowns:', auctionError);
-            if (saleError) console.error('Error fetching sale breakdowns:', saleError);
+            if (auctionError) criticalError('Error fetching auction breakdowns:', auctionError);
+            if (saleError) criticalError('Error fetching sale breakdowns:', saleError);
 
             // Fetch royalty payments
             const { data: royaltyPayments, error: royaltyError } = await supabase
@@ -104,7 +105,7 @@ function VibeDashboardPage() {
                 .order('timestamp', { ascending: false });
 
             if (royaltyError) {
-                console.error('Error fetching royalty payments:', royaltyError);
+                criticalError('Error fetching royalty payments:', royaltyError);
             }
 
             // Process the data
@@ -268,7 +269,7 @@ function VibeDashboardPage() {
             setRecentEvents(allEvents);
 
         } catch (error) {
-            console.error('Error loading dashboard data:', error);
+            criticalError('Error loading dashboard data:', error);
             // Set empty data on error
             setStats({
                 totalVTRUSent: '0',

@@ -6,6 +6,8 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { formatTokenAmount, getTokenInfo } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
 import './SellPage.css';
 
@@ -13,25 +15,21 @@ import './SellPage.css';
    IPFS/IPNS/Arweave + SmartMedia (self-contained utilities)
    ========================================================= */
 const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/',
-    'https://cf-ipfs.com/ipfs/',
-    'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://infura-ipfs.io/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/',
-    'https://ipfs.io/ipfs/',
+    'https://ipfs.io/ipfs/',              // Official gateway - most reliable
+    'https://dweb.link/ipfs/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipfs/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
+    'https://4everland.io/ipfs/',         // 4everland gateway
 ];
 
 const IPNS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipns/',
-    'https://cf-ipfs.com/ipns/',
-    'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/',
-    'https://infura-ipfs.io/ipns/',
-    'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/',
-    'https://ipfs.io/ipns/',
+    'https://ipfs.io/ipns/',              // Official gateway - most reliable
+    'https://dweb.link/ipns/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipns/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipns/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipns/',      // NFT.Storage gateway
+    'https://4everland.io/ipns/',         // 4everland gateway
 ];
 
 const isString = (v) => typeof v === 'string' && v.trim().length > 0;
@@ -269,10 +267,20 @@ function AuctionDetailPage() {
 
     useEffect(() => {
         // Fetch current token price
-        if (auction && provider) {
-            fetchTokenPriceInUSDC(auction.paymentToken, provider)
-                .then(price => setCurrentPrice(price))
-                .catch(() => setCurrentPrice(null));
+        if (auction && provider && auction.paymentToken) {
+            // Validate that auction.paymentToken is not undefined
+            const paymentToken = auction.paymentToken;
+            if (paymentToken && paymentToken !== 'undefined' && paymentToken !== 'null') {
+                fetchTokenPriceInUSDC(paymentToken, provider)
+                    .then(price => setCurrentPrice(price))
+                    .catch(err => {
+                        debugWarn('Failed to fetch token price:', err);
+                        setCurrentPrice(null);
+                    });
+            } else {
+                debugWarn('Invalid payment token:', paymentToken);
+                setCurrentPrice(null);
+            }
         }
     }, [auction, provider]);
 
@@ -281,15 +289,42 @@ function AuctionDetailPage() {
             setLoading(true);
             setAuction(null); // Clear existing auction
             
-            if (!auctionId || !provider || !marketplaceAddress) {
+            debugLog(`🔍 Loading auction ${auctionId}...`);
+            
+            if (!auctionId || auctionId === 'undefined') {
+                debugWarn('❌ Invalid auction ID provided');
                 return;
             }
 
-            // Load auction from database first
-            const cachedAuction = await getCachedAuctions(null, marketplaceAddress);
-            const auctionData = cachedAuction.find(a => a.id.toString() === auctionId);
+            if (!provider) {
+                debugWarn('❌ No provider available for auction loading');
+                return;
+            }
+
+            if (!marketplaceAddress) {
+                debugWarn('❌ No marketplace address configured');
+                return;
+            }
+
+            debugLog(`📋 Marketplace address: ${marketplaceAddress}`);
+
+            // Load auction from database/cache first - try multiple ID formats
+            const cachedAuctions = await getCachedAuctions(null, marketplaceAddress);
+            debugLog(`📦 Found ${cachedAuctions.length} cached auctions`);
+            
+            // Try multiple ID matching strategies
+            let auctionData = cachedAuctions.find(a => {
+                const candidateIds = [
+                    a.id?.toString(),
+                    a.auctionId?.toString(),
+                    a.auction_id?.toString()
+                ].filter(id => id && id !== 'undefined' && id !== 'null');
+                
+                return candidateIds.some(id => id === auctionId.toString());
+            });
             
             if (auctionData) {
+                debugLog(`✅ Found auction in cache: ${auctionData.id || auctionData.auctionId}`);
                 setAuction(auctionData);
                 
                 // Load current bid data
@@ -301,100 +336,112 @@ function AuctionDetailPage() {
                     loadNFTMetadata(auctionData.nftContract, auctionData.tokenId);
                 }
             } else {
+                debugLog('📡 Auction not found in cache, trying blockchain...');
+                
                 // Try loading from contract directly
                 try {
                     const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-                    const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, provider);
+                    const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+                    if (!abi || !Array.isArray(abi)) {
+                        throw new Error('Invalid ABI structure - ABI must be an array');
+                    }
+                    const marketplace = new ethers.Contract(marketplaceAddress, abi, provider);
                     
+                    debugLog(`🔗 Calling marketplace.auctions(${auctionId})...`);
                     const auctionInfo = await marketplace.auctions(auctionId);
-                    if (auctionInfo && auctionInfo.seller !== ethers.ZeroAddress) {
+                    
+                    debugLog('📋 Raw auction info from contract:', auctionInfo);
+                    
+                    if (auctionInfo && auctionInfo.seller && auctionInfo.seller !== ethers.ZeroAddress) {
                         const processedAuction = {
                             id: auctionId,
+                            auctionId: auctionId,
                             seller: auctionInfo.seller,
                             nftContract: auctionInfo.nftContract,
                             tokenId: auctionInfo.tokenId.toString(),
                             startTime: Number(auctionInfo.startTime),
                             endTime: Number(auctionInfo.endTime),
-                            startingBid: auctionInfo.startingBid.toString(),
+                            startPrice: auctionInfo.startPrice?.toString() || auctionInfo.startingBid?.toString() || '0',
                             reservePrice: auctionInfo.reservePrice.toString(),
                             highestBid: auctionInfo.highestBid.toString(),
                             highestBidder: auctionInfo.highestBidder,
                             paymentToken: auctionInfo.paymentToken,
+                            minBidIncrementBps: Number(auctionInfo.minBidIncrementBps || auctionInfo.minIncrementBps || 500),
+                            antiSnipeSeconds: Number(auctionInfo.antiSnipeSeconds || auctionInfo.antiSnipeWindow || 300),
                             settled: auctionInfo.settled,
-                            canceled: auctionInfo.canceled
+                            canceled: auctionInfo.canceled || false
                         };
                         
+                        debugLog('✅ Successfully loaded auction from contract:', processedAuction);
                         setAuction(processedAuction);
                         loadNFTMetadata(processedAuction.nftContract, processedAuction.tokenId);
+                    } else {
+                        debugWarn('❌ Auction not found on contract or has zero address seller');
+                        debugLog('🔍 Auction info details:', {
+                            exists: !!auctionInfo,
+                            seller: auctionInfo?.seller,
+                            isZeroAddress: auctionInfo?.seller === ethers.ZeroAddress
+                        });
                     }
                 } catch (contractError) {
-                    console.warn('Could not load auction from contract:', contractError);
+                    debugWarn('❌ Could not load auction from contract:', contractError);
+                    criticalError('Contract loading failed:', contractError);
                 }
             }
             
         } catch (error) {
-            console.error('Error loading auction:', error);
+            criticalError('❌ Error loading auction:', error);
         } finally {
             setLoading(false);
         }
     };
 
     const loadNFTMetadata = async (nftContract, tokenId) => {
+        if (!nftContract || !tokenId || !provider) {
+            debugWarn('Missing required parameters for metadata loading');
+            return;
+        }
+
         try {
-            if (provider) {
-                const contract = new ethers.Contract(
-                    nftContract,
-                    [
-                        'function tokenURI(uint256) view returns (string)',
-                        'function uri(uint256) view returns (string)', // ERC1155
-                        'function name() view returns (string)',
-                        'function symbol() view returns (string)'
-                    ],
-                    provider
-                );
+            debugLog(`🎨 Loading enhanced metadata for ${nftContract}:${tokenId}`);
+            
+            // Use the robust metadata loader with existing auction metadata as a starting point
+            const existingMetadata = auction?.metadata || nftMetadata;
+            const metadata = await loadMetadata(nftContract, tokenId, provider, existingMetadata);
+            
+            debugLog(`✅ Enhanced metadata loaded successfully:`, metadata);
+            
+            setNftMetadata(metadata);
+            // Also update the auction object with metadata for SmartMedia component
+            setAuction(prev => ({
+                ...prev,
+                metadata: metadata
+            }));
 
-                let tokenURI = '';
-                try {
-                    tokenURI = await contract.tokenURI(tokenId);
-                } catch {
-                    try {
-                        tokenURI = await contract.uri(tokenId);
-                    } catch {
-                        console.warn(`Could not get tokenURI for ${nftContract}:${tokenId}`);
-                    }
-                }
-
-                let metadata = {};
-                if (tokenURI) {
-                    try {
-                        // Handle IPFS URIs
-                        let metadataUrl = tokenURI;
-                        if (tokenURI.startsWith('ipfs://')) {
-                            metadataUrl = `https://cloudflare-ipfs.com/ipfs/${tokenURI.replace('ipfs://', '')}`;
-                        }
-
-                        const response = await fetch(metadataUrl);
-                        if (response.ok) {
-                            metadata = await response.json();
-                        }
-                    } catch (error) {
-                        console.warn(`Error fetching metadata from ${tokenURI}:`, error);
-                    }
-                }
-
-                // Try to get collection name
-                try {
-                    const name = await contract.name();
-                    const symbol = await contract.symbol();
-                    metadata.collection = { name, symbol };
-                } catch (error) {
-                    console.warn(`Error fetching collection info:`, error);
-                }
-
-                setNftMetadata(metadata);
-            }
         } catch (error) {
-            console.warn(`Error loading metadata for ${nftContract}:${tokenId}:`, error);
+            criticalError(`Error loading enhanced metadata for ${nftContract}:${tokenId}:`, error);
+            
+            // Set fallback metadata
+            const fallbackMetadata = {
+                name: `Token #${tokenId}`,
+                description: `NFT Token #${tokenId}`,
+                image: 'https://picsum.photos/seed/default/300/300',
+                imageUrl: 'https://picsum.photos/seed/default/300/300',
+                attributes: [],
+                collection: null,
+                contractAddress: nftContract,
+                tokenId: tokenId,
+                loaded: true,
+                loading: false,
+                error: error.message,
+                timestamp: Date.now()
+            };
+            
+            setNftMetadata(fallbackMetadata);
+            setAuction(prev => ({
+                ...prev,
+                metadata: fallbackMetadata
+            }));
         }
     };
 
@@ -413,13 +460,29 @@ function AuctionDetailPage() {
             setBidding(true);
             
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplace = new ethers.Contract(marketplaceAddress, abi, signer);
             
             // Convert bid amount to wei
             const bidAmountWei = ethers.parseEther(bidAmount.toString());
             
-            // Place bid
-            const tx = await marketplace.placeBid(auctionId, { value: bidAmountWei });
+            // Validate auction payment token - if it's native token (VTRU), send value
+            const isNativeToken = !auction.paymentToken || 
+                                auction.paymentToken === ethers.ZeroAddress || 
+                                auction.paymentToken === '0x0000000000000000000000000000000000000000';
+            
+            debugLog(`🔨 Placing bid for auction ${auctionId} with amount ${bidAmount} VTRU`);
+            debugLog(`💰 Payment token: ${auction.paymentToken}, isNative: ${isNativeToken}`);
+            
+            // Place bid with correct parameters - for native tokens, amount should be 0 and value contains the bid
+            const tx = isNativeToken 
+                ? await marketplace.bid(auctionId, 0, { value: bidAmountWei })
+                : await marketplace.bid(auctionId, bidAmountWei);
+            
+            debugLog(`✅ Bid transaction submitted: ${tx.hash}`);
             await tx.wait();
             
             // Refresh auction data
@@ -427,7 +490,7 @@ function AuctionDetailPage() {
             setBidAmount('');
             
         } catch (error) {
-            console.error('Error placing bid:', error);
+            criticalError('Error placing bid:', error);
             alert(`Error placing bid: ${error.message || 'Transaction failed'}`);
         } finally {
             setBidding(false);
@@ -443,7 +506,11 @@ function AuctionDetailPage() {
             setSettling(true);
             
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
-            const marketplace = new ethers.Contract(marketplaceAddress, VTRUNFTMarketplaceABI.default, signer);
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplace = new ethers.Contract(marketplaceAddress, abi, signer);
             
             // Settle auction
             const tx = await marketplace.settleAuction(auctionId);
@@ -453,7 +520,7 @@ function AuctionDetailPage() {
             loadAuction();
             
         } catch (error) {
-            console.error('Error settling auction:', error);
+            criticalError('Error settling auction:', error);
             alert(`Error settling auction: ${error.message || 'Transaction failed'}`);
         } finally {
             setSettling(false);
@@ -477,9 +544,13 @@ function AuctionDetailPage() {
     const getMinNextBid = () => {
         if (!auction) return '0';
         
-        const currentBid = auction.highestBid === '0' ? auction.startPrice : auction.highestBid;
-        const increment = (BigInt(currentBid) * BigInt(auction.minBidIncrementBps)) / BigInt(10000);
-        return BigInt(currentBid) + increment;
+        const currentBid = auction.highestBid === '0' ? 
+            (auction.startPrice || auction.startingBid || '0') : 
+            auction.highestBid;
+        
+        const incrementBps = auction.minBidIncrementBps || 500; // 5% default
+        const increment = (BigInt(currentBid) * BigInt(incrementBps)) / BigInt(10000);
+        return (BigInt(currentBid) + increment).toString();
     };
 
     const getTraitRarity = (trait) => {
@@ -534,14 +605,16 @@ function AuctionDetailPage() {
     const hasReserveMet = BigInt(auction.highestBid) >= BigInt(auction.reservePrice);
     const minNextBid = getMinNextBid();
 
-    const currentBidValue = auction.highestBid === '0' ? auction.startPrice : auction.highestBid;
+    const currentBidValue = auction.highestBid === '0' ? 
+        (auction.startPrice || auction.startingBid || '0') : 
+        auction.highestBid;
     const currentBidInToken = ethers.formatEther(currentBidValue);
     const currentBidInUSD = currentPrice ? (parseFloat(currentBidInToken) * currentPrice).toFixed(2) : 'Unknown';
 
     return (
         <div className="sell-container">
             <div className="page-header">
-                <h1>{auction.metadata?.name || `Token #${auction.tokenId}`}</h1>
+                <h1>{auction.metadata?.name || nftMetadata?.name || `Token #${auction.tokenId}`}</h1>
                 <p>Auction #{auction.id}</p>
             </div>
 
@@ -572,17 +645,22 @@ function AuctionDetailPage() {
                                         auction.metadata?.imageUrl,
                                         auction.metadata?.animation_url,
                                         auction.metadata?.animationUrl,
+                                        nftMetadata?.image,
+                                        nftMetadata?.image_url,
+                                        nftMetadata?.imageUrl,
+                                        nftMetadata?.animation_url,
+                                        nftMetadata?.animationUrl,
                                     ]}
-                                    alt={auction.metadata?.name || `Token #${auction.tokenId}`}
+                                    alt={auction.metadata?.name || nftMetadata?.name || `Token #${auction.tokenId}`}
                                     width={640}
                                     height={460}
                                     seed={`${auction.nftContract}-${auction.tokenId}`}
-                                    title={auction.metadata?.name || `Token #${auction.tokenId}`}
+                                    title={auction.metadata?.name || nftMetadata?.name || `Token #${auction.tokenId}`}
                                     className="premium-image"
                                 />
                                 <div className="image-overlay">
                                     <a
-                                        href={expandToCandidateUrls(auction.metadata?.image)[0] || auction.metadata?.image}
+                                        href={expandToCandidateUrls(auction.metadata?.image || nftMetadata?.image)[0] || auction.metadata?.image || nftMetadata?.image}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="zoom-button"
@@ -597,7 +675,7 @@ function AuctionDetailPage() {
                         </div>
 
                         <div className="preview-title-section">
-                            <h2 className="preview-name">{auction.metadata?.name || `Token #${auction.tokenId}`}</h2>
+                            <h2 className="preview-name">{auction.metadata?.name || nftMetadata?.name || `Token #${auction.tokenId}`}</h2>
                             <div className="preview-contract">
                                 <span className="contract-label">Contract:</span>
                                 <span className="contract-address">{`${auction.nftContract.slice(0, 6)}...${auction.nftContract.slice(-4)}`}</span>
@@ -622,7 +700,7 @@ function AuctionDetailPage() {
                                 <div className="details-tab">
                                     <div className="preview-description">
                                         <h4>Description</h4>
-                                        <p>{auction.metadata?.description || 'No description available'}</p>
+                                        <p>{auction.metadata?.description || nftMetadata?.description || 'No description available'}</p>
                                     </div>
 
                                     <div className="preview-details">
@@ -652,11 +730,11 @@ function AuctionDetailPage() {
                                         </div>
                                     </div>
 
-                                    {isString(auction.metadata?.external_url) && (
+                                    {isString(auction.metadata?.external_url || nftMetadata?.external_url) && (
                                         <div className="external-link">
                                             <h4>External Link</h4>
-                                            <a href={auction.metadata.external_url} target="_blank" rel="noopener noreferrer">
-                                                {auction.metadata.external_url}
+                                            <a href={auction.metadata?.external_url || nftMetadata?.external_url} target="_blank" rel="noopener noreferrer">
+                                                {auction.metadata?.external_url || nftMetadata?.external_url}
                                             </a>
                                         </div>
                                     )}
@@ -666,9 +744,9 @@ function AuctionDetailPage() {
                             {activeTab === 'properties' && (
                                 <div className="properties-tab">
                                     <h4>Properties</h4>
-                                    {Array.isArray(auction.metadata?.attributes) && auction.metadata.attributes.length > 0 ? (
+                                    {Array.isArray(auction.metadata?.attributes || nftMetadata?.attributes) && (auction.metadata?.attributes || nftMetadata?.attributes).length > 0 ? (
                                         <div className="attributes-grid">
-                                            {auction.metadata.attributes.map((attr, index) => {
+                                            {(auction.metadata?.attributes || nftMetadata?.attributes).map((attr, index) => {
                                                 const rarity = getTraitRarity(attr);
                                                 return (
                                                     <div key={index} className="attribute-box" style={{ borderColor: rarity.color }}>
@@ -699,7 +777,7 @@ function AuctionDetailPage() {
                                             <div className="activity-icon">🔨</div>
                                             <div className="activity-details">
                                                 <div className="activity-title">Auction Started</div>
-                                                <div className="activity-meta">Starting price: {ethers.formatEther(auction.startPrice)} VTRU</div>
+                                                <div className="activity-meta">Starting price: {ethers.formatEther(auction.startPrice || auction.startingBid || '0')} VTRU</div>
                                                 <div className="activity-time">2 hours ago</div>
                                             </div>
                                         </div>

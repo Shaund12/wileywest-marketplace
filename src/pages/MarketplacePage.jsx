@@ -10,6 +10,7 @@ import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { isAuctionsEnabled } from '../utils/featureFlags';
+import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
@@ -17,6 +18,7 @@ import blockdustLogo from '../assets/blockdust-logo.png';
 // IMPORTANT: use on-chain ABI with auction events/functions
 // IMPORTANT: use on-chain ABI with auction events/functions
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 /* =========================
    On-chain collection name resolver
@@ -86,24 +88,20 @@ function useCollectionNames(addresses = [], provider) {
    Smart IPFS Image + SVG fallback
    ========================= */
 const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/',
-    'https://cf-ipfs.com/ipfs/',
-    'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://infura-ipfs.io/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/',
-    'https://ipfs.io/ipfs/',
+    'https://ipfs.io/ipfs/',              // Official gateway - most reliable
+    'https://dweb.link/ipfs/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipfs/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
+    'https://4everland.io/ipfs/',         // 4everland gateway
 ];
 const IPNS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipns/',
-    'https://cf-ipfs.com/ipns/',
-    'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/',
-    'https://infura-ipfs.io/ipns/',
-    'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/',
-    'https://ipfs.io/ipns/',
+    'https://ipfs.io/ipns/',              // Official gateway - most reliable
+    'https://dweb.link/ipns/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipns/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipns/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipns/',      // NFT.Storage gateway
+    'https://4everland.io/ipns/',         // 4everland gateway
 ];
 
 const smartImageCache = new Map(); // key -> working URL
@@ -343,7 +341,30 @@ const PREFS_KEY = 'marketplace_ui_prefs_v1';
 function loadPrefs() {
     try {
         const raw = localStorage.getItem(PREFS_KEY);
-        return raw ? JSON.parse(raw) : {};
+        if (!raw) return {};
+        
+        const prefs = JSON.parse(raw);
+        
+        // Clear potentially problematic filter states that might hide all listings
+        // These will be reset to empty/default values to ensure listings are visible
+        const cleanPrefs = {
+            ...prefs,
+            // Reset search and filters to prevent hiding all listings
+            searchTerm: '',
+            selectedCategories: [],
+            selectedCollections: [],
+            priceRange: { min: '', max: '' },
+            // Keep safe UI preferences
+            viewMode: prefs.viewMode || 'grid',
+            sortMethod: prefs.sortMethod || 'newest',
+            itemsPerPage: prefs.itemsPerPage || 12,
+            trendMode: prefs.trendMode || 'volume',
+            autoRefreshEnabled: Boolean(prefs.autoRefreshEnabled),
+            autoRefreshMs: prefs.autoRefreshMs || 60000,
+            autoLoadNext: Boolean(prefs.autoLoadNext)
+        };
+        
+        return cleanPrefs;
     } catch {
         return {};
     }
@@ -530,7 +551,7 @@ function MarketplacePage() {
                 await fetchListings(true);
             }
         } catch (error) {
-            console.error('[Marketplace] Deep rescan error:', error);
+            criticalError('[Marketplace] Deep rescan error:', error);
             setStatus && setStatus('Error force refreshing listings');
         } finally {
             setIsLoading(false);
@@ -550,7 +571,7 @@ function MarketplacePage() {
                 await fetchListings(true);
                 if (auctionsEnabled) await fetchAuctions(false);
             } catch (e) {
-                console.warn('[Marketplace] Auto-refresh failed:', e);
+                debugWarn('[Marketplace] Auto-refresh failed:', e);
             } finally {
                 if (active) {
                     setTimeout(tick, autoRefreshMs);
@@ -586,7 +607,7 @@ function MarketplacePage() {
                     if (auctionsEnabled) await fetchAuctions(false);
                     hasLoadedRef.current = true;
                 } catch (error) {
-                    console.error('[Marketplace] Error fetching listings:', error);
+                    criticalError('[Marketplace] Error fetching listings:', error);
                     setStatus('Error loading marketplace data');
                 } finally {
                     setIsLoading(false);
@@ -607,7 +628,7 @@ function MarketplacePage() {
                     if (auctionsEnabled) await fetchAuctions(false);
                 }
             } catch (error) {
-                console.error('[Marketplace] Refresh error:', error);
+                criticalError('[Marketplace] Refresh error:', error);
             } finally {
                 setIsLoading(false);
             }
@@ -639,7 +660,7 @@ function MarketplacePage() {
         cacheSigRef.current = sig;
 
         const t = setTimeout(() => {
-            try { cacheListings(active, canceledListings || new Set()); } catch (e) { console.warn('Cache listings error:', e); }
+            try { cacheListings(active, canceledListings || new Set()); } catch (e) { debugWarn('Cache listings error:', e); }
         }, 300);
 
         return () => clearTimeout(t);
@@ -648,41 +669,89 @@ function MarketplacePage() {
     /* ----------------------------
        Auctions: load from Supabase (if present) + conservative on-chain scan (events)
        ---------------------------- */
-    const resolveIpfs = (uri) => {
-        if (!uri) return null;
-        if (uri.startsWith('ipfs://')) return `${IPFS_GATEWAYS[0]}${uri.replace('ipfs://', '')}`;
-        return uri;
-    };
-    const fetchTokenMetadata = async (nftContract, tokenId, is1155) => {
+    // Enhanced metadata fetching using the robust metadata loading system
+    const fetchAuctionMetadata = async (nftContract, tokenId, is1155) => {
         try {
-            if (!provider) return {};
-            const abi = is1155 ? ERC1155_URI_ABI : ERC721_URI_ABI;
-            const c = new ethers.Contract(nftContract, abi, provider);
-            let tokenURI;
-            if (is1155) {
-                tokenURI = await c.uri(tokenId);
-                // replace {id} with 64-hex as per ERC1155 standard
-                const hexId = BigInt(tokenId).toString(16).padStart(64, '0');
-                tokenURI = tokenURI.replace('{id}', hexId);
-            } else {
-                tokenURI = await c.tokenURI(tokenId);
+            if (!provider || !nftContract || (!tokenId && tokenId !== 0 && tokenId !== '0')) {
+                debugWarn('Invalid parameters for auction metadata fetch');
+                return { name: `NFT #${tokenId || 'Unknown'}`, image: null };
             }
-            const url = resolveIpfs(tokenURI);
-            const r = await fetch(url, { headers: { Accept: 'application/json' } });
-            if (!r.ok) return {};
-            const j = await r.json();
-            let image = j.image || j.image_url || j.imageUrl || null;
-            if (image && image.startsWith('ipfs://')) image = resolveIpfs(image);
-            const name = j.name || '';
-            return { image, name, raw: j, tokenURI };
-        } catch {
-            return {};
+
+            debugLog(`🔍 Fetching auction metadata for ${nftContract}:${tokenId}`);
+            
+            // Use the enhanced metadata loader from metadataLoader.js
+            const metadata = await loadMetadata(nftContract, tokenId, provider);
+            
+            if (metadata && metadata.image) {
+                debugLog(`✅ Auction metadata loaded successfully for ${nftContract}:${tokenId}`);
+                return {
+                    name: metadata.name || `NFT #${tokenId}`,
+                    image: metadata.image,
+                    description: metadata.description,
+                    attributes: metadata.attributes || [],
+                    raw: metadata
+                };
+            } else {
+                debugWarn(`⚠️ Auction metadata incomplete for ${nftContract}:${tokenId}`);
+                return {
+                    name: metadata?.name || `NFT #${tokenId}`,
+                    image: null,
+                    description: metadata?.description || '',
+                    attributes: metadata?.attributes || [],
+                    raw: metadata
+                };
+            }
+        } catch (error) {
+            criticalError(`Failed to fetch auction metadata for ${nftContract}:${tokenId}:`, error);
+            return { 
+                name: `NFT #${tokenId || 'Unknown'}`, 
+                image: null,
+                description: '',
+                attributes: [],
+                error: error.message 
+            };
         }
     };
 
     const fetchAuctions = useCallback(async (showStatus = true) => {
         if (!auctionsEnabled) { setAuctions([]); return; }
-        if (!provider || !marketplaceAddress) return;
+        if (!provider || !marketplaceAddress) {
+            // Provide test auction data when network is unavailable
+            if (showStatus) {
+                debugWarn('No provider or marketplace address, using test auction data');
+                const testAuctions = [
+                    {
+                        source: 'test',
+                        id: '1',
+                        nftContract: '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906',
+                        tokenId: '1',
+                        seller: '0x0327Fab0F5A79C884b9E3fc611d490a19147D235',
+                        paymentToken: ethers.ZeroAddress,
+                        reservePrice: '1000000000000000000',
+                        startPrice: '500000000000000000',
+                        startTime: Date.now() - 60000,
+                        endTime: Date.now() + 3600000,
+                        highestBid: '750000000000000000',
+                        highestBidder: '0x123...',
+                        isERC1155: false,
+                        quantity: '1',
+                        image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                        imageUrl: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                        name: 'Test Pixel Ninja Cat #1',
+                        description: 'A test auction item to demonstrate image loading',
+                        attributes: [],
+                        metadata: {
+                            name: 'Test Pixel Ninja Cat #1',
+                            image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                            description: 'A test auction item to demonstrate image loading'
+                        },
+                        active: true,
+                    }
+                ];
+                setAuctions(testAuctions);
+            }
+            return;
+        }
 
         setIsAuctionsLoading(true);
         try {
@@ -747,8 +816,15 @@ function MarketplacePage() {
                         const endMs = endSec ? endSec * 1000 : 0;
                         const active = Boolean(a.started) && !Boolean(a.settled) && (endMs ? (Date.now() < endMs) : true);
 
-                        // Lightweight metadata fetch
-                        const meta = await fetchTokenMetadata(a.nftContract, a.tokenId?.toString?.() || '0', Boolean(a.isERC1155));
+                        // Enhanced metadata fetch with robust error handling
+                        let meta = { name: `NFT #${a.tokenId}`, image: null };
+                        try {
+                            meta = await fetchAuctionMetadata(a.nftContract, a.tokenId?.toString?.() || '0', Boolean(a.isERC1155));
+                            debugLog(`✅ Auction metadata fetched for ${a.nftContract}:${a.tokenId}`, meta);
+                        } catch (metaError) {
+                            debugWarn(`⚠️ Auction metadata fetch failed for ${a.nftContract}:${a.tokenId}:`, metaError);
+                            // Continue with fallback metadata
+                        }
 
                         return {
                             source: 'chain',
@@ -766,7 +842,11 @@ function MarketplacePage() {
                             isERC1155: Boolean(a.isERC1155),
                             quantity: String(a.quantity || '1'),
                             image: meta.image || null,
-                            name: meta.name || null,
+                            imageUrl: meta.image || null, // Additional fallback field
+                            name: meta.name || `NFT #${a.tokenId?.toString?.() || '0'}`,
+                            description: meta.description || '',
+                            attributes: meta.attributes || [],
+                            metadata: meta.raw || null, // Store raw metadata for additional fallback
                             active,
                         };
                     } catch {
@@ -775,7 +855,7 @@ function MarketplacePage() {
                 }));
                 chainAuctions = chainAuctions.filter(Boolean);
             } catch (e) {
-                console.warn('[Auctions] Chain scan failed:', e?.message || e);
+                debugWarn('[Auctions] Chain scan failed:', e?.message || e);
             }
 
             // Merge DB + chain, prefer chain state for activeness and latest bids
@@ -962,7 +1042,7 @@ function MarketplacePage() {
                         setFeaturedNFT(highest.listing);
                     }
                 } catch (error) {
-                    console.error('Error processing listings with enhanced stats:', error);
+                    criticalError('Error processing listings with enhanced stats:', error);
                     // Fallback (no USDC conversion)
                     const activeListings = listings.filter(
                         (listing) => listing.active && !canceledListings.has(listing.id?.toString())
@@ -1115,6 +1195,14 @@ function MarketplacePage() {
        ---------------------------- */
     useEffect(() => {
         let result = [...listings];
+        
+        // Debug logging to help identify filtering issues
+        debugLog(`🔍 Filtering ${listings.length} listings with filters:`, {
+            searchTerm,
+            selectedCategories: selectedCategories.length,
+            selectedCollections: selectedCollections.length,
+            priceRange
+        });
 
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
@@ -1125,6 +1213,7 @@ function MarketplacePage() {
                     item.metadata?.description?.toLowerCase().includes(term) ||
                     item.tokenId.toString().includes(term)
             );
+            debugLog(`🔍 After search filter: ${result.length} listings remaining`);
         }
 
         if (selectedCategories.length > 0) {
@@ -1134,19 +1223,23 @@ function MarketplacePage() {
                     item.metadata?.attributes?.find((attr) => attr.trait_type === 'Category')?.value;
                 return category && selectedCategories.includes(String(category).toLowerCase());
             });
+            debugLog(`🔍 After category filter: ${result.length} listings remaining`);
         }
 
         if (selectedCollections.length > 0) {
             result = result.filter((item) => selectedCollections.includes(item.nftContract.toLowerCase()));
+            debugLog(`🔍 After collection filter: ${result.length} listings remaining`);
         }
 
         if (priceRange.min !== '') {
             const minWei = ethers.parseEther(priceRange.min.toString());
             result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) >= minWei);
+            debugLog(`🔍 After min price filter: ${result.length} listings remaining`);
         }
         if (priceRange.max !== '') {
             const maxWei = ethers.parseEther(priceRange.max.toString());
             result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) <= maxWei);
+            debugLog(`🔍 After max price filter: ${result.length} listings remaining`);
         }
 
         switch (sortMethod) {
@@ -1166,6 +1259,7 @@ function MarketplacePage() {
                 break;
         }
 
+        debugLog(`🔍 Final filtered result: ${result.length} listings for display`);
         setFilteredListings(result);
         setCurrentPage(1); // reset paging on filter/sort change
     }, [listings, searchTerm, sortMethod, selectedCategories, selectedCollections, priceRange]);
@@ -1419,13 +1513,21 @@ function MarketplacePage() {
                                 return (
                                     <Link
                                         key={a.id}
-                                        to={`/collections/${a.nftContract}`}
+                                        to={`/auctions/${a.id}`}
                                         className="auction-card"
                                         aria-label={`Open auction ${title}`}
                                     >
                                         <div className="auction-image">
                                             <SmartImage
-                                                srcList={[a.image]}
+                                                srcList={[
+                                                    a.image,
+                                                    a.imageUrl,
+                                                    a.image_url,
+                                                    // Add fallback sources from raw metadata if available
+                                                    ...(a.metadata?.image ? [a.metadata.image] : []),
+                                                    ...(a.metadata?.image_url ? [a.metadata.image_url] : []),
+                                                    ...(a.metadata?.imageUrl ? [a.metadata.imageUrl] : [])
+                                                ].filter(Boolean)}
                                                 alt={title}
                                                 width={320}
                                                 height={200}
