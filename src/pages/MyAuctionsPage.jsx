@@ -4,7 +4,7 @@ import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
-import { formatTokenAmount } from '../utils/tokenRegistry';
+import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 /* =========================================================
@@ -221,6 +221,7 @@ function MyAuctionsPage() {
         }
 
         loadUserAuctions();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [wallet]);
 
     const loadUserAuctions = async () => {
@@ -755,6 +756,7 @@ function MyAuctionsPage() {
                         const isEnded = auctionStatus === 'Ended';
                         const canCancel = isActive && auction.highestBid === '0';
                         const canSettle = isEnded && !auction.settled;
+                        const tokenSymbol = getTokenSymbol(auction.paymentToken);
                         
                         return (
                             <div key={auctionId || `${auction.nftContract}-${auction.tokenId}-${Date.now()}`} className="auction-card">
@@ -789,15 +791,15 @@ function MyAuctionsPage() {
                                             <label>Current Bid</label>
                                             <span>
                                                 {auction.highestBid === '0' 
-                                                    ? formatTokenAmount(auction.startPrice, auction.paymentToken)
-                                                    : formatTokenAmount(auction.highestBid, auction.paymentToken)
+                                                    ? `${formatTokenAmount(auction.startPrice, auction.paymentToken)} ${tokenSymbol}`
+                                                    : `${formatTokenAmount(auction.highestBid, auction.paymentToken)} ${tokenSymbol}`
                                                 }
                                             </span>
                                         </div>
                                         
                                         <div className="stat">
                                             <label>Reserve</label>
-                                            <span>{formatTokenAmount(auction.reservePrice, auction.paymentToken)}</span>
+                                            <span>{`${formatTokenAmount(auction.reservePrice, auction.paymentToken)} ${tokenSymbol}`}</span>
                                         </div>
                                         
                                         <div className="stat">
