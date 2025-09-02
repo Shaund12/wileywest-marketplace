@@ -1413,8 +1413,16 @@ const ERC1155_APPROVAL_ABI = [
 ];
 
     // Replace the current buyListing with this version
-// Helper: robust ERC20 allowance manager (handles USDT-style 0->new)
-async function ensureAllowance(tokenAddress, owner, spender, needed, signer, setStatus) {
+// ===== Buffer-aware ERC20 allowance helper (handles USDT-style 0->new) =====
+async function ensureAllowanceWithBuffer({
+  tokenAddress,
+  owner,
+  spender,
+  needed,             // BigInt in token units
+  signer,
+  setStatus,
+  bufferBps = 1000n,  // 10% buffer; e.g. 500n = 5%
+}) {
   const erc20 = new ethers.Contract(tokenAddress, [
     'function symbol() view returns (string)',
     'function decimals() view returns (uint8)',
@@ -1422,101 +1430,117 @@ async function ensureAllowance(tokenAddress, owner, spender, needed, signer, set
     'function approve(address,uint256) returns (bool)'
   ], signer);
 
-  const [symbol, allowanceBN] = await Promise.all([
+  const [symbol, allowanceRaw] = await Promise.all([
     erc20.symbol().catch(() => 'TOKEN'),
     erc20.allowance(owner, spender),
   ]);
 
-  const allowance = BigInt(allowanceBN.toString());
-  if (allowance >= needed) return { symbol, approved: true };
+  const allowance = BigInt(allowanceRaw.toString());
+  const extra = (needed * bufferBps) / 10_000n;
+  const neededWithBuffer = needed + extra;
 
-  setStatus?.(`Approving ${symbol}...`);
+  if (allowance >= neededWithBuffer) {
+    return { symbol, approved: true, allowance, neededWithBuffer };
+  }
 
-  // 1) Try direct max approval
-  try {
-    const tx = await erc20.approve(spender, ethers.MaxUint256);
-    setStatus?.(`Approving ${symbol} in your wallet...`);
+  const ask = async (amount, label) => {
+    setStatus?.(`Approving ${symbol}${label ? ` (${label})` : ''}...`);
+    const tx = await erc20.approve(spender, amount);
+    setStatus?.(`Confirming ${symbol} approval...`);
     await tx.wait();
-    return { symbol, approved: true };
+  };
+
+  // Prefer Max approval for smoother future buys
+  try {
+    await ask(ethers.MaxUint256, 'max');
+    return { symbol, approved: true, allowance: ethers.MaxUint256, neededWithBuffer };
   } catch (e1) {
     const m = (e1?.reason || e1?.message || '').toLowerCase();
-    // 2) USDT-style: must set to 0 first
+
+    // USDT-style tokens require 0 -> new
     if (m.includes('allowance') || m.includes('must be zero') || m.includes('non-zero')) {
       try {
-        // reset to zero
-        const zeroTx = await erc20.approve(spender, 0);
-        setStatus?.(`Resetting ${symbol} allowance to 0...`);
-        await zeroTx.wait();
-        // re-approve max
-        const tx2 = await erc20.approve(spender, ethers.MaxUint256);
-        setStatus?.(`Re-approving ${symbol}...`);
-        await tx2.wait();
-        return { symbol, approved: true };
+        await ask(0, 'reset to 0');
+        await ask(ethers.MaxUint256, 'max');
+        return { symbol, approved: true, allowance: ethers.MaxUint256, neededWithBuffer };
       } catch (e2) {
-        // 3) Last resort: approve exact needed
+        // Fallback: exact buffered amount
         try {
-          const tx3 = await erc20.approve(spender, needed);
-          setStatus?.(`Approving exact ${symbol} amount...`);
-          await tx3.wait();
-          return { symbol, approved: true };
+          await ask(neededWithBuffer, `exact ${symbol}`);
+          return { symbol, approved: true, allowance: neededWithBuffer, neededWithBuffer };
         } catch (e3) {
           throw new Error(`Failed to approve ${symbol}: ${e3?.message || e3}`);
         }
       }
     }
-    // Different failure
-    throw new Error(`Failed to approve ${symbol}: ${e1?.message || e1}`);
+
+    // Different failure → exact buffered amount
+    try {
+      await ask(neededWithBuffer, `exact ${symbol}`);
+      return { symbol, approved: true, allowance: neededWithBuffer, neededWithBuffer };
+    } catch (e4) {
+      throw new Error(`Failed to approve ${symbol}: ${e4?.message || e4}`);
+    }
   }
 }
 
-// Drop-in replacement for your buyListing
+
+// ===== buyListing with buffer-aware allowance and correct spender =====
 const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) => {
   if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
   if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
 
   try {
-    // Make sure the contract is real
-    const code = await provider.getCode(marketplaceAddress);
+    // Use the actual contract target as spender (ethers v6)
+    const spender = (marketplace && marketplace.target) || marketplaceAddress;
+
+    // Sanity: ensure it's a contract
+    const code = await provider.getCode(spender);
     if (!code || code === '0x') { setStatus('Error: Marketplace address has no contract code'); return; }
 
-    // Pull authoritative listing
+    // Authoritative listing
     const l = await marketplace.listings(id);
     if (!l || !l.active) { setStatus('Error: Listing is inactive'); return; }
 
-    const is1155   = !!l.isERC1155;
-    const listed   = BigInt(l.quantity?.toString?.() ?? String(l.quantity ?? '0'));
-    const qty      = BigInt(String(quantity || 1));
+    const is1155 = !!l.isERC1155;
+    const listed = BigInt(l.quantity?.toString?.() ?? String(l.quantity ?? '0'));
+    const qty    = BigInt(String(quantity || 1));
+
     if (!is1155 && qty !== 1n) { setStatus('Error: ERC-721 quantity must be 1'); return; }
     if (is1155 && (qty <= 0n || qty > listed)) { setStatus('Error: Requested quantity exceeds available'); return; }
 
-    const unit   = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
-    const total  = unit * qty;
-    const token  = l.paymentToken;
+    const unit  = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
+    const total = unit * qty;
+    const token = l.paymentToken;
     const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
 
-    // ERC20 path: balance + allowance
+    // ERC20 path — balance + buffered allowance
     if (!isNative) {
-      // Optional: balance check to give a nicer message early
-      const erc20 = new ethers.Contract(token, [
-        'function balanceOf(address) view returns (uint256)'
-      ], provider);
+      const erc20 = new ethers.Contract(token, ['function balanceOf(address) view returns (uint256)'], provider);
       const bal = BigInt((await erc20.balanceOf(wallet)).toString());
       if (bal < total) { setStatus('Error: Insufficient token balance for this purchase'); return; }
 
-      await ensureAllowance(token, wallet, marketplaceAddress, total, signer, setStatus);
+      await ensureAllowanceWithBuffer({
+        tokenAddress: token,
+        owner: wallet,
+        spender,
+        needed: total,
+        signer,
+        setStatus,
+        bufferBps: 1000n, // 10% buffer; tune to taste
+      });
     } else {
-      // native balance sanity-check
       const balNative = await provider.getBalance(wallet);
       if (balNative < total) { setStatus('Error: Insufficient native balance for price + gas'); return; }
     }
 
-    // Gas estimate (v6 path) — include value for native
+    // Estimation with correct overrides
     setStatus('Estimating gas...');
     try {
       if (isNative) await marketplace.estimateGas.buy(id, qty, { value: total });
       else          await marketplace.estimateGas.buy(id, qty);
     } catch (estErr) {
-      // Try to surface a reason with staticCall
+      // Try to surface revert reason
       try {
         if (isNative) await marketplace.getFunction('buy').staticCall(id, qty, { value: total });
         else          await marketplace.getFunction('buy').staticCall(id, qty);
@@ -1531,10 +1555,12 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
       }
     }
 
-    // Send tx
+    // Send tx (no Number() coercion on qty)
     setStatus('Buying...');
-    const overrides = isNative ? { value: total } : undefined;
-    const tx = await marketplace.getFunction('buy')(id, qty, overrides);
+    const tx = isNative
+      ? await marketplace.getFunction('buy')(id, qty, { value: total })
+      : await marketplace.getFunction('buy')(id, qty);
+
     setStatus('Transaction submitted. Waiting for confirmation...');
     await tx.wait();
 
@@ -1549,13 +1575,14 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
   } catch (e) {
     criticalError('Error in buyListing:', e);
     const em = String(e?.message || '').toLowerCase();
-    if (em.includes('user rejected'))      setStatus('Transaction was rejected in your wallet');
+    if (em.includes('user rejected'))           setStatus('Transaction was rejected in your wallet');
     else if (em.includes('insufficient funds')) setStatus('Error: Insufficient funds');
-    else if (em.includes('allowance'))     setStatus('Error: Token allowance/approval failed. Please try again.');
-    else if (em.includes('no contract code')) setStatus('Error: Marketplace address has no contract code');
-    else setStatus('Buy failed: ' + (e.message || e));
+    else if (em.includes('allowance'))          setStatus('Error: Token allowance/approval failed. Please try again.');
+    else if (em.includes('no contract code'))   setStatus('Error: Marketplace address has no contract code');
+    else                                        setStatus('Buy failed: ' + (e.message || e));
   }
 };
+
 
 
     const createListing = async (nftContract, tokenId, quantity, price, paymentToken) => {
