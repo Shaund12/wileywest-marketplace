@@ -1577,13 +1577,34 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     const em = String(e?.message || '').toLowerCase();
     if (em.includes('user rejected'))           setStatus('Transaction was rejected in your wallet');
     else if (em.includes('insufficient funds')) setStatus('Error: Insufficient funds');
-    else if (em.includes('allowance'))          setStatus('Error: Token allowance/approval failed. Please try again.');
+    else if (em.includes('allowance')) {
+      const resetMsg = 'Token allowance error. Please click "Reset Allowance" button below.';
+      setStatus(resetMsg);
+      
+      // Create a simple reset button in the UI
+      const resetBtn = document.createElement('button');
+      resetBtn.innerText = 'Reset Token Allowance';
+      resetBtn.className = 'reset-allowance-btn';
+      resetBtn.onclick = async () => {
+        const success = await resetTokenAllowance(token, spender, setStatus);
+        if (success) {
+          // Try again after successful reset
+          setTimeout(() => {
+            buyListing(id, _uiPricePerUnit, _uiPaymentToken, quantity);
+          }, 1000);
+        }
+      };
+      
+      // Find status container and append button
+      const statusContainer = document.querySelector('.status-container');
+      if (statusContainer) {
+        statusContainer.appendChild(resetBtn);
+      }
+    }
     else if (em.includes('no contract code'))   setStatus('Error: Marketplace address has no contract code');
     else                                        setStatus('Buy failed: ' + (e.message || e));
   }
 };
-
-
 
     const createListing = async (nftContract, tokenId, quantity, price, paymentToken) => {
         try {
@@ -1778,3 +1799,36 @@ async function resolveMarketplaceAbi(incomingAbi) {
 export function useMarketplace() {
     return useContext(MarketplaceContext);
 }
+
+// Add this function to reset allowances
+async function resetTokenAllowance(tokenAddress, spender, setStatus) {
+  if (!signer) return false;
+  
+  try {
+    const token = new ethers.Contract(tokenAddress, [
+      'function symbol() view returns (string)',
+      'function approve(address,uint256) returns (bool)'
+    ], signer);
+    
+    const symbol = await token.symbol().catch(() => 'TOKEN');
+    setStatus(`Resetting ${symbol} allowance to zero...`);
+    
+    // First set to zero
+    const tx1 = await token.approve(spender, 0);
+    await tx1.wait();
+    
+    // Then approve max
+    setStatus(`Approving ${symbol} for trading...`);
+    const tx2 = await token.approve(spender, ethers.MaxUint256);
+    await tx2.wait();
+    
+    setStatus(`${symbol} approved successfully!`);
+    return true;
+  } catch (error) {
+    setStatus(`Failed to reset token allowance: ${error.message}`);
+    return false;
+  }
+}
+
+// Add this reset button to the UI for marketplace page
+// And modify buyListing to use this reset function when allowance errors occur
