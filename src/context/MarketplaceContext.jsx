@@ -1417,29 +1417,36 @@ const ERC1155_APPROVAL_ABI = [
     if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
     if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
 
-    // ABI sanity check to avoid "reading 'buy'" undefined errors
-    if (typeof marketplace.buy !== 'function') {
-        setStatus('Marketplace ABI missing buy(). Reinitializing...');
+    // Ensure ABI actually contains buy()
+    const ensureBuyAvailable = async (contract) => {
         try {
-            // Recreate with a correct ABI
+            // Throws if not found
+            contract.interface.getFunction('buy');
+            return contract;
+        } catch {
+            setStatus('Marketplace ABI missing buy(). Reinitializing...');
             const resolvedAbi = await resolveMarketplaceAbi(abi);
             const fixed = new ethers.Contract(marketplaceAddress, resolvedAbi, signer);
             setMarketplace(fixed);
-        } catch (reErr) {
-            criticalError('Reinit failed:', reErr);
+            // Verify again
+            fixed.interface.getFunction('buy');
+            return fixed;
         }
-        return;
-    }
+    };
 
     try {
-        const marketplaceWithSigner = marketplace.connect(signer);
+        // Ensure connected instance and presence of method
+        let contract = marketplace.connect(signer);
+        contract = await ensureBuyAvailable(contract);
+
+        // Safely reference the method
+        const buyMethod = contract.getFunction('buy');
 
         // Normalize inputs
         const toLower = (a) => (typeof a === 'string' ? a.toLowerCase() : a);
         const isZero = (a) => !a || toLower(a) === toLower(ethers.ZeroAddress);
         const isNative = isZero(paymentToken);
 
-        // Coerce amounts to BigInt
         const unit = BigInt(String(pricePerUnit));
         const qty = BigInt(String(quantity || 1));
         if (qty <= 0n) throw new Error('Invalid quantity');
@@ -1449,7 +1456,6 @@ const ERC1155_APPROVAL_ABI = [
             setStatus('Checking token balance and approval...');
             const token = new ethers.Contract(paymentToken, [
                 'function symbol() view returns (string)',
-                'function decimals() view returns (uint8)',
                 'function balanceOf(address) view returns (uint256)',
                 'function allowance(address,address) view returns (uint256)',
                 'function approve(address,uint256) returns (bool)'
@@ -1465,7 +1471,6 @@ const ERC1155_APPROVAL_ABI = [
                 setStatus(`Error: Insufficient ${symbol} balance for this purchase`);
                 return;
             }
-
             if (BigInt(allowance.toString()) < total) {
                 setStatus(`Requesting ${symbol} approval...`);
                 try {
@@ -1483,13 +1488,12 @@ const ERC1155_APPROVAL_ABI = [
             }
         }
 
-        // Preflight: estimate gas to catch silent reverts (-32603) before sending
+        // Preflight estimate using method wrapper
         setStatus('Estimating gas...');
         try {
             const overrides = isNative ? { value: total } : {};
-            await marketplaceWithSigner.estimateGas.buy(id, Number(qty), overrides);
+            await buyMethod.estimateGas(id, Number(qty), overrides);
         } catch (estErr) {
-            // Common causes: insufficient funds (native), insufficient allowance (erc20), listing inactive/sold
             const msg = (estErr?.reason || estErr?.message || '').toLowerCase();
             if (msg.includes('insufficient funds')) {
                 setStatus('Error: Insufficient native funds for this purchase');
@@ -1501,26 +1505,19 @@ const ERC1155_APPROVAL_ABI = [
             throw estErr;
         }
 
-        // Send transaction
+        // Send tx using method wrapper
         setStatus('Buying...');
-        const tx = await marketplaceWithSigner.buy(
-            id,
-            Number(qty),
-            isNative ? { value: total } : {}
-        );
-
+        const tx = await buyMethod(id, Number(qty), isNative ? { value: total } : {});
         setStatus('Transaction submitted. Waiting for confirmation...');
         await tx.wait();
         setStatus('Purchase successful! Updating listings...');
 
-        // Refresh data
         if (supabaseConnected && cacheListings) {
             await fetchListings(true);
         } else {
             fetchListings();
         }
 
-        // Optionally refresh recent events
         setTimeout(async () => {
             try {
                 await fetchPastSalesEvents(marketplace);
@@ -1540,6 +1537,8 @@ const ERC1155_APPROVAL_ABI = [
             setStatus('Error: Insufficient funds for this purchase');
         } else if (em.includes('allowance') || em.includes('transfer amount')) {
             setStatus('Error: Token allowance/transfer failed. Please approve again or check token balance.');
+        } else if (em.includes('no abi with buy') || em.includes('missing buy')) {
+            setStatus('Error: ABI missing buy(). Check marketplace ABI/address.');
         } else {
             setStatus('Buy failed: ' + (e.message || e));
         }
