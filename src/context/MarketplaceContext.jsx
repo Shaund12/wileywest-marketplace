@@ -1407,112 +1407,130 @@ const ERC1155_APPROVAL_ABI = [
 ];
 
     // Replace the current buyListing function with this version
-    const buyListing = async (id, pricePerUnit, paymentToken) => {
-        if (!signer) {
-            setStatus('Error: Wallet not connected. Please connect your wallet first');
-            return;
-        }
+    const buyListing = async (id, pricePerUnit, paymentToken, quantity = 1) => {
+    if (!signer) {
+        setStatus('Error: Wallet not connected. Please connect your wallet first');
+        return;
+    }
+    if (!marketplace) {
+        setStatus('Error: Marketplace contract not initialized');
+        return;
+    }
 
-        if (!marketplace) {
-            setStatus('Error: Marketplace contract not initialized');
-            return;
-        }
+    try {
+        const marketplaceWithSigner = marketplace.connect(signer);
 
-        try {
-            // Connect with signer
-            const marketplaceWithSigner = marketplace.connect(signer);
-            
-            // If using ERC20 token (not native VTRU), check approval first
-            if (paymentToken !== ethers.ZeroAddress) {
-                setStatus('Checking token approval...');
-                
-                // Create token contract instance
-                const tokenContract = new ethers.Contract(paymentToken, ERC20_ABI, signer);
-                
+        // Normalize inputs
+        const toLower = (a) => (typeof a === 'string' ? a.toLowerCase() : a);
+        const isZero = (a) => !a || toLower(a) === toLower(ethers.ZeroAddress);
+        const isNative = isZero(paymentToken);
+
+        // Coerce amounts to BigInt
+        const unit = BigInt(String(pricePerUnit));
+        const qty = BigInt(String(quantity || 1));
+        if (qty <= 0n) throw new Error('Invalid quantity');
+        const total = unit * qty;
+
+        if (!isNative) {
+            setStatus('Checking token balance and approval...');
+            const token = new ethers.Contract(paymentToken, [
+                'function symbol() view returns (string)',
+                'function decimals() view returns (uint8)',
+                'function balanceOf(address) view returns (uint256)',
+                'function allowance(address,address) view returns (uint256)',
+                'function approve(address,uint256) returns (bool)'
+            ], signer);
+
+            const [symbol, balance, allowance] = await Promise.all([
+                token.symbol().catch(() => 'TOKEN'),
+                token.balanceOf(wallet),
+                token.allowance(wallet, marketplaceAddress),
+            ]);
+
+            if (BigInt(balance.toString()) < total) {
+                setStatus(`Error: Insufficient ${symbol} balance for this purchase`);
+                return;
+            }
+
+            if (BigInt(allowance.toString()) < total) {
+                setStatus(`Requesting ${symbol} approval...`);
                 try {
-                    // Get token symbol and decimals for better messages
-                    const tokenSymbol = await tokenContract.symbol();
-                    
-                    // Check current allowance
-                    const currentAllowance = await tokenContract.allowance(wallet, marketplaceAddress);
-                    
-                    // If allowance is insufficient, request approval
-                    if (currentAllowance < pricePerUnit) {
-                        setStatus(`Requesting approval to spend ${tokenSymbol}...`);
-                        
-                        // Request approval for a large amount to avoid future approvals
-                        const approvalTx = await tokenContract.approve(
-                            marketplaceAddress,
-                            ethers.MaxUint256 // Infinite approval
-                        );
-                        
-                        setStatus(`Approving ${tokenSymbol} spending. Please confirm in your wallet...`);
-                        await approvalTx.wait();
-                        setStatus(`${tokenSymbol} approved! Processing purchase...`);
-                    }
-                } catch (error) {
-                    if (error.message.includes('user rejected')) {
+                    const txApprove = await token.approve(marketplaceAddress, ethers.MaxUint256);
+                    setStatus(`Approving ${symbol} in your wallet...`);
+                    await txApprove.wait();
+                    setStatus(`${symbol} approved. Preparing purchase...`);
+                } catch (err) {
+                    if (String(err?.message || '').toLowerCase().includes('user rejected')) {
                         setStatus('Token approval was rejected');
                         return;
                     }
-                    criticalError('Error in token approval:', error);
-                    throw new Error(`Failed to approve token: ${error.message}`);
+                    throw new Error(`Failed to approve ${symbol}: ${err.message || err}`);
                 }
-            }
-
-            // Now proceed with the purchase
-            setStatus('Buying...');
-            
-            debugLog(`Buying listing ${id} for ${ethers.formatEther(pricePerUnit)} ${
-                paymentToken === ethers.ZeroAddress ? 'VTRU' : 'tokens'}`);
-            
-            const tx = await marketplaceWithSigner.buy(id, 1, {
-                value: paymentToken === ethers.ZeroAddress ? pricePerUnit : undefined
-            });
-            
-            setStatus('Transaction submitted. Waiting for confirmation...');
-            await tx.wait();
-            setStatus('Purchase successful! Updating marketplace data...');
-            
-            // Invalidate cache and refresh listings
-            if (supabaseConnected && cacheListings) {
-                debugLog("💾 Invalidating cache due to purchase...");
-                // Force refresh from blockchain to get latest state
-                await fetchListings(true);
-            } else {
-                // Refresh listings normally
-                fetchListings();
-            }
-            
-            // Wait a moment for events to be mined and then fetch recent events
-            setTimeout(async () => {
-                try {
-                    await fetchPastSalesEvents(marketplace);
-                    setStatus('Purchase successful! Marketplace updated.');
-                    
-                    // Clear status after a few seconds
-                    setTimeout(() => setStatus(''), 3000);
-                } catch (eventError) {
-                    debugWarn("Error fetching updated events after purchase:", eventError);
-                    setStatus('Purchase successful!');
-                    setTimeout(() => setStatus(''), 3000);
-                }
-            }, 2000);
-            
-        } catch (e) {
-            criticalError('Error in buyListing:', e);
-            
-            if (e.message.includes('user rejected transaction')) {
-                setStatus('Transaction was rejected in your wallet');
-            } else if (e.message.includes('insufficient funds')) {
-                setStatus('Error: Insufficient funds for this purchase');
-            } else if (e.message.includes('caller is not token owner or approved')) {
-                setStatus('Error: Seller needs to approve the marketplace to transfer their NFT');
-            } else {
-                setStatus('Buy failed: ' + (e.message || e));
             }
         }
-    };
+
+        // Preflight: estimate gas to catch silent reverts (-32603) before sending
+        setStatus('Estimating gas...');
+        try {
+            const overrides = isNative ? { value: total } : {};
+            await marketplaceWithSigner.estimateGas.buy(id, Number(qty), overrides);
+        } catch (estErr) {
+            // Common causes: insufficient funds (native), insufficient allowance (erc20), listing inactive/sold
+            const msg = (estErr?.reason || estErr?.message || '').toLowerCase();
+            if (msg.includes('insufficient funds')) {
+                setStatus('Error: Insufficient native funds for this purchase');
+            } else if (msg.includes('allowance') || msg.includes('transfer amount exceeds')) {
+                setStatus('Error: Token allowance/transfer failed. Try approving again.');
+            } else {
+                setStatus('Purchase simulation failed. Listing may be inactive or sold out.');
+            }
+            throw estErr;
+        }
+
+        // Send transaction
+        setStatus('Buying...');
+        const tx = await marketplaceWithSigner.buy(
+            id,
+            Number(qty),
+            isNative ? { value: total } : {}
+        );
+
+        setStatus('Transaction submitted. Waiting for confirmation...');
+        await tx.wait();
+        setStatus('Purchase successful! Updating listings...');
+
+        // Refresh data
+        if (supabaseConnected && cacheListings) {
+            await fetchListings(true);
+        } else {
+            fetchListings();
+        }
+
+        // Optionally refresh recent events
+        setTimeout(async () => {
+            try {
+                await fetchPastSalesEvents(marketplace);
+                setStatus('Purchase successful! Marketplace updated.');
+                setTimeout(() => setStatus(''), 3000);
+            } catch {
+                setStatus('Purchase successful!');
+                setTimeout(() => setStatus(''), 3000);
+            }
+        }, 1500);
+    } catch (e) {
+        criticalError('Error in buyListing:', e);
+        const em = String(e?.message || '').toLowerCase();
+        if (em.includes('user rejected')) {
+            setStatus('Transaction was rejected in your wallet');
+        } else if (em.includes('insufficient funds')) {
+            setStatus('Error: Insufficient funds for this purchase');
+        } else if (em.includes('allowance') || em.includes('transfer amount')) {
+            setStatus('Error: Token allowance/transfer failed. Please approve again or check token balance.');
+        } else {
+            setStatus('Buy failed: ' + (e.message || e));
+        }
+    }
+};
 
     const createListing = async (nftContract, tokenId, quantity, price, paymentToken) => {
         try {
