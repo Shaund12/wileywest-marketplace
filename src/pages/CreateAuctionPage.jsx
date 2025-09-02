@@ -114,8 +114,12 @@ async function fetchJsonFromCandidates(candidates, timeoutMs = 9000) {
       try {
         const json = JSON.parse(text);
         return { json, usedUrl: url };
-      } catch {}
-    } catch {}
+      } catch {
+        // not json, try next
+      }
+    } catch {
+      // try next
+    }
   }
   throw new Error('No working metadata URL found');
 }
@@ -269,14 +273,28 @@ function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 
 /* =========================================================
    ABIs / Token addresses / Uniswap config
    ========================================================= */
+
+// ERC-165 interface check
+const ERC165_ABI = [
+  'function supportsInterface(bytes4 interfaceId) view returns (bool)'
+];
+
+// ERC-721 (full we need: read + approvals)
 const ERC721_ABI = [
   'function tokenURI(uint256 tokenId) view returns (string)',
   'function ownerOf(uint256 tokenId) view returns (address)',
+  'function balanceOf(address owner) view returns (uint256)',
+  'function getApproved(uint256 tokenId) view returns (address)',
+  'function isApprovedForAll(address owner, address operator) view returns (bool)',
+  'function setApprovalForAll(address operator, bool approved)',
+  'function approve(address to, uint256 tokenId)'
 ];
 
 const ERC1155_ABI = [
   'function uri(uint256 id) view returns (string)',
   'function balanceOf(address account, uint256 id) view returns (uint256)',
+  'function isApprovedForAll(address owner, address operator) view returns (bool)',
+  'function setApprovalForAll(address operator, bool approved)'
 ];
 
 const UNISWAP_V3_FACTORY_ABI = [
@@ -297,30 +315,28 @@ const ERC20_ABI = [
   'function balanceOf(address owner) view returns (uint256)',
 ];
 
-const ERC721_APPROVAL_ABI = [
-  'function setApprovalForAll(address operator, bool approved) returns ()',
-  'function isApprovedForAll(address owner, address operator) view returns (bool)',
-  'function approve(address to, uint256 tokenId) returns ()',
-  'function getApproved(uint256 tokenId) view returns (address)',
-];
-
-const ERC1155_APPROVAL_ABI = [
-  'function setApprovalForAll(address operator, bool approved) returns ()',
-  'function isApprovedForAll(address owner, address operator) view returns (bool)',
-];
-
 // Token addresses (Vitruveo chain)
 const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
-const USDC_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
-const VUSD_ADDRESS = '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA';
-const SEVO_ADDRESS = '0x2A34059DF3D60B1864f10F10492746bd26d3D24a';
+const USDC_ADDRESS  = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
+const VUSD_ADDRESS  = '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA';
+const SEVO_ADDRESS  = '0x2A34059DF3D60B1864f10F10492746bd26d3D24a';
 const WSEVO_ADDRESS = '0x43a36604B6Ad9A4cf8EF600241E90b3DD97E145d';
 const VITEX_ADDRESS = '0x4Ed92A1d95d2092973007197794542A5D51FF5a6';
-const VTRO_ADDRESS = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
+const VTRO_ADDRESS  = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
 
 // Uniswap V3 (Vitruveo)
 const UNISWAP_V3_FACTORY_ADDRESS = '0x6196a7a6108B15a2cc24DdaB41C8CC3098C06351';
 const FEE_TIERS = [500, 3000, 10000];
+
+/* =========================================================
+   Helpers (tokenId normalization)
+   ========================================================= */
+function normalizeTokenId(raw) {
+  if (raw == null) throw new Error('Missing tokenId');
+  const s = String(raw).trim();
+  // Accept decimal ("123") or hex ("0x7b")
+  return BigInt(s);
+}
 
 /* =========================================================
    Component
@@ -336,13 +352,13 @@ function CreateAuctionPage() {
     nftContract: searchParams.get('contract') || '',
     tokenId: searchParams.get('tokenId') || '',
     quantity: '1',
-    reservePrice: '',          // <-- optional (blank or 0 = no reserve)
-    noReserve: false,          // <-- NEW toggle
+    // Reserve is OPTIONAL — allow blank or 0
+    reservePrice: '',
     startPrice: '',
-    duration: '24',            // hours
-    paymentToken: ethers.ZeroAddress,
+    duration: '24', // hours
+    paymentToken: ethers.ZeroAddress, // default to native VTRU
     minBidIncrementBps: '500', // 5%
-    antiSnipeSeconds: '600',   // 10 minutes
+    antiSnipeSeconds: '600', // 10 minutes
   });
 
   const [metadata, setMetadata] = useState(null);
@@ -351,7 +367,9 @@ function CreateAuctionPage() {
   const [nftType, setNftType] = useState(null);
   const [balance, setBalance] = useState('0');
   const [loading, setLoading] = useState(false);
-  const [ownershipVerified, setOwnershipVerified] = useState(false);
+
+  // NEW: “canTransfer” = you are owner OR approved (721) OR operator (721) OR have 1155 balance > 0
+  const [canTransfer, setCanTransfer] = useState(false);
   const [auctionSuccess, setAuctionSuccess] = useState(false);
 
   // Token system state
@@ -377,7 +395,8 @@ function CreateAuctionPage() {
   }, []);
 
   const calculateUSDValue = (amount, tokenAddress) => {
-    if (amount === '' || amount == null) return '0.00';
+    // Blank or zero is OK → $0.00
+    if (amount === '' || amount === null || typeof amount === 'undefined') return '0.00';
     if (isNaN(parseFloat(amount)) || !tokenAddress) return '0.00';
     const priceKey = tokenAddress === ethers.ZeroAddress ? WVTRU_ADDRESS : tokenAddress;
     const currentPrice = livePrice[priceKey];
@@ -389,23 +408,8 @@ function CreateAuctionPage() {
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
-    if (name === 'reservePrice') {
-      setReservePriceUSD(calculateUSDValue(value, formData.paymentToken));
-      // if user typed anything, turn off "no reserve"
-      setFormData(prev => ({ ...prev, noReserve: (value ?? '').trim() === '' || Number(value) === 0 }));
-    } else if (name === 'startPrice') {
-      setStartPriceUSD(calculateUSDValue(value, formData.paymentToken));
-    }
-  };
-
-  const toggleNoReserve = (checked) => {
-    setFormData(prev => ({
-      ...prev,
-      noReserve: checked,
-      reservePrice: checked ? '' : prev.reservePrice
-    }));
-    if (checked) setReservePriceUSD('0.00');
-    else setReservePriceUSD(calculateUSDValue(formData.reservePrice, formData.paymentToken));
+    if (name === 'reservePrice') setReservePriceUSD(calculateUSDValue(value, formData.paymentToken));
+    else if (name === 'startPrice') setStartPriceUSD(calculateUSDValue(value, formData.paymentToken));
   };
 
   const handlePaymentTokenChange = (e) => {
@@ -600,11 +604,11 @@ function CreateAuctionPage() {
         }
       };
 
-      await addToken(VUSD_ADDRESS, 'VUSD', 'VUSD Token');
-      await addToken(SEVO_ADDRESS, 'SEVO', 'SEVO Token');
+      await addToken(VUSD_ADDRESS,  'VUSD',  'VUSD Token');
+      await addToken(SEVO_ADDRESS,  'SEVO',  'SEVO Token');
       await addToken(WSEVO_ADDRESS, 'WSEVO', 'Wrapped SEVO');
       await addToken(VITEX_ADDRESS, 'VITEX', 'VITEX Token');
-      await addToken(VTRO_ADDRESS, 'VTRO', 'VTRO Token');
+      await addToken(VTRO_ADDRESS,  'VTRO',  'VTRO Token');
 
       setTokenList(initialTokens);
       setLastUpdateTime(new Date());
@@ -683,7 +687,7 @@ function CreateAuctionPage() {
       if (tokenList[checksum]) {
         setCustomTokenError('Token already added');
         return;
-      }
+    }
       setLoadingPrices(true);
       const c = new ethers.Contract(checksum, ERC20_ABI, provider);
       let symbol, name, decimals;
@@ -730,12 +734,171 @@ function CreateAuctionPage() {
     return m.replace(/execution reverted:?/i, '').trim() || 'Transaction reverted';
   };
 
+  /* =========================
+     NFT metadata + rights (robust)
+     ========================= */
+  function mediaCandidatesFromMetadata(m) {
+    if (!m || typeof m !== 'object') return [];
+    return [m.image, m.image_url, m.imageUrl, m.animation_url, m.animationUrl].filter(isString);
+  }
+
+  const fetchNftMetadata = async () => {
+    if (!formData.nftContract || !formData.tokenId) { setStatus('Please enter contract address and token ID'); return; }
+    if (!wallet) { setStatus('Please connect your wallet first'); return; }
+    if (!provider) { setStatus('No provider available. Please reconnect your wallet.'); return; }
+
+    setLoading(true);
+    setStatus('Fetching NFT metadata...');
+    setMetadata(null);
+    setNftImage('');
+    setNftName('');
+    setCanTransfer(false);
+    setNftType(null);
+
+    try {
+      if (!ethers.isAddress(formData.nftContract)) throw new Error('Invalid contract address format');
+      const checksum = ethers.getAddress(formData.nftContract);
+      const tokenIdBN = normalizeTokenId(formData.tokenId);
+
+      // Detect interface
+      let is721 = false;
+      let is1155 = false;
+      try {
+        const erc165 = new ethers.Contract(checksum, ERC165_ABI, provider);
+        is721  = await erc165.supportsInterface('0x80ac58cd'); // ERC-721
+        is1155 = await erc165.supportsInterface('0xd9b67a26'); // ERC-1155
+      } catch {
+        // If contract is quirky, we'll probe methods
+      }
+
+      // --- Try ERC-721 path first (or when unknown but not 1155)
+      if (is721 || (!is1155)) {
+        try {
+          const erc721 = new ethers.Contract(checksum, ERC721_ABI, provider);
+          const owner = await erc721.ownerOf(tokenIdBN);
+
+          // Transfer rights: owner OR approved OR operator
+          let approved = ethers.ZeroAddress;
+          try { approved = await erc721.getApproved(tokenIdBN); } catch {}
+          let isOp = false;
+          try { isOp = await erc721.isApprovedForAll(owner, wallet); } catch {}
+
+          const ownerEq    = (owner?.toLowerCase?.() === wallet?.toLowerCase?.());
+          const approvedEq = (approved?.toLowerCase?.() === wallet?.toLowerCase?.());
+          const canXfer    = ownerEq || approvedEq || !!isOp;
+
+          setCanTransfer(!!canXfer);
+          setNftType('ERC721');
+          setBalance('1');
+
+          if (!canXfer) {
+            setStatus(`Warning: Owner is ${owner}, and your wallet has no transfer approval.`);
+            setLoading(false);
+            return;
+          }
+
+          // tokenURI + media
+          let tokenURI = '';
+          try { tokenURI = await erc721.tokenURI(tokenIdBN); } catch {}
+          if (tokenURI) {
+            const metaCands = metadataCandidatesFromUri(tokenURI, tokenIdBN.toString(), false);
+            try {
+              const { json } = await fetchJsonFromCandidates(metaCands);
+              setMetadata(json);
+              setNftName(json?.name || `NFT #${tokenIdBN.toString()}`);
+              try {
+                const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
+                const firstVideo = media.find(isVideoUrl);
+                if (firstVideo) setNftImage(firstVideo); else setNftImage(await findFirstWorkingImage(media));
+              } catch { setNftImage(''); }
+            } catch { /* tolerate missing metadata */ }
+          }
+
+          setStatus('');
+          return; // done
+        } catch {
+          // fallthrough to 1155
+        }
+      }
+
+      // --- ERC-1155 path
+      if (is1155 || !is721) {
+        try {
+          const erc1155 = new ethers.Contract(checksum, ERC1155_ABI, provider);
+          const bal = await erc1155.balanceOf(wallet, tokenIdBN);
+          const ownerBalance = bal.toString();
+          setBalance(ownerBalance);
+
+          const hasSome = BigInt(ownerBalance) > 0n;
+          setCanTransfer(hasSome);
+          setNftType('ERC1155');
+
+          if (!hasSome) { setStatus('Warning: You do not own any of these tokens'); setLoading(false); return; }
+
+          let uri = '';
+          try { uri = await erc1155.uri(tokenIdBN); } catch {}
+          if (uri) {
+            const metaCands = metadataCandidatesFromUri(uri, tokenIdBN.toString(), true);
+            try {
+              const { json } = await fetchJsonFromCandidates(metaCands);
+              setMetadata(json);
+              setNftName(json?.name || `NFT #${tokenIdBN.toString()}`);
+              try {
+                const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
+                const firstVideo = media.find(isVideoUrl);
+                if (firstVideo) setNftImage(firstVideo); else setNftImage(await findFirstWorkingImage(media));
+              } catch { setNftImage(''); }
+            } catch { /* metadata optional */ }
+          }
+
+          setFormData((prev) => ({ ...prev, quantity: ownerBalance }));
+          setStatus('');
+          return;
+        } catch {
+          // Neither path worked
+        }
+      }
+
+      setStatus('Could not fetch NFT metadata or verify transfer rights. Check contract address, token ID, and network.');
+    } catch (error) {
+      setStatus('Error fetching NFT data: ' + (error.message || error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (formData.nftContract && formData.tokenId && wallet && provider) {
+      fetchNftMetadata();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.nftContract, formData.tokenId, wallet, provider]);
+
+  /* =========================
+     Rarity helpers
+     ========================= */
+  const getTraitRarity = (trait) => {
+    const map = {
+      common:    { label: 'Common',    color: '#78909c', percentage: '25.4%' },
+      uncommon:  { label: 'Uncommon',  color: '#26a69a', percentage: '15.2%' },
+      rare:      { label: 'Rare',      color: '#5c6bc0', percentage: '8.7%' },
+      epic:      { label: 'Epic',      color: '#ab47bc', percentage: '3.2%' },
+      legendary: { label: 'Legendary', color: '#ffb300', percentage: '0.9%' },
+    };
+    const keys = Object.keys(map);
+    const i = Math.floor((((trait.trait_type?.length) || 0) + (String(trait.value || '').length)) % 5);
+    return map[keys[i]];
+  };
+
+  /* =========================
+     Submit (createAuction)
+     ========================= */
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (!wallet) { await connect(); return; }
     if (!isCorrectNetwork) { setStatus('Error: Wrong network. Please switch to Vitruveo.'); return; }
-    if (!ownershipVerified) { setStatus('Error: Ownership not verified. You must own this NFT to create an auction.'); return; }
+    if (!canTransfer) { setStatus('Error: You do not have transfer rights for this NFT.'); return; }
 
     try {
       if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
@@ -744,38 +907,30 @@ function CreateAuctionPage() {
       setStatus('Preparing auction...');
 
       // Start price must be > 0
-      if (!formData.startPrice || parseFloat(formData.startPrice) <= 0) { setStatus('Error: Starting price must be greater than 0'); return; }
+      if (!formData.startPrice || parseFloat(formData.startPrice) <= 0) {
+        setStatus('Error: Starting price must be greater than 0');
+        return;
+      }
 
       const token = tokenList[formData.paymentToken];
       if (!token) { setStatus('Error: Please select a valid payment token'); return; }
 
-      const dec = token.decimals ?? 18;
+      // Reserve is OPTIONAL — blank or <=0 -> 0n
+      const reservePriceInWei = (!formData.reservePrice || parseFloat(formData.reservePrice) <= 0)
+        ? 0n
+        : ethers.parseUnits(formData.reservePrice, token.decimals || 18);
 
-      // Reserve is OPTIONAL: blank or 0 => no reserve
-      const reserveRaw = (formData.reservePrice ?? '').trim();
-      const reserveIsNoReserve = formData.noReserve || reserveRaw === '' || Number(reserveRaw) === 0;
-      const reservePriceInWei = reserveIsNoReserve ? 0n : ethers.parseUnits(reserveRaw, dec);
-
-      const startPriceInWei = ethers.parseUnits(String(formData.startPrice), dec);
+      const startPriceInWei = ethers.parseUnits(formData.startPrice, token.decimals || 18);
 
       const startTimeSec = Math.floor(Date.now() / 1000);
       const endTimeSec = startTimeSec + (parseInt(formData.duration) * 3600);
 
-      // Quick ER1155 check
-      let isERC1155 = false;
-      try {
-        const testContract = new ethers.Contract(
-          formData.nftContract,
-          ['function balanceOf(address, uint256) view returns (uint256)'],
-          provider
-        );
-        await testContract.balanceOf(wallet, formData.tokenId);
-        isERC1155 = true;
-      } catch { isERC1155 = false; }
+      // Use nftType from metadata step
+      const isERC1155 = (nftType === 'ERC1155');
 
-      // Approvals
+      // Ensure approvals
       if (isERC1155) {
-        const nftContract1155 = new ethers.Contract(formData.nftContract, ERC1155_APPROVAL_ABI, signer);
+        const nftContract1155 = new ethers.Contract(formData.nftContract, ERC1155_ABI, signer);
         const isApproved = await nftContract1155.isApprovedForAll(wallet, marketplaceAddress);
         if (!isApproved) {
           setStatus('Requesting approval to auction your NFTs...');
@@ -785,18 +940,15 @@ function CreateAuctionPage() {
           setStatus('Approval confirmed! Creating auction...');
         }
       } else {
-        const nftContract721 = new ethers.Contract(formData.nftContract, ERC721_APPROVAL_ABI, signer);
+        const nftContract721 = new ethers.Contract(formData.nftContract, ERC721_ABI, signer);
         const isApprovedForAll = await nftContract721.isApprovedForAll(wallet, marketplaceAddress);
         if (!isApprovedForAll) {
-          const approvedAddress = await nftContract721.getApproved(formData.tokenId);
-          const isTokenApproved = String(approvedAddress || '').toLowerCase() === String(marketplaceAddress || '').toLowerCase();
-          if (!isTokenApproved) {
-            setStatus('Requesting approval to auction your NFT...');
-            const approvalTx = await nftContract721.setApprovalForAll(marketplaceAddress, true);
-            setStatus('Approval transaction submitted. Please wait for confirmation...');
-            await approvalTx.wait();
-            setStatus('Approval confirmed! Creating auction...');
-          }
+          // If not operator-approved, still setApprovalForAll — simpler UX
+          setStatus('Requesting approval to auction your NFT...');
+          const approvalTx = await nftContract721.setApprovalForAll(marketplaceAddress, true);
+          setStatus('Approval transaction submitted. Please wait for confirmation...');
+          await approvalTx.wait();
+          setStatus('Approval confirmed! Creating auction...');
         }
       }
 
@@ -806,11 +958,11 @@ function CreateAuctionPage() {
 
       const args = [
         ethers.getAddress(formData.nftContract),
-        BigInt(formData.tokenId),
+        normalizeTokenId(formData.tokenId),
         BigInt(formData.quantity || '1'),
         Boolean(isERC1155),
         ethers.getAddress(formData.paymentToken),
-        reservePriceInWei, // <-- optional
+        reservePriceInWei,
         startPriceInWei,
         BigInt(startTimeSec),
         BigInt(endTimeSec),
@@ -833,7 +985,7 @@ function CreateAuctionPage() {
         } else if (fee?.gasPrice) {
           overrides.gasPrice = fee.gasPrice;
         }
-      } catch {}
+      } catch { /* ignore */ }
 
       const tx = await contract.createAuction(...args, overrides);
       setStatus('Transaction submitted. Waiting for confirmation...');
@@ -890,117 +1042,6 @@ function CreateAuctionPage() {
       const reason = decodeRevert(error);
       setStatus(`Error: ${reason}`);
     }
-  };
-
-  /* =========================
-     NFT metadata (robust)
-     ========================= */
-  function mediaCandidatesFromMetadata(m) {
-    if (!m || typeof m !== 'object') return [];
-    return [m.image, m.image_url, m.imageUrl, m.animation_url, m.animationUrl].filter(isString);
-  }
-
-  const fetchNftMetadata = async () => {
-    if (!formData.nftContract || !formData.tokenId) { setStatus('Please enter contract address and token ID'); return; }
-    if (!wallet) { setStatus('Please connect your wallet first'); return; }
-    if (!provider) { setStatus('No provider available. Please reconnect your wallet.'); return; }
-
-    setLoading(true);
-    setStatus('Fetching NFT metadata...');
-    setMetadata(null);
-    setNftImage('');
-    setNftName('');
-    setOwnershipVerified(false);
-
-    try {
-      if (!ethers.isAddress(formData.nftContract)) throw new Error('Invalid contract address format');
-      const checksum = ethers.getAddress(formData.nftContract);
-
-      // Try ERC721
-      try {
-        const erc721 = new ethers.Contract(checksum, ERC721_ABI, provider);
-        const owner = await erc721.ownerOf(formData.tokenId);
-        const isOwner = owner?.toLowerCase?.() === wallet?.toLowerCase?.();
-        setOwnershipVerified(!!isOwner);
-        if (!isOwner) { setStatus('Warning: You are not the owner of this NFT'); setLoading(false); return; }
-
-        const tokenURI = await erc721.tokenURI(formData.tokenId);
-        const metaCands = metadataCandidatesFromUri(tokenURI, formData.tokenId, false);
-        const { json } = await fetchJsonFromCandidates(metaCands);
-
-        setMetadata(json);
-        setNftName(json?.name || `NFT #${formData.tokenId}`);
-
-        try {
-          const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
-          const firstVideo = media.find(isVideoUrl);
-          if (firstVideo) setNftImage(firstVideo); else setNftImage(await findFirstWorkingImage(media));
-        } catch { setNftImage(''); }
-
-        setNftType('ERC721');
-        setBalance('1');
-        setStatus('');
-        return;
-      } catch {
-        // fallthrough to ERC1155
-      }
-
-      // ERC1155
-      try {
-        const erc1155 = new ethers.Contract(checksum, ERC1155_ABI, provider);
-        const bal = await erc1155.balanceOf(wallet, formData.tokenId);
-        const ownerBalance = bal.toString();
-        setBalance(ownerBalance);
-        if (ownerBalance === '0') { setStatus('Warning: You do not own any of these tokens'); setLoading(false); return; }
-        setOwnershipVerified(true);
-
-        const uri = await erc1155.uri(formData.tokenId);
-        const metaCands = metadataCandidatesFromUri(uri, formData.tokenId, true);
-        const { json } = await fetchJsonFromCandidates(metaCands);
-
-        setMetadata(json);
-        setNftName(json?.name || `NFT #${formData.tokenId}`);
-
-        try {
-          const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
-          const firstVideo = media.find(isVideoUrl);
-          if (firstVideo) setNftImage(firstVideo); else setNftImage(await findFirstWorkingImage(media));
-        } catch { setNftImage(''); }
-
-        setNftType('ERC1155');
-        setFormData((prev) => ({ ...prev, quantity: ownerBalance }));
-        setStatus('');
-      } catch {
-        setStatus('Could not fetch NFT metadata. Make sure the contract and token ID are correct.');
-      }
-    } catch (error) {
-      setStatus('Error fetching NFT metadata: ' + (error.message || error));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (formData.nftContract && formData.tokenId && wallet && provider) {
-      fetchNftMetadata();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.nftContract, formData.tokenId, wallet, provider]);
-
-  /* =========================
-     Rarity helpers
-     ========================= */
-  const getTraitRarity = (trait) => {
-    const map = {
-      common: { label: 'Common', color: '#78909c', percentage: '25.4%' },
-      uncommon: { label: 'Uncommon', color: '#26a69a', percentage: '15.2%' },
-      rare: { label: 'Rare', color: '#5c6bc0', percentage: '8.7%' },
-      epic: { label: 'Epic', color: '#ab47bc', percentage: '3.2%' },
-      legendary: { label: 'Legendary', color: '#ffb300', percentage: '0.9%' },
-    };
-    const keys = Object.keys(map);
-    const i = Math.floor((((trait.trait_type?.length) || 0) + (String(trait.value || '').length)) % 5);
-    return map[keys[i]];
   };
 
   if (!wallet) {
@@ -1216,6 +1257,7 @@ function CreateAuctionPage() {
                           value={formData.startPrice}
                           onChange={handleChange}
                           placeholder="0.00"
+                          required
                         />
                         <div className="price-conversion">
                           <div className="price-eth">
@@ -1229,7 +1271,7 @@ function CreateAuctionPage() {
                     </div>
 
                     <div className="form-group">
-                      <label htmlFor="reservePrice">Reserve Price (optional, 0 = no reserve)</label>
+                      <label htmlFor="reservePrice">Reserve Price (optional)</label>
                       <div className="price-input-container">
                         <input
                           type="text"
@@ -1238,30 +1280,17 @@ function CreateAuctionPage() {
                           className="input price-input"
                           value={formData.reservePrice}
                           onChange={handleChange}
-                          placeholder="0"
-                          disabled={!!formData.noReserve}
+                          placeholder="0 (no reserve)"
                         />
                         <div className="price-conversion">
                           <div className="price-eth">
-                            {((formData.reservePrice ?? '').trim() === '' || Number(formData.reservePrice) === 0 || formData.noReserve)
-                              ? 'No reserve'
-                              : `${formData.reservePrice} ${tokenList[formData.paymentToken]?.symbol || 'VTRU'}`}
+                            {formData.reservePrice || '0'} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
                           </div>
                           <div className="price-usd">
-                            {((formData.reservePrice ?? '').trim() === '' || Number(formData.reservePrice) === 0 || formData.noReserve)
-                              ? '—'
-                              : (reservePriceUSD === 'Unknown' ? 'Unknown USD value' : `≈ $${reservePriceUSD} USD`)}
+                            ≈ {reservePriceUSD === 'Unknown' ? 'Unknown USD value' : `$${reservePriceUSD} USD`}
                           </div>
                         </div>
                       </div>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                        <input
-                          type="checkbox"
-                          checked={!!formData.noReserve}
-                          onChange={(e) => toggleNoReserve(e.target.checked)}
-                        />
-                        No reserve
-                      </label>
                     </div>
                   </div>
 
@@ -1507,15 +1536,15 @@ function CreateAuctionPage() {
                   <button type="button" className="secondary-button" onClick={connect}>
                     Connect Wallet First
                   </button>
-                ) : !ownershipVerified && metadata ? (
+                ) : !canTransfer && metadata ? (
                   <button type="button" className="warning-button" disabled>
-                    You don't own this NFT
+                    You can’t transfer this NFT
                   </button>
                 ) : (
                   <button
                     type="submit"
                     className="primary-button"
-                    disabled={!wallet || !metadata || (typeof status === 'string' && status.includes('Creating')) || !ownershipVerified}
+                    disabled={!wallet || !metadata || (typeof status === 'string' && status.includes('Creating')) || !canTransfer}
                   >
                     {typeof status === 'string' && status.includes('Creating') ? 'Processing...' : 'Create Auction'}
                   </button>
