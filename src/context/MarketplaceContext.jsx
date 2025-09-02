@@ -241,7 +241,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         const initializeMarketplace = async () => {
             if (marketplaceAddress && provider) {
                 try {
-                    const contract = new ethers.Contract(marketplaceAddress, abi, provider);
+                    const resolvedAbi = await resolveMarketplaceAbi(abi);
+                    const contract = new ethers.Contract(marketplaceAddress, resolvedAbi, provider);
+
+                    if (!hasAbiFn(resolvedAbi, 'buy')) {
+                        throw new Error('Resolved ABI still missing buy()');
+                    }
+
                     setMarketplace(contract);
                     setIsInitialized(true);
                     
@@ -255,7 +261,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     }
                 } catch (error) {
                     criticalError("Error initializing marketplace contract:", error);
-                    setStatus("Failed to initialize marketplace contract");
+                    setStatus("Failed to initialize marketplace contract (ABI mismatch)");
                 }
             }
         };
@@ -812,7 +818,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             let volume1hUSDC = 0, volume6hUSDC = 0, volume12hUSDC = 0;
             let volume24hUSDC = 0, volume7dUSDC = 0, volume30dUSDC = 0;
             let sales1h = 0, sales6h = 0, sales12h = 0;
-            let sales24h = 0, sales7d = 0, sales30d = 0;
+            let sales24h = 0, sales7d = 0, sales30h = 0;
             
             // Advanced analytics tracking
             let priceSum = 0, priceCount = 0;
@@ -1408,12 +1414,20 @@ const ERC1155_APPROVAL_ABI = [
 
     // Replace the current buyListing function with this version
     const buyListing = async (id, pricePerUnit, paymentToken, quantity = 1) => {
-    if (!signer) {
-        setStatus('Error: Wallet not connected. Please connect your wallet first');
-        return;
-    }
-    if (!marketplace) {
-        setStatus('Error: Marketplace contract not initialized');
+    if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
+    if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
+
+    // ABI sanity check to avoid "reading 'buy'" undefined errors
+    if (typeof marketplace.buy !== 'function') {
+        setStatus('Marketplace ABI missing buy(). Reinitializing...');
+        try {
+            // Recreate with a correct ABI
+            const resolvedAbi = await resolveMarketplaceAbi(abi);
+            const fixed = new ethers.Contract(marketplaceAddress, resolvedAbi, signer);
+            setMarketplace(fixed);
+        } catch (reErr) {
+            criticalError('Reinit failed:', reErr);
+        }
         return;
     }
 
@@ -1666,6 +1680,31 @@ const ERC1155_APPROVAL_ABI = [
             fetchListings();
         }
     }, [marketplace]);
+
+    // Add helper near the top (below imports)
+function hasAbiFn(abi, name) {
+    try { return Array.isArray(abi) && abi.some(e => e?.type === 'function' && e?.name === name); }
+    catch { return false; }
+}
+
+// Load a working ABI that contains `buy` if the incoming one does not
+async function resolveMarketplaceAbi(incomingAbi) {
+    if (hasAbiFn(incomingAbi, 'buy')) return incomingAbi;
+
+    try {
+        const A = await import('../abi/VTRUNFTMarketplace.json');
+        const abiA = A.default?.abi || A.abi;
+        if (hasAbiFn(abiA, 'buy')) return abiA;
+    } catch {}
+
+    try {
+        const B = await import('../abi/Marketplace.json');
+        const abiB = B.default?.abi || B.abi;
+        if (hasAbiFn(abiB, 'buy')) return abiB;
+    } catch {}
+
+    throw new Error('No ABI with buy() found. Ensure VTRUNFTMarketplace ABI is provided.');
+}
 
     return (
         <MarketplaceContext.Provider value={{
