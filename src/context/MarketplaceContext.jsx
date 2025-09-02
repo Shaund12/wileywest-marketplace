@@ -1412,15 +1412,14 @@ const ERC1155_APPROVAL_ABI = [
     'function setApprovalForAll(address operator, bool approved)'
 ];
 
-    // Replace the current buyListing function with this version
-    const buyListing = async (id, pricePerUnit, paymentToken, quantity = 1) => {
+    // Replace the current buyListing with this version
+const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) => {
     if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
     if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
 
     // Ensure ABI actually contains buy()
     const ensureBuyAvailable = async (contract) => {
         try {
-            // Throws if not found
             contract.interface.getFunction('buy');
             return contract;
         } catch {
@@ -1428,7 +1427,6 @@ const ERC1155_APPROVAL_ABI = [
             const resolvedAbi = await resolveMarketplaceAbi(abi);
             const fixed = new ethers.Contract(marketplaceAddress, resolvedAbi, signer);
             setMarketplace(fixed);
-            // Verify again
             fixed.interface.getFunction('buy');
             return fixed;
         }
@@ -1438,20 +1436,26 @@ const ERC1155_APPROVAL_ABI = [
         // Ensure connected instance and presence of method
         let contract = marketplace.connect(signer);
         contract = await ensureBuyAvailable(contract);
-
-        // Safely reference the method
         const buyMethod = contract.getFunction('buy');
 
-        // Normalize inputs
-        const toLower = (a) => (typeof a === 'string' ? a.toLowerCase() : a);
-        const isZero = (a) => !a || toLower(a) === toLower(ethers.ZeroAddress);
-        const isNative = isZero(paymentToken);
+        // 1) Load authoritative on-chain listing
+        const l = await contract.listings(id);
+        if (!l || !l.active) { setStatus('Error: Listing is inactive'); return; }
 
-        const unit = BigInt(String(pricePerUnit));
+        // 2) Validate quantity against listing type
+        const is1155 = !!l.isERC1155;
+        const listedQty = BigInt(l.quantity?.toString?.() ?? String(l.quantity ?? '0'));
         const qty = BigInt(String(quantity || 1));
-        if (qty <= 0n) throw new Error('Invalid quantity');
-        const total = unit * qty;
+        if (!is1155 && qty !== 1n) { setStatus('Error: ERC-721 quantity must be 1'); return; }
+        if (is1155 && (qty <= 0n || qty > listedQty)) { setStatus('Error: Requested quantity exceeds available'); return; }
 
+        // 3) Compute payment details strictly from chain
+        const unit = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
+        const total = unit * qty;
+        const paymentToken = l.paymentToken;
+        const isNative = !paymentToken || String(paymentToken).toLowerCase() === ethers.ZeroAddress.toLowerCase();
+
+        // 4) ERC-20 balance/allowance (if needed)
         if (!isNative) {
             setStatus('Checking token balance and approval...');
             const token = new ethers.Contract(paymentToken, [
@@ -1488,15 +1492,15 @@ const ERC1155_APPROVAL_ABI = [
             }
         }
 
-        // Preflight estimate using method wrapper
+        // 5) Preflight estimate using correct msg.value for native
         setStatus('Estimating gas...');
         try {
             const overrides = isNative ? { value: total } : {};
             await buyMethod.estimateGas(id, Number(qty), overrides);
         } catch (estErr) {
             const msg = (estErr?.reason || estErr?.message || '').toLowerCase();
-            if (msg.includes('insufficient funds')) {
-                setStatus('Error: Insufficient native funds for this purchase');
+            if (msg.includes('wrong msg.value') || msg.includes('insufficient funds')) {
+                setStatus('Error: Insufficient native funds or wrong msg.value');
             } else if (msg.includes('allowance') || msg.includes('transfer amount exceeds')) {
                 setStatus('Error: Token allowance/transfer failed. Try approving again.');
             } else {
@@ -1505,7 +1509,7 @@ const ERC1155_APPROVAL_ABI = [
             throw estErr;
         }
 
-        // Send tx using method wrapper
+        // 6) Send transaction with correct overrides
         setStatus('Buying...');
         const tx = await buyMethod(id, Number(qty), isNative ? { value: total } : {});
         setStatus('Transaction submitted. Waiting for confirmation...');
