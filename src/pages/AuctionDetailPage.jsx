@@ -4,8 +4,7 @@ import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
-import { formatTokenAmount, getTokenInfo } from '../utils/tokenRegistry';
-import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import { fetchTokenPriceInUSDC, getTokenSymbol, formatTokenAmount, getTokenDecimals } from '../utils/tokenUtils';
 import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
@@ -167,7 +166,6 @@ function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 
         }
 
         const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
-        // Prefer video if the URL clearly indicates one
         const videoCandidate = candidates.find(isVideoUrl);
         if (videoCandidate) {
             smartUrlCache.set(key, videoCandidate);
@@ -250,10 +248,10 @@ function AuctionDetailPage() {
 
     useEffect(() => {
         loadAuction();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [auctionId, provider, marketplaceAddress]);
 
     useEffect(() => {
-        // Update countdown timer
         if (auction && auction.endTime) {
             const timer = setInterval(() => {
                 const now = Math.floor(Date.now() / 1000);
@@ -266,9 +264,7 @@ function AuctionDetailPage() {
     }, [auction]);
 
     useEffect(() => {
-        // Fetch current token price
         if (auction && provider && auction.paymentToken) {
-            // Validate that auction.paymentToken is not undefined
             const paymentToken = auction.paymentToken;
             if (paymentToken && paymentToken !== 'undefined' && paymentToken !== 'null') {
                 fetchTokenPriceInUSDC(paymentToken, provider)
@@ -287,10 +283,10 @@ function AuctionDetailPage() {
     const loadAuction = async () => {
         try {
             setLoading(true);
-            setAuction(null); // Clear existing auction
-            
+            setAuction(null);
+
             debugLog(`🔍 Loading auction ${auctionId}...`);
-            
+
             if (!auctionId || auctionId === 'undefined') {
                 debugWarn('❌ Invalid auction ID provided');
                 return;
@@ -308,37 +304,32 @@ function AuctionDetailPage() {
 
             debugLog(`📋 Marketplace address: ${marketplaceAddress}`);
 
-            // Load auction from database/cache first - try multiple ID formats
             const cachedAuctions = await getCachedAuctions(null, marketplaceAddress);
             debugLog(`📦 Found ${cachedAuctions.length} cached auctions`);
-            
-            // Try multiple ID matching strategies
+
             let auctionData = cachedAuctions.find(a => {
                 const candidateIds = [
                     a.id?.toString(),
                     a.auctionId?.toString(),
                     a.auction_id?.toString()
                 ].filter(id => id && id !== 'undefined' && id !== 'null');
-                
+
                 return candidateIds.some(id => id === auctionId.toString());
             });
-            
+
             if (auctionData) {
                 debugLog(`✅ Found auction in cache: ${auctionData.id || auctionData.auctionId}`);
                 setAuction(auctionData);
-                
-                // Load current bid data
+
                 const bids = await getAuctionBids(auctionId);
                 setBids(bids);
-                
-                // Load NFT metadata if not already present
+
                 if (!auctionData.metadata && auctionData.nftContract && auctionData.tokenId) {
                     loadNFTMetadata(auctionData.nftContract, auctionData.tokenId);
                 }
             } else {
                 debugLog('📡 Auction not found in cache, trying blockchain...');
-                
-                // Try loading from contract directly
+
                 try {
                     const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
                     const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
@@ -346,12 +337,12 @@ function AuctionDetailPage() {
                         throw new Error('Invalid ABI structure - ABI must be an array');
                     }
                     const marketplace = new ethers.Contract(marketplaceAddress, abi, provider);
-                    
+
                     debugLog(`🔗 Calling marketplace.auctions(${auctionId})...`);
                     const auctionInfo = await marketplace.auctions(auctionId);
-                    
+
                     debugLog('📋 Raw auction info from contract:', auctionInfo);
-                    
+
                     if (auctionInfo && auctionInfo.seller && auctionInfo.seller !== ethers.ZeroAddress) {
                         const processedAuction = {
                             id: auctionId,
@@ -371,7 +362,7 @@ function AuctionDetailPage() {
                             settled: auctionInfo.settled,
                             canceled: auctionInfo.canceled || false
                         };
-                        
+
                         debugLog('✅ Successfully loaded auction from contract:', processedAuction);
                         setAuction(processedAuction);
                         loadNFTMetadata(processedAuction.nftContract, processedAuction.tokenId);
@@ -388,7 +379,7 @@ function AuctionDetailPage() {
                     criticalError('Contract loading failed:', contractError);
                 }
             }
-            
+
         } catch (error) {
             criticalError('❌ Error loading auction:', error);
         } finally {
@@ -404,15 +395,13 @@ function AuctionDetailPage() {
 
         try {
             debugLog(`🎨 Loading enhanced metadata for ${nftContract}:${tokenId}`);
-            
-            // Use the robust metadata loader with existing auction metadata as a starting point
+
             const existingMetadata = auction?.metadata || nftMetadata;
             const metadata = await loadMetadata(nftContract, tokenId, provider, existingMetadata);
-            
+
             debugLog(`✅ Enhanced metadata loaded successfully:`, metadata);
-            
+
             setNftMetadata(metadata);
-            // Also update the auction object with metadata for SmartMedia component
             setAuction(prev => ({
                 ...prev,
                 metadata: metadata
@@ -420,8 +409,7 @@ function AuctionDetailPage() {
 
         } catch (error) {
             criticalError(`Error loading enhanced metadata for ${nftContract}:${tokenId}:`, error);
-            
-            // Set fallback metadata
+
             const fallbackMetadata = {
                 name: `Token #${tokenId}`,
                 description: `NFT Token #${tokenId}`,
@@ -436,7 +424,7 @@ function AuctionDetailPage() {
                 error: error.message,
                 timestamp: Date.now()
             };
-            
+
             setNftMetadata(fallbackMetadata);
             setAuction(prev => ({
                 ...prev,
@@ -458,37 +446,36 @@ function AuctionDetailPage() {
 
         try {
             setBidding(true);
-            
+
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
             const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
             if (!abi || !Array.isArray(abi)) {
                 throw new Error('Invalid ABI structure - ABI must be an array');
             }
             const marketplace = new ethers.Contract(marketplaceAddress, abi, signer);
-            
-            // Convert bid amount to wei
-            const bidAmountWei = ethers.parseEther(bidAmount.toString());
-            
-            // Validate auction payment token - if it's native token (VTRU), send value
-            const isNativeToken = !auction.paymentToken || 
-                                auction.paymentToken === ethers.ZeroAddress || 
-                                auction.paymentToken === '0x0000000000000000000000000000000000000000';
-            
-            debugLog(`🔨 Placing bid for auction ${auctionId} with amount ${bidAmount} VTRU`);
+
+            // Parse bid using correct decimals
+            const isNativeToken =
+                !auction.paymentToken ||
+                auction.paymentToken === ethers.ZeroAddress ||
+                auction.paymentToken === '0x0000000000000000000000000000000000000000';
+
+            const decimals = isNativeToken ? 18 : getTokenDecimals(auction.paymentToken);
+            const bidAmountWei = ethers.parseUnits(bidAmount.toString(), decimals);
+
+            debugLog(`🔨 Placing bid for auction ${auctionId} with amount ${bidAmount} ${isNativeToken ? 'VTRU' : getTokenSymbol(auction.paymentToken)}`);
             debugLog(`💰 Payment token: ${auction.paymentToken}, isNative: ${isNativeToken}`);
-            
-            // Place bid with correct parameters - for native tokens, amount should be 0 and value contains the bid
-            const tx = isNativeToken 
+
+            const tx = isNativeToken
                 ? await marketplace.bid(auctionId, 0, { value: bidAmountWei })
                 : await marketplace.bid(auctionId, bidAmountWei);
-            
+
             debugLog(`✅ Bid transaction submitted: ${tx.hash}`);
             await tx.wait();
-            
-            // Refresh auction data
+
             loadAuction();
             setBidAmount('');
-            
+
         } catch (error) {
             criticalError('Error placing bid:', error);
             alert(`Error placing bid: ${error.message || 'Transaction failed'}`);
@@ -504,21 +491,19 @@ function AuctionDetailPage() {
 
         try {
             setSettling(true);
-            
+
             const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
             const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
             if (!abi || !Array.isArray(abi)) {
                 throw new Error('Invalid ABI structure - ABI must be an array');
             }
             const marketplace = new ethers.Contract(marketplaceAddress, abi, signer);
-            
-            // Settle auction
+
             const tx = await marketplace.settleAuction(auctionId);
             await tx.wait();
-            
-            // Refresh auction data
+
             loadAuction();
-            
+
         } catch (error) {
             criticalError('Error settling auction:', error);
             alert(`Error settling auction: ${error.message || 'Transaction failed'}`);
@@ -529,7 +514,7 @@ function AuctionDetailPage() {
 
     const formatTimeLeft = () => {
         if (timeLeft <= 0) return 'Auction ended';
-        
+
         const days = Math.floor(timeLeft / 86400);
         const hours = Math.floor((timeLeft % 86400) / 3600);
         const minutes = Math.floor((timeLeft % 3600) / 60);
@@ -543,11 +528,11 @@ function AuctionDetailPage() {
 
     const getMinNextBid = () => {
         if (!auction) return '0';
-        
-        const currentBid = auction.highestBid === '0' ? 
-            (auction.startPrice || auction.startingBid || '0') : 
-            auction.highestBid;
-        
+
+        const currentBid = auction.highestBid === '0'
+            ? (auction.startPrice || auction.startingBid || '0')
+            : auction.highestBid;
+
         const incrementBps = auction.minBidIncrementBps || 500; // 5% default
         const increment = (BigInt(currentBid) * BigInt(incrementBps)) / BigInt(10000);
         return (BigInt(currentBid) + increment).toString();
@@ -600,16 +585,19 @@ function AuctionDetailPage() {
         );
     }
 
-    const tokenInfo = getTokenInfo(auction.paymentToken);
+    const tokenSymbol = getTokenSymbol(auction.paymentToken);
     const isAuctionEnded = timeLeft <= 0;
     const hasReserveMet = BigInt(auction.highestBid) >= BigInt(auction.reservePrice);
     const minNextBid = getMinNextBid();
 
-    const currentBidValue = auction.highestBid === '0' ? 
-        (auction.startPrice || auction.startingBid || '0') : 
-        auction.highestBid;
-    const currentBidInToken = ethers.formatEther(currentBidValue);
-    const currentBidInUSD = currentPrice ? (parseFloat(currentBidInToken) * currentPrice).toFixed(2) : 'Unknown';
+    const currentBidValue = auction.highestBid === '0'
+        ? (auction.startPrice || auction.startingBid || '0')
+        : auction.highestBid;
+
+    const currentBidInToken = formatTokenAmount(currentBidValue, auction.paymentToken);
+    const decs = getTokenDecimals(auction.paymentToken);
+    const currentBidUnits = Number(ethers.formatUnits(currentBidValue, decs));
+    const currentBidInUSD = currentPrice ? (currentBidUnits * currentPrice).toFixed(2) : 'Unknown';
 
     return (
         <div className="sell-container">
@@ -777,18 +765,20 @@ function AuctionDetailPage() {
                                             <div className="activity-icon">🔨</div>
                                             <div className="activity-details">
                                                 <div className="activity-title">Auction Started</div>
-                                                <div className="activity-meta">Starting price: {ethers.formatEther(auction.startPrice || auction.startingBid || '0')} VTRU</div>
+                                                <div className="activity-meta">
+                                                    Starting price: {formatTokenAmount(auction.startPrice || auction.startingBid || '0', auction.paymentToken)} {tokenSymbol}
+                                                </div>
                                                 <div className="activity-time">2 hours ago</div>
                                             </div>
                                         </div>
-                                        
+
                                         {auction.highestBid !== '0' && (
                                             <div className="activity-item">
                                                 <div className="activity-icon">💰</div>
                                                 <div className="activity-details">
                                                     <div className="activity-title">Bid Placed</div>
                                                     <div className="activity-meta">
-                                                        {ethers.formatEther(auction.highestBid)} VTRU by {auction.highestBidder.slice(0, 6)}...{auction.highestBidder.slice(-4)}
+                                                        {formatTokenAmount(auction.highestBid, auction.paymentToken)} {tokenSymbol} by {auction.highestBidder.slice(0, 6)}...{auction.highestBidder.slice(-4)}
                                                     </div>
                                                     <div className="activity-time">1 hour ago</div>
                                                 </div>
@@ -815,7 +805,7 @@ function AuctionDetailPage() {
                             <div className="stat-item">
                                 <label>Current Bid</label>
                                 <div className="current-bid">
-                                    {currentBidInToken} {tokenInfo?.symbol || 'VTRU'}
+                                    {currentBidInToken} {tokenSymbol}
                                     {currentBidInUSD !== 'Unknown' && (
                                         <div className="bid-usd">≈ ${currentBidInUSD} USD</div>
                                     )}
@@ -825,7 +815,7 @@ function AuctionDetailPage() {
                             <div className="stat-item">
                                 <label>Reserve Price</label>
                                 <div className="reserve-price">
-                                    {ethers.formatEther(auction.reservePrice)} {tokenInfo?.symbol || 'VTRU'}
+                                    {formatTokenAmount(auction.reservePrice, auction.paymentToken)} {tokenSymbol}
                                     {hasReserveMet ? ' ✅' : ' ❌'}
                                 </div>
                             </div>
@@ -844,7 +834,7 @@ function AuctionDetailPage() {
                             <div className="bid-section">
                                 <div className="form-group">
                                     <label htmlFor="bidAmount">
-                                        Your Bid (min: {ethers.formatEther(minNextBid.toString())} {tokenInfo?.symbol || 'VTRU'})
+                                        Your Bid (min: {formatTokenAmount(minNextBid.toString(), auction.paymentToken)} {tokenSymbol})
                                     </label>
                                     <input
                                         type="text"
@@ -855,12 +845,12 @@ function AuctionDetailPage() {
                                         placeholder="Enter bid amount"
                                     />
                                 </div>
-                                <button 
+                                <button
                                     onClick={handleBid}
                                     className="primary-button"
-                                    disabled={!bidAmount}
+                                    disabled={!bidAmount || bidding}
                                 >
-                                    {wallet ? 'Place Bid' : 'Connect Wallet to Bid'}
+                                    {wallet ? (bidding ? 'Placing...' : 'Place Bid') : 'Connect Wallet to Bid'}
                                 </button>
                             </div>
                         )}
@@ -874,11 +864,12 @@ function AuctionDetailPage() {
                                 ) : (
                                     <p>Reserve price was not met. NFT will be returned to seller.</p>
                                 )}
-                                <button 
+                                <button
                                     onClick={handleSettle}
                                     className="primary-button"
+                                    disabled={settling}
                                 >
-                                    Settle Auction
+                                    {settling ? 'Settling...' : 'Settle Auction'}
                                 </button>
                             </div>
                         )}
@@ -912,7 +903,7 @@ function AuctionDetailPage() {
                             </div>
                             <div className="detail-row">
                                 <span className="detail-label">Payment Token</span>
-                                <span className="detail-value">{tokenInfo?.symbol || 'VTRU'}</span>
+                                <span className="detail-value">{tokenSymbol}</span>
                             </div>
                         </div>
                     </div>
