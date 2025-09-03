@@ -1532,6 +1532,18 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     console.log("[BUY DEBUG] Listing data:", l);
     if (!l || !l.active) { setStatus('Error: Listing is inactive'); return; }
 
+    // Fetch platform fee information
+    console.log("[BUY DEBUG] Fetching platform fee...");
+    let platformFeeBps = 0n;
+    try {
+      const feeResult = await marketplace.platformFeeBps();
+      platformFeeBps = BigInt(feeResult.toString());
+      console.log("[BUY DEBUG] Platform fee (basis points):", platformFeeBps.toString());
+    } catch (feeError) {
+      console.warn("[BUY DEBUG] Could not fetch platform fee:", feeError.message);
+      // Continue without fees if we can't fetch them
+    }
+
     const is1155 = !!l.isERC1155;
     const listed = BigInt(l.quantity?.toString?.() ?? String(l.quantity ?? '0'));
     const qty    = BigInt(String(quantity || 1));
@@ -1540,14 +1552,22 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     if (is1155 && (qty <= 0n || qty > listed)) { setStatus('Error: Requested quantity exceeds available'); return; }
 
     const unit  = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
-    const total = unit * qty;
+    const listingTotal = unit * qty;
+    
+    // Calculate platform fee 
+    const platformFee = (listingTotal * platformFeeBps) / 10000n;
+    const totalWithFees = listingTotal + platformFee;
+    
     const token = l.paymentToken;
     const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
     
     console.log('[BUY DEBUG] Buy Details:', {
       listingId: id,
       pricePerUnit: ethers.formatEther(unit),
-      totalPrice: ethers.formatEther(total),
+      listingPrice: ethers.formatEther(listingTotal),
+      platformFeeBps: platformFeeBps.toString(),
+      platformFee: ethers.formatEther(platformFee),
+      totalWithFees: ethers.formatEther(totalWithFees),
       paymentToken: token,
       isNative,
       quantity: qty.toString()
@@ -1556,7 +1576,7 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     // Show wallet balance to debug
     const walletBal = await provider.getBalance(wallet);
     console.log(`[BUY DEBUG] Wallet Native Balance: ${ethers.formatEther(walletBal)} VTRU`);
-    setStatus(`Preparing transaction with ${ethers.formatEther(total)} VTRU...`);
+    setStatus(`Preparing transaction with ${ethers.formatEther(totalWithFees)} VTRU (including ${ethers.formatEther(platformFee)} VTRU platform fee)...`);
     
     // Ensure we have a connected contract with signer
     const connectedContract = marketplace.connect ? marketplace.connect(signer) : marketplace;
@@ -1566,13 +1586,13 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     // Native token path - needs special handling with {value: amount}
     if (isNative) {
       const gasLimit = 600000n; // Higher gas limit for safety
-      console.log(`[BUY DEBUG] Sending buy tx with ${ethers.formatEther(total)} VTRU as value, gas limit ${gasLimit}`);
+      console.log(`[BUY DEBUG] Sending buy tx with ${ethers.formatEther(totalWithFees)} VTRU as value, gas limit ${gasLimit}`);
       
       // Try standard method first
       try {
         console.log("[BUY DEBUG] Attempting to call buy() function directly...");
         const tx = await connectedContract.buy(id, qty, { 
-          value: total,
+          value: totalWithFees,
           gasLimit
         });
         setStatus('Transaction submitted. Waiting for confirmation...');
@@ -1595,7 +1615,7 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         const tx = await signer.sendTransaction({
           to: marketplaceAddress,
           data: txData,
-          value: total,
+          value: totalWithFees,
           gasLimit
         });
         
@@ -1631,7 +1651,19 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
       try {
         const l = await marketplace.listings(id);
         const qty = BigInt(String(quantity || 1));
-        const total = BigInt(l.pricePerUnit?.toString() ?? '0') * qty;
+        const listingTotal = BigInt(l.pricePerUnit?.toString() ?? '0') * qty;
+        
+        // Fetch platform fee for fallback calculation
+        let platformFeeBps = 0n;
+        try {
+          const feeResult = await marketplace.platformFeeBps();
+          platformFeeBps = BigInt(feeResult.toString());
+        } catch {
+          // If we can't get fees, use 0
+        }
+        
+        const platformFee = (listingTotal * platformFeeBps) / 10000n;
+        const totalWithFees = listingTotal + platformFee;
         
         // Create a raw transaction manually
         const ABI = ["function buy(uint256 listingId, uint256 buyQuantity)"];
@@ -1641,7 +1673,7 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         const tx = await signer.sendTransaction({
           to: marketplaceAddress,
           data: data,
-          value: total,
+          value: totalWithFees,
           gasLimit: 800000n
         });
         
