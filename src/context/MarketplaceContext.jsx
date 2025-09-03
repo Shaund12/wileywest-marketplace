@@ -241,15 +241,31 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         const initializeMarketplace = async () => {
             if (marketplaceAddress && provider) {
                 try {
+                    console.log("[CONTRACT INIT] Starting marketplace contract initialization...");
+                    console.log("[CONTRACT INIT] Marketplace address:", marketplaceAddress);
+                    console.log("[CONTRACT INIT] Incoming ABI type:", typeof abi);
+                    console.log("[CONTRACT INIT] Incoming ABI is array:", Array.isArray(abi));
+                    
                     const resolvedAbi = await resolveMarketplaceAbi(abi);
-                    const contract = new ethers.Contract(marketplaceAddress, resolvedAbi, provider);
-
+                    console.log("[CONTRACT INIT] Resolved ABI type:", typeof resolvedAbi);
+                    console.log("[CONTRACT INIT] Resolved ABI is array:", Array.isArray(resolvedAbi));
+                    console.log("[CONTRACT INIT] Resolved ABI length:", resolvedAbi?.length);
+                    
                     if (!hasAbiFn(resolvedAbi, 'buy')) {
                         throw new Error('Resolved ABI still missing buy()');
                     }
+                    console.log("[CONTRACT INIT] ABI validation passed - buy() function found");
+
+                    const contract = new ethers.Contract(marketplaceAddress, resolvedAbi, provider);
+                    console.log("[CONTRACT INIT] Contract created successfully");
+                    console.log("[CONTRACT INIT] Contract address:", contract.target);
+                    console.log("[CONTRACT INIT] Contract interface:", !!contract.interface);
+                    console.log("[CONTRACT INIT] Contract methods available:", Object.getOwnPropertyNames(contract).filter(name => 
+                        typeof contract[name] === 'function' && !name.startsWith('_')));
 
                     setMarketplace(contract);
                     setIsInitialized(true);
+                    console.log("[CONTRACT INIT] Marketplace initialization completed successfully");
                     
                     // Test network connectivity before setting up events
                     try {
@@ -260,7 +276,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
                     }
                 } catch (error) {
-                    criticalError("Error initializing marketplace contract:", error);
+                    criticalError("[CONTRACT INIT] Error initializing marketplace contract:", error);
+                    console.error("[CONTRACT INIT] Full error details:", error);
                     setStatus("Failed to initialize marketplace contract (ABI mismatch)");
                 }
             }
@@ -1491,16 +1508,28 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
   if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
 
   try {
-    console.log("Marketplace contract:", marketplaceAddress);
-    console.log("Contract instance:", marketplace);
-    console.log("Available methods:", Object.keys(marketplace).filter(k => typeof marketplace[k] === 'function'));
+    console.log("[BUY DEBUG] Starting buy process...");
+    console.log("[BUY DEBUG] Marketplace contract address:", marketplaceAddress);
+    console.log("[BUY DEBUG] Contract instance:", marketplace);
+    console.log("[BUY DEBUG] Contract target:", marketplace.target);
+    console.log("[BUY DEBUG] Contract interface exists:", !!marketplace.interface);
+    
+    // Debug: Show all available methods on the contract
+    const contractMethods = Object.getOwnPropertyNames(marketplace).filter(name => 
+        typeof marketplace[name] === 'function' && !name.startsWith('_'));
+    console.log("[BUY DEBUG] Available contract methods:", contractMethods);
+    
+    // Check if buy function specifically exists
+    console.log("[BUY DEBUG] Has 'buy' method:", typeof marketplace.buy === 'function');
+    console.log("[BUY DEBUG] Has 'listings' method:", typeof marketplace.listings === 'function');
     
     // Use the actual contract target as spender
     const spender = (marketplace && marketplace.target) || marketplaceAddress;
     setStatus('Checking listing details...');
 
-    // Authoritative listing
+    console.log("[BUY DEBUG] Calling marketplace.listings()...");
     const l = await marketplace.listings(id);
+    console.log("[BUY DEBUG] Listing data:", l);
     if (!l || !l.active) { setStatus('Error: Listing is inactive'); return; }
 
     const is1155 = !!l.isERC1155;
@@ -1515,7 +1544,7 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     const token = l.paymentToken;
     const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
     
-    console.log('Buy Details:', {
+    console.log('[BUY DEBUG] Buy Details:', {
       listingId: id,
       pricePerUnit: ethers.formatEther(unit),
       totalPrice: ethers.formatEther(total),
@@ -1526,19 +1555,22 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
 
     // Show wallet balance to debug
     const walletBal = await provider.getBalance(wallet);
-    console.log(`Wallet Native Balance: ${ethers.formatEther(walletBal)} VTRU`);
+    console.log(`[BUY DEBUG] Wallet Native Balance: ${ethers.formatEther(walletBal)} VTRU`);
     setStatus(`Preparing transaction with ${ethers.formatEther(total)} VTRU...`);
     
     // Ensure we have a connected contract with signer
     const connectedContract = marketplace.connect ? marketplace.connect(signer) : marketplace;
+    console.log("[BUY DEBUG] Connected contract created");
+    console.log("[BUY DEBUG] Connected contract has buy method:", typeof connectedContract.buy === 'function');
     
     // Native token path - needs special handling with {value: amount}
     if (isNative) {
       const gasLimit = 600000n; // Higher gas limit for safety
-      console.log(`Sending buy tx with ${ethers.formatEther(total)} VTRU as value, gas limit ${gasLimit}`);
+      console.log(`[BUY DEBUG] Sending buy tx with ${ethers.formatEther(total)} VTRU as value, gas limit ${gasLimit}`);
       
       // Try standard method first
       try {
+        console.log("[BUY DEBUG] Attempting to call buy() function directly...");
         const tx = await connectedContract.buy(id, qty, { 
           value: total,
           gasLimit
@@ -1547,7 +1579,16 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         await tx.wait();
       } catch (callError) {
         // If that fails, try alternative ways to call the function
-        console.error("First attempt failed:", callError);
+        console.error("[BUY DEBUG] First attempt failed:", callError);
+        
+        // Check if it's a fee-related error
+        if (callError.message && callError.message.includes('amount unused')) {
+          console.log("[BUY DEBUG] Detected 'amount unused' error - this might be a fee calculation issue");
+          setStatus('Error: Transaction failed due to fee calculation. Please check marketplace fees.');
+          return;
+        }
+        
+        console.log("[BUY DEBUG] Trying raw transaction as fallback...");
         
         // Try raw transaction as fallback
         const txData = connectedContract.interface.encodeFunctionData('buy', [id, qty]);
@@ -1576,12 +1617,13 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
       setTimeout(() => setStatus(''), 3000);
     }, 1200);
   } catch (e) {
-    criticalError('Error in buyListing:', e);
-    console.error('Full error details:', e);
+    criticalError('[BUY DEBUG] Error in buyListing:', e);
+    console.error('[BUY DEBUG] Full error details:', e);
     
     const em = String(e?.message || '').toLowerCase();
     if (em.includes('user rejected')) setStatus('Transaction was rejected in your wallet');
     else if (em.includes('insufficient funds')) setStatus(`Error: Insufficient funds for gas + payment. You need more VTRU.`);
+    else if (em.includes('amount unused')) setStatus('Error: Marketplace fee calculation failed. Please contact support.');
     else if (em.includes('cannot read') || em.includes('undefined')) {
       setStatus('Contract function access error. Using fallback method...');
       
