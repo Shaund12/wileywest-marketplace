@@ -1491,7 +1491,11 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
   if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
 
   try {
-    // Use the actual contract target as spender (ethers v6)
+    console.log("Marketplace contract:", marketplaceAddress);
+    console.log("Contract instance:", marketplace);
+    console.log("Available methods:", Object.keys(marketplace).filter(k => typeof marketplace[k] === 'function'));
+    
+    // Use the actual contract target as spender
     const spender = (marketplace && marketplace.target) || marketplaceAddress;
     setStatus('Checking listing details...');
 
@@ -1511,7 +1515,6 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     const token = l.paymentToken;
     const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
     
-    // DEBUG: Log payment details for troubleshooting
     console.log('Buy Details:', {
       listingId: id,
       pricePerUnit: ethers.formatEther(unit),
@@ -1524,92 +1527,52 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     // Show wallet balance to debug
     const walletBal = await provider.getBalance(wallet);
     console.log(`Wallet Native Balance: ${ethers.formatEther(walletBal)} VTRU`);
-    setStatus(`Checking balances (you have ${ethers.formatEther(walletBal)} VTRU)...`);
+    setStatus(`Preparing transaction with ${ethers.formatEther(total)} VTRU...`);
     
-    // Native token path with additional checks
+    // Ensure we have a connected contract with signer
+    const connectedContract = marketplace.connect ? marketplace.connect(signer) : marketplace;
+    
+    // Native token path - needs special handling with {value: amount}
     if (isNative) {
-      if (walletBal < total) { 
-        setStatus(`Error: Insufficient native VTRU (have ${ethers.formatEther(walletBal)}, need ${ethers.formatEther(total)})`); 
-        return; 
-      }
+      const gasLimit = 600000n; // Higher gas limit for safety
+      console.log(`Sending buy tx with ${ethers.formatEther(total)} VTRU as value, gas limit ${gasLimit}`);
       
-      // Calculate gas estimate to ensure enough balance for gas + value
-      const gasEstimate = await marketplace.estimateGas.buy(id, qty, { value: total })
-        .catch(e => {
-          console.error('Gas estimation failed:', e);
-          return 500000n; // fallback gas limit
+      // Try standard method first
+      try {
+        const tx = await connectedContract.buy(id, qty, { 
+          value: total,
+          gasLimit
         });
-      
-      const gasPrice = await provider.getGasPrice().catch(() => ethers.parseUnits('5', 'gwei'));
-      const gasNeeded = gasEstimate * gasPrice;
-      console.log(`Gas needed: ${ethers.formatEther(gasNeeded)} VTRU`);
-      
-      if (walletBal < (total + gasNeeded)) {
-        setStatus(`Error: Insufficient balance for payment + gas (need ${ethers.formatEther(total + gasNeeded)} VTRU)`);
-        return;
+        setStatus('Transaction submitted. Waiting for confirmation...');
+        await tx.wait();
+      } catch (callError) {
+        // If that fails, try alternative ways to call the function
+        console.error("First attempt failed:", callError);
+        
+        // Try raw transaction as fallback
+        const txData = connectedContract.interface.encodeFunctionData('buy', [id, qty]);
+        const tx = await signer.sendTransaction({
+          to: marketplaceAddress,
+          data: txData,
+          value: total,
+          gasLimit
+        });
+        
+        setStatus('Transaction submitted (fallback method). Waiting for confirmation...');
+        await tx.wait();
       }
-    } 
-    // ERC20 token path
-    else {
-      const erc20 = new ethers.Contract(token, [
-        'function symbol() view returns (string)',
-        'function balanceOf(address) view returns (uint256)',
-        'function decimals() view returns (uint8)'
-      ], provider);
-      
-      const [symbol, bal, decimals] = await Promise.all([
-        erc20.symbol().catch(() => 'TOKEN'),
-        erc20.balanceOf(wallet),
-        erc20.decimals().catch(() => 18)
-      ]);
-      
-      const formattedBal = ethers.formatUnits(bal, decimals);
-      const formattedPrice = ethers.formatUnits(total, decimals);
-      console.log(`${symbol} Balance: ${formattedBal}, Price: ${formattedPrice}`);
-      
-      if (bal < total) {
-        setStatus(`Error: Insufficient ${symbol} balance (have ${formattedBal}, need ${formattedPrice})`);
-        return;
-      }
-
-      await ensureAllowanceWithBuffer({
-        tokenAddress: token,
-        owner: wallet,
-        spender,
-        needed: total,
-        signer,
-        setStatus,
-        bufferBps: 1000n
-      });
-    }
-
-    // Send transaction with careful setup for native token
-    setStatus(`Sending ${isNative ? 'native VTRU' : 'token'} payment...`);
-    let tx;
-    
-    if (isNative) {
-      // Create specific transaction options for native token
-      const options = { 
-        value: total,
-        gasLimit: 500000n // use higher gas limit for native token txs
-      };
-      
-      console.log(`Sending buy tx with ${ethers.formatEther(total)} VTRU as value`);
-      tx = await marketplace.buy(id, qty, options);
     } else {
-      // Regular tx for ERC20
-      tx = await marketplace.buy(id, qty);
+      // ERC20 path
+      const tx = await connectedContract.buy(id, qty);
+      setStatus('Transaction submitted. Waiting for confirmation...');
+      await tx.wait();
     }
-
-    setStatus('Transaction submitted. Waiting for confirmation...');
-    const receipt = await tx.wait();
 
     setStatus('Purchase successful! Updating listings...');
     if (supabaseConnected && cacheListings) await fetchListings(true); else fetchListings();
 
-    setTimeout(async () => {
-      try { await fetchPastSalesEvents(marketplace); setStatus('Purchase successful! Marketplace updated.'); }
-      catch { setStatus('Purchase successful!'); }
+    setTimeout(() => {
+      setStatus('Purchase successful!');
       setTimeout(() => setStatus(''), 3000);
     }, 1200);
   } catch (e) {
@@ -1618,21 +1581,35 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     
     const em = String(e?.message || '').toLowerCase();
     if (em.includes('user rejected')) setStatus('Transaction was rejected in your wallet');
-    else if (em.includes('insufficient funds')) {
-      // More specific error for insufficient funds
-      setStatus(`Error: Insufficient funds for the transaction. You may need more VTRU for gas + payment.`);
+    else if (em.includes('insufficient funds')) setStatus(`Error: Insufficient funds for gas + payment. You need more VTRU.`);
+    else if (em.includes('cannot read') || em.includes('undefined')) {
+      setStatus('Contract function access error. Using fallback method...');
       
-      // Try to extract and show the exact amounts from the error message
-      const matches = em.match(/have (\d+) want (\d+)/);
-      if (matches && matches.length === 3) {
-        const have = ethers.formatEther(matches[1]);
-        const need = ethers.formatEther(matches[2]);
-        setStatus(`Error: Insufficient funds - have ${have} VTRU but need ${need} VTRU (including gas)`);
+      // Try direct transaction as ultimate fallback
+      try {
+        const l = await marketplace.listings(id);
+        const qty = BigInt(String(quantity || 1));
+        const total = BigInt(l.pricePerUnit?.toString() ?? '0') * qty;
+        
+        // Create a raw transaction manually
+        const ABI = ["function buy(uint256 listingId, uint256 buyQuantity)"];
+        const iface = new ethers.Interface(ABI);
+        const data = iface.encodeFunctionData("buy", [id, qty]);
+        
+        const tx = await signer.sendTransaction({
+          to: marketplaceAddress,
+          data: data,
+          value: total,
+          gasLimit: 800000n
+        });
+        
+        setStatus('Transaction submitted (manual fallback). Waiting for confirmation...');
+        await tx.wait();
+        setStatus('Purchase successful!');
+      } catch (fallbackError) {
+        setStatus(`Transaction failed: ${fallbackError.message}`);
       }
     }
-    else if (em.includes('msg.value')) setStatus('Error: Incorrect native VTRU amount sent to contract');
-    else if (em.includes('allowance')) setStatus('Error: Token allowance issue - reset allowance may be needed');
-    else if (em.includes('no contract code')) setStatus('Error: Marketplace address has no contract code');
     else setStatus('Buy failed: ' + (e.message || e));
   }
 };
