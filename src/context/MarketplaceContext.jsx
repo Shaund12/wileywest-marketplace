@@ -1493,10 +1493,7 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
   try {
     // Use the actual contract target as spender (ethers v6)
     const spender = (marketplace && marketplace.target) || marketplaceAddress;
-
-    // Sanity: ensure it's a contract
-    const code = await provider.getCode(spender);
-    if (!code || code === '0x') { setStatus('Error: Marketplace address has no contract code'); return; }
+    setStatus('Checking listing details...');
 
     // Authoritative listing
     const l = await marketplace.listings(id);
@@ -1513,12 +1510,67 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     const total = unit * qty;
     const token = l.paymentToken;
     const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
+    
+    // DEBUG: Log payment details for troubleshooting
+    console.log('Buy Details:', {
+      listingId: id,
+      pricePerUnit: ethers.formatEther(unit),
+      totalPrice: ethers.formatEther(total),
+      paymentToken: token,
+      isNative,
+      quantity: qty.toString()
+    });
 
-    // ERC20 path — balance + buffered allowance
-    if (!isNative) {
-      const erc20 = new ethers.Contract(token, ['function balanceOf(address) view returns (uint256)'], provider);
-      const bal = BigInt((await erc20.balanceOf(wallet)).toString());
-      if (bal < total) { setStatus('Error: Insufficient token balance for this purchase'); return; }
+    // Show wallet balance to debug
+    const walletBal = await provider.getBalance(wallet);
+    console.log(`Wallet Native Balance: ${ethers.formatEther(walletBal)} VTRU`);
+    setStatus(`Checking balances (you have ${ethers.formatEther(walletBal)} VTRU)...`);
+    
+    // Native token path with additional checks
+    if (isNative) {
+      if (walletBal < total) { 
+        setStatus(`Error: Insufficient native VTRU (have ${ethers.formatEther(walletBal)}, need ${ethers.formatEther(total)})`); 
+        return; 
+      }
+      
+      // Calculate gas estimate to ensure enough balance for gas + value
+      const gasEstimate = await marketplace.estimateGas.buy(id, qty, { value: total })
+        .catch(e => {
+          console.error('Gas estimation failed:', e);
+          return 500000n; // fallback gas limit
+        });
+      
+      const gasPrice = await provider.getGasPrice().catch(() => ethers.parseUnits('5', 'gwei'));
+      const gasNeeded = gasEstimate * gasPrice;
+      console.log(`Gas needed: ${ethers.formatEther(gasNeeded)} VTRU`);
+      
+      if (walletBal < (total + gasNeeded)) {
+        setStatus(`Error: Insufficient balance for payment + gas (need ${ethers.formatEther(total + gasNeeded)} VTRU)`);
+        return;
+      }
+    } 
+    // ERC20 token path
+    else {
+      const erc20 = new ethers.Contract(token, [
+        'function symbol() view returns (string)',
+        'function balanceOf(address) view returns (uint256)',
+        'function decimals() view returns (uint8)'
+      ], provider);
+      
+      const [symbol, bal, decimals] = await Promise.all([
+        erc20.symbol().catch(() => 'TOKEN'),
+        erc20.balanceOf(wallet),
+        erc20.decimals().catch(() => 18)
+      ]);
+      
+      const formattedBal = ethers.formatUnits(bal, decimals);
+      const formattedPrice = ethers.formatUnits(total, decimals);
+      console.log(`${symbol} Balance: ${formattedBal}, Price: ${formattedPrice}`);
+      
+      if (bal < total) {
+        setStatus(`Error: Insufficient ${symbol} balance (have ${formattedBal}, need ${formattedPrice})`);
+        return;
+      }
 
       await ensureAllowanceWithBuffer({
         tokenAddress: token,
@@ -1527,42 +1579,30 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         needed: total,
         signer,
         setStatus,
-        bufferBps: 1000n, // 10% buffer; tune to taste
+        bufferBps: 1000n
       });
+    }
+
+    // Send transaction with careful setup for native token
+    setStatus(`Sending ${isNative ? 'native VTRU' : 'token'} payment...`);
+    let tx;
+    
+    if (isNative) {
+      // Create specific transaction options for native token
+      const options = { 
+        value: total,
+        gasLimit: 500000n // use higher gas limit for native token txs
+      };
+      
+      console.log(`Sending buy tx with ${ethers.formatEther(total)} VTRU as value`);
+      tx = await marketplace.buy(id, qty, options);
     } else {
-      const balNative = await provider.getBalance(wallet);
-      if (balNative < total) { setStatus('Error: Insufficient native balance for price + gas'); return; }
+      // Regular tx for ERC20
+      tx = await marketplace.buy(id, qty);
     }
-
-    // Estimation with correct overrides
-    setStatus('Estimating gas...');
-    try {
-      if (isNative) await marketplace.estimateGas.buy(id, qty, { value: total });
-      else          await marketplace.estimateGas.buy(id, qty);
-    } catch (estErr) {
-      // Try to surface revert reason
-      try {
-        if (isNative) await marketplace.getFunction('buy').staticCall(id, qty, { value: total });
-        else          await marketplace.getFunction('buy').staticCall(id, qty);
-      } catch (staticErr) {
-        const msg = (staticErr?.reason || staticErr?.message || '').toLowerCase();
-        if (msg.includes('wrong msg.value')) { setStatus('Error: Wrong native amount sent'); return; }
-        if (msg.includes('inactive'))        { setStatus('Error: Listing is inactive'); return; }
-        if (msg.includes('not enough'))      { setStatus('Error: Not enough quantity left'); return; }
-        if (msg.includes('allowance'))       { setStatus('Error: Token allowance insufficient'); return; }
-        setStatus('Purchase simulation failed. Token transfer/allowance may be the cause.');
-        throw estErr;
-      }
-    }
-
-    // Send tx (no Number() coercion on qty)
-    setStatus('Buying...');
-    const tx = isNative
-      ? await marketplace.getFunction('buy')(id, qty, { value: total })
-      : await marketplace.getFunction('buy')(id, qty);
 
     setStatus('Transaction submitted. Waiting for confirmation...');
-    await tx.wait();
+    const receipt = await tx.wait();
 
     setStatus('Purchase successful! Updating listings...');
     if (supabaseConnected && cacheListings) await fetchListings(true); else fetchListings();
@@ -1574,37 +1614,29 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     }, 1200);
   } catch (e) {
     criticalError('Error in buyListing:', e);
+    console.error('Full error details:', e);
+    
     const em = String(e?.message || '').toLowerCase();
-    if (em.includes('user rejected'))           setStatus('Transaction was rejected in your wallet');
-    else if (em.includes('insufficient funds')) setStatus('Error: Insufficient funds');
-    else if (em.includes('allowance')) {
-      const resetMsg = 'Token allowance error. Please click "Reset Allowance" button below.';
-      setStatus(resetMsg);
+    if (em.includes('user rejected')) setStatus('Transaction was rejected in your wallet');
+    else if (em.includes('insufficient funds')) {
+      // More specific error for insufficient funds
+      setStatus(`Error: Insufficient funds for the transaction. You may need more VTRU for gas + payment.`);
       
-      // Create a simple reset button in the UI
-      const resetBtn = document.createElement('button');
-      resetBtn.innerText = 'Reset Token Allowance';
-      resetBtn.className = 'reset-allowance-btn';
-      resetBtn.onclick = async () => {
-        const success = await resetTokenAllowance(token, spender, setStatus);
-        if (success) {
-          // Try again after successful reset
-          setTimeout(() => {
-            buyListing(id, _uiPricePerUnit, _uiPaymentToken, quantity);
-          }, 1000);
-        }
-      };
-      
-      // Find status container and append button
-      const statusContainer = document.querySelector('.status-container');
-      if (statusContainer) {
-        statusContainer.appendChild(resetBtn);
+      // Try to extract and show the exact amounts from the error message
+      const matches = em.match(/have (\d+) want (\d+)/);
+      if (matches && matches.length === 3) {
+        const have = ethers.formatEther(matches[1]);
+        const need = ethers.formatEther(matches[2]);
+        setStatus(`Error: Insufficient funds - have ${have} VTRU but need ${need} VTRU (including gas)`);
       }
     }
-    else if (em.includes('no contract code'))   setStatus('Error: Marketplace address has no contract code');
-    else                                        setStatus('Buy failed: ' + (e.message || e));
+    else if (em.includes('msg.value')) setStatus('Error: Incorrect native VTRU amount sent to contract');
+    else if (em.includes('allowance')) setStatus('Error: Token allowance issue - reset allowance may be needed');
+    else if (em.includes('no contract code')) setStatus('Error: Marketplace address has no contract code');
+    else setStatus('Buy failed: ' + (e.message || e));
   }
 };
+
 
     const createListing = async (nftContract, tokenId, quantity, price, paymentToken) => {
         try {
