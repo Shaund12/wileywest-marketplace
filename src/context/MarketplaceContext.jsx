@@ -1502,7 +1502,7 @@ async function ensureAllowanceWithBuffer({
 }
 
 
-// ===== buyListing with buffer-aware allowance and correct spender =====
+// ===== buyListing with enhanced error handling and gas estimation =====
 const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) => {
   if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
   if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
@@ -1510,181 +1510,168 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
   try {
     console.log("[BUY DEBUG] Starting buy process...");
     console.log("[BUY DEBUG] Marketplace contract address:", marketplaceAddress);
-    console.log("[BUY DEBUG] Contract instance:", marketplace);
-    console.log("[BUY DEBUG] Contract target:", marketplace.target);
-    console.log("[BUY DEBUG] Contract interface exists:", !!marketplace.interface);
-    
-    // Debug: Show all available methods on the contract
-    const contractMethods = Object.getOwnPropertyNames(marketplace).filter(name => 
-        typeof marketplace[name] === 'function' && !name.startsWith('_'));
-    console.log("[BUY DEBUG] Available contract methods:", contractMethods);
-    
-    // Check if buy function specifically exists
-    console.log("[BUY DEBUG] Has 'buy' method:", typeof marketplace.buy === 'function');
-    console.log("[BUY DEBUG] Has 'listings' method:", typeof marketplace.listings === 'function');
-    
-    // Use the actual contract target as spender
-    const spender = (marketplace && marketplace.target) || marketplaceAddress;
+    console.log("Marketplace contract:", marketplaceAddress);
+    console.log("Contract instance:", marketplace);
+    console.log("Available methods:", Object.getOwnPropertyNames(marketplace).filter(name => 
+        typeof marketplace[name] === 'function' && !name.startsWith('_')));
+
     setStatus('Checking listing details...');
 
-    console.log("[BUY DEBUG] Calling marketplace.listings()...");
+    // Get listing details
+    console.log("[BUY DEBUG] Fetching listing details...");
     const l = await marketplace.listings(id);
-    console.log("[BUY DEBUG] Listing data:", l);
-    if (!l || !l.active) { setStatus('Error: Listing is inactive'); return; }
-
-    // Fetch platform fee information
-    console.log("[BUY DEBUG] Fetching platform fee...");
-    let platformFeeBps = 0n;
-    try {
-      const feeResult = await marketplace.platformFeeBps();
-      platformFeeBps = BigInt(feeResult.toString());
-      console.log("[BUY DEBUG] Platform fee (basis points):", platformFeeBps.toString());
-    } catch (feeError) {
-      console.warn("[BUY DEBUG] Could not fetch platform fee:", feeError.message);
-      // Continue without fees if we can't fetch them
+    console.log("Listing details:", l);
+    
+    if (!l || !l.active) { 
+      setStatus('Error: Listing is inactive or does not exist'); 
+      return; 
     }
 
+    // Validate quantity and pricing
     const is1155 = !!l.isERC1155;
     const listed = BigInt(l.quantity?.toString?.() ?? String(l.quantity ?? '0'));
-    const qty    = BigInt(String(quantity || 1));
+    const qty = BigInt(String(quantity || 1));
 
     if (!is1155 && qty !== 1n) { setStatus('Error: ERC-721 quantity must be 1'); return; }
     if (is1155 && (qty <= 0n || qty > listed)) { setStatus('Error: Requested quantity exceeds available'); return; }
 
-    const unit  = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
+    const unit = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
     const listingTotal = unit * qty;
     
-    // Calculate platform fee 
+    // Fetch platform fee - use try/catch with default
+    console.log("[BUY DEBUG] Fetching platform fees...");
+    let platformFeeBps = 0n;
+    try {
+      const feeResult = await marketplace.platformFeeBps();
+      platformFeeBps = BigInt(feeResult.toString());
+      console.log("Platform fee (basis points):", platformFeeBps.toString());
+    } catch (feeError) {
+      console.warn("Could not fetch platform fee, using 0:", feeError.message);
+    }
+
+    // Calculate fees and total
     const platformFee = (listingTotal * platformFeeBps) / 10000n;
     const totalWithFees = listingTotal + platformFee;
     
     const token = l.paymentToken;
     const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
     
-    console.log('[BUY DEBUG] Buy Details:', {
+    console.log('Buy Details:', {
       listingId: id,
       pricePerUnit: ethers.formatEther(unit),
-      listingPrice: ethers.formatEther(listingTotal),
-      platformFeeBps: platformFeeBps.toString(),
-      platformFee: ethers.formatEther(platformFee),
-      totalWithFees: ethers.formatEther(totalWithFees),
+      totalPrice: ethers.formatEther(totalWithFees),
       paymentToken: token,
       isNative,
       quantity: qty.toString()
     });
 
-    // Show wallet balance to debug
+    // Check wallet balance
     const walletBal = await provider.getBalance(wallet);
-    console.log(`[BUY DEBUG] Wallet Native Balance: ${ethers.formatEther(walletBal)} VTRU`);
-    setStatus(`Preparing transaction with ${ethers.formatEther(totalWithFees)} VTRU (including ${ethers.formatEther(platformFee)} VTRU platform fee)...`);
+    console.log(`Wallet Native Balance: ${ethers.formatEther(walletBal)} VTRU`);
     
-    // Ensure we have a connected contract with signer
-    const connectedContract = marketplace.connect ? marketplace.connect(signer) : marketplace;
-    console.log("[BUY DEBUG] Connected contract created");
-    console.log("[BUY DEBUG] Connected contract has buy method:", typeof connectedContract.buy === 'function');
+    if (isNative && walletBal < totalWithFees) {
+      setStatus(`Error: Insufficient balance. Need ${ethers.formatEther(totalWithFees)} VTRU, have ${ethers.formatEther(walletBal)} VTRU`);
+      return;
+    }
+
+    setStatus(`Preparing transaction for ${ethers.formatEther(totalWithFees)} VTRU...`);
     
-    // Native token path - needs special handling with {value: amount}
+    // Ensure connected contract
+    const connectedContract = marketplace.connect(signer);
+    
     if (isNative) {
-      const gasLimit = 600000n; // Higher gas limit for safety
-      console.log(`[BUY DEBUG] Sending buy tx with ${ethers.formatEther(totalWithFees)} VTRU as value, gas limit ${gasLimit}`);
-      
-      // Try standard method first
+      // For native token purchases, estimate gas first
+      console.log("Estimating gas for native token purchase...");
+      let gasEstimate;
       try {
-        console.log("[BUY DEBUG] Attempting to call buy() function directly...");
+        gasEstimate = await connectedContract.buy.estimateGas(id, qty, { value: totalWithFees });
+        console.log("Gas estimate:", gasEstimate.toString());
+      } catch (gasError) {
+        console.warn("Gas estimation failed:", gasError.message);
+        gasEstimate = 500000n; // Fallback gas limit
+      }
+      
+      // Add 20% buffer to gas estimate
+      const gasLimit = (gasEstimate * 120n) / 100n;
+      console.log(`Sending buy tx with ${ethers.formatEther(totalWithFees)} VTRU as value, gas limit ${gasLimit}`);
+      
+      try {
         const tx = await connectedContract.buy(id, qty, { 
           value: totalWithFees,
           gasLimit
         });
         setStatus('Transaction submitted. Waiting for confirmation...');
-        await tx.wait();
-      } catch (callError) {
-        // If that fails, try alternative ways to call the function
-        console.error("[BUY DEBUG] First attempt failed:", callError);
+        console.log("Transaction hash:", tx.hash);
         
-        // Check if it's a fee-related error
-        if (callError.message && callError.message.includes('amount unused')) {
-          console.log("[BUY DEBUG] Detected 'amount unused' error - this might be a fee calculation issue");
-          setStatus('Error: Transaction failed due to fee calculation. Please check marketplace fees.');
-          return;
+        const receipt = await tx.wait();
+        console.log("Transaction confirmed:", receipt);
+        
+        if (receipt.status === 0) {
+          throw new Error("Transaction failed during execution");
         }
+      } catch (callError) {
+        console.error("Buy transaction failed:", callError);
         
-        console.log("[BUY DEBUG] Trying raw transaction as fallback...");
-        
-        // Try raw transaction as fallback
-        const txData = connectedContract.interface.encodeFunctionData('buy', [id, qty]);
-        const tx = await signer.sendTransaction({
-          to: marketplaceAddress,
-          data: txData,
-          value: totalWithFees,
-          gasLimit
-        });
-        
-        setStatus('Transaction submitted (fallback method). Waiting for confirmation...');
-        await tx.wait();
+        // Enhanced error handling
+        if (callError.reason) {
+          setStatus(`Transaction failed: ${callError.reason}`);
+        } else if (callError.message?.includes('amount unused')) {
+          setStatus('Error: Amount unused - possible fee calculation issue');
+        } else if (callError.message?.includes('insufficient funds')) {
+          setStatus('Error: Insufficient funds for transaction');
+        } else if (callError.message?.includes('user rejected')) {
+          setStatus('Transaction was rejected in your wallet');
+        } else {
+          setStatus(`Transaction failed: ${callError.message || 'Unknown error'}`);
+        }
+        return;
       }
     } else {
-      // ERC20 path
+      // ERC20 token path
+      console.log("Processing ERC20 token purchase...");
       const tx = await connectedContract.buy(id, qty);
       setStatus('Transaction submitted. Waiting for confirmation...');
-      await tx.wait();
-    }
-
-    setStatus('Purchase successful! Updating listings...');
-    if (supabaseConnected && cacheListings) await fetchListings(true); else fetchListings();
-
-    setTimeout(() => {
-      setStatus('Purchase successful!');
-      setTimeout(() => setStatus(''), 3000);
-    }, 1200);
-  } catch (e) {
-    criticalError('[BUY DEBUG] Error in buyListing:', e);
-    console.error('[BUY DEBUG] Full error details:', e);
-    
-    const em = String(e?.message || '').toLowerCase();
-    if (em.includes('user rejected')) setStatus('Transaction was rejected in your wallet');
-    else if (em.includes('insufficient funds')) setStatus(`Error: Insufficient funds for gas + payment. You need more VTRU.`);
-    else if (em.includes('amount unused')) setStatus('Error: Marketplace fee calculation failed. Please contact support.');
-    else if (em.includes('cannot read') || em.includes('undefined')) {
-      setStatus('Contract function access error. Using fallback method...');
+      const receipt = await tx.wait();
       
-      // Try direct transaction as ultimate fallback
-      try {
-        const l = await marketplace.listings(id);
-        const qty = BigInt(String(quantity || 1));
-        const listingTotal = BigInt(l.pricePerUnit?.toString() ?? '0') * qty;
-        
-        // Fetch platform fee for fallback calculation
-        let platformFeeBps = 0n;
-        try {
-          const feeResult = await marketplace.platformFeeBps();
-          platformFeeBps = BigInt(feeResult.toString());
-        } catch {
-          // If we can't get fees, use 0
-        }
-        
-        const platformFee = (listingTotal * platformFeeBps) / 10000n;
-        const totalWithFees = listingTotal + platformFee;
-        
-        // Create a raw transaction manually
-        const ABI = ["function buy(uint256 listingId, uint256 buyQuantity)"];
-        const iface = new ethers.Interface(ABI);
-        const data = iface.encodeFunctionData("buy", [id, qty]);
-        
-        const tx = await signer.sendTransaction({
-          to: marketplaceAddress,
-          data: data,
-          value: totalWithFees,
-          gasLimit: 800000n
-        });
-        
-        setStatus('Transaction submitted (manual fallback). Waiting for confirmation...');
-        await tx.wait();
-        setStatus('Purchase successful!');
-      } catch (fallbackError) {
-        setStatus(`Transaction failed: ${fallbackError.message}`);
+      if (receipt.status === 0) {
+        throw new Error("Transaction failed during execution");
       }
     }
-    else setStatus('Buy failed: ' + (e.message || e));
+
+    setStatus('Purchase successful! Refreshing listings...');
+    
+    // Refresh listings after successful purchase
+    setTimeout(() => {
+      if (supabaseConnected && cacheListings) {
+        fetchListings(true);
+      } else {
+        fetchListings();
+      }
+    }, 1000);
+
+    setTimeout(() => {
+      setStatus('Purchase completed successfully!');
+      setTimeout(() => setStatus(''), 3000);
+    }, 1500);
+    
+  } catch (e) {
+    criticalError('[BUY] Error in buyListing:', e);
+    console.error('[BUY] Full error details:', e);
+    
+    const errorMessage = e?.message || e?.reason || String(e);
+    console.error("Error message:", errorMessage);
+    
+    if (errorMessage.includes('user rejected')) {
+      setStatus('Transaction was rejected in your wallet');
+    } else if (errorMessage.includes('insufficient funds')) {
+      setStatus('Error: Insufficient funds for gas + payment');
+    } else if (errorMessage.includes('amount unused')) {
+      setStatus('Error: Marketplace fee calculation issue');
+    } else if (errorMessage.includes('execution reverted')) {
+      setStatus('Error: Transaction reverted - contract validation failed');
+    } else {
+      setStatus(`Purchase failed: ${errorMessage.substring(0, 100)}...`);
+    }
   }
 };
 
