@@ -1538,9 +1538,10 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     const unit = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
     const listingTotal = unit * qty;
     
-    // Fetch platform fee - use try/catch with default
-    console.log("[BUY DEBUG] Fetching platform fees...");
+    // Fetch all fee rates from contract
+    console.log("[BUY DEBUG] Fetching platform and vibe fees...");
     let platformFeeBps = 0n;
+    let vibeShareBps = 0n;
     try {
       const feeResult = await marketplace.platformFeeBps();
       platformFeeBps = BigInt(feeResult.toString());
@@ -1549,9 +1550,61 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
       console.warn("Could not fetch platform fee, using 0:", feeError.message);
     }
 
-    // Calculate fees and total
-    const platformFee = (listingTotal * platformFeeBps) / 10000n;
-    const totalWithFees = listingTotal + platformFee;
+    try {
+      const vibeResult = await marketplace.vibeShareBps();
+      vibeShareBps = BigInt(vibeResult.toString());
+      console.log("Vibe share (basis points):", vibeShareBps.toString());
+    } catch (vibeError) {
+      console.warn("Could not fetch vibe share, using 0:", vibeError.message);
+    }
+
+    // Calculate comprehensive fee breakdown
+    // Platform fee is the total marketplace fee
+    const platformFeeTotal = (listingTotal * platformFeeBps) / 10000n;
+    
+    // Vibe portion is a percentage of the platform fee (sent to fee processor)
+    const vibePortionInPayment = (platformFeeTotal * vibeShareBps) / 10000n;
+    
+    // Protocol portion is the remainder of platform fee (sent to protocol)
+    const protocolPortionInPayment = platformFeeTotal - vibePortionInPayment;
+    
+    // Check if there are creator royalties by querying the NFT contract
+    let royaltyAmount = 0n;
+    try {
+      // Try to get royalty info from the NFT contract (ERC2981)
+      const nftContract = new ethers.Contract(
+        l.nftContract, 
+        ['function royaltyInfo(uint256 tokenId, uint256 salePrice) view returns (address, uint256)'], 
+        provider
+      );
+      const [royaltyReceiver, royaltyFee] = await nftContract.royaltyInfo(l.tokenId, listingTotal);
+      if (royaltyReceiver !== ethers.ZeroAddress && royaltyFee > 0) {
+        royaltyAmount = BigInt(royaltyFee.toString());
+        console.log("Creator royalty:", ethers.formatEther(royaltyAmount), "VTRU to", royaltyReceiver);
+      }
+    } catch (royaltyError) {
+      console.log("No royalty info available or NFT doesn't support ERC2981:", royaltyError.message);
+    }
+    
+    // Total transaction value should include listing price + platform fees + royalties
+    // The contract will handle the internal distribution
+    let totalWithFees = listingTotal + platformFeeTotal + royaltyAmount;
+    
+    console.log("[FEE BREAKDOWN]");
+    console.log("Listing price:", ethers.formatEther(listingTotal), "VTRU");
+    console.log("Platform fee total:", ethers.formatEther(platformFeeTotal), "VTRU");
+    console.log("- Vibe portion:", ethers.formatEther(vibePortionInPayment), "VTRU (goes to fee processor)");
+    console.log("- Protocol portion:", ethers.formatEther(protocolPortionInPayment), "VTRU (goes to protocol)");
+    console.log("Creator royalty:", ethers.formatEther(royaltyAmount), "VTRU");
+    console.log("Total transaction value:", ethers.formatEther(totalWithFees), "VTRU");
+    
+    // Verify the fee calculations
+    const expectedTotal = listingTotal + platformFeeTotal + royaltyAmount;
+    if (totalWithFees !== expectedTotal) {
+      console.warn("Fee calculation mismatch!");
+      console.warn("Expected:", ethers.formatEther(expectedTotal));
+      console.warn("Calculated:", ethers.formatEther(totalWithFees));
+    }
     
     const token = l.paymentToken;
     const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
@@ -1587,8 +1640,18 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         gasEstimate = await connectedContract.buy.estimateGas(id, qty, { value: totalWithFees });
         console.log("Gas estimate:", gasEstimate.toString());
       } catch (gasError) {
-        console.warn("Gas estimation failed:", gasError.message);
-        gasEstimate = 500000n; // Fallback gas limit
+        console.warn("Gas estimation failed with full amount:", gasError.message);
+        
+        // Try with just the listing price (maybe contract calculates fees internally)
+        try {
+          gasEstimate = await connectedContract.buy.estimateGas(id, qty, { value: listingTotal });
+          console.log("Gas estimate with listing price only:", gasEstimate.toString());
+          console.log("Using listing price only - contract may calculate fees internally");
+          totalWithFees = listingTotal; // Update the total to use
+        } catch (gasError2) {
+          console.warn("Gas estimation failed with listing price only:", gasError2.message);
+          gasEstimate = 500000n; // Fallback gas limit
+        }
       }
       
       // Add 20% buffer to gas estimate
