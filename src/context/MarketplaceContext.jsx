@@ -1538,10 +1538,9 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     const unit = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
     const listingTotal = unit * qty;
     
-    // Fetch all fee rates from contract
-    console.log("[BUY DEBUG] Fetching platform and vibe fees...");
+    // Fetch platform fee from contract - simplified for new contract structure
+    console.log("[BUY DEBUG] Fetching platform fee...");
     let platformFeeBps = 0n;
-    let vibeShareBps = 0n;
     try {
       const feeResult = await marketplace.platformFeeBps();
       platformFeeBps = BigInt(feeResult.toString());
@@ -1550,23 +1549,8 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
       console.warn("Could not fetch platform fee, using 0:", feeError.message);
     }
 
-    try {
-      const vibeResult = await marketplace.vibeShareBps();
-      vibeShareBps = BigInt(vibeResult.toString());
-      console.log("Vibe share (basis points):", vibeShareBps.toString());
-    } catch (vibeError) {
-      console.warn("Could not fetch vibe share, using 0:", vibeError.message);
-    }
-
-    // Calculate comprehensive fee breakdown
-    // Platform fee is the total marketplace fee
+    // Calculate platform fee - new contract handles vibe distribution internally
     const platformFeeTotal = (listingTotal * platformFeeBps) / 10000n;
-    
-    // Vibe portion is a percentage of the platform fee (sent to fee processor)
-    const vibePortionInPayment = (platformFeeTotal * vibeShareBps) / 10000n;
-    
-    // Protocol portion is the remainder of platform fee (sent to protocol)
-    const protocolPortionInPayment = platformFeeTotal - vibePortionInPayment;
     
     // Check if there are creator royalties by querying the NFT contract
     let royaltyAmount = 0n;
@@ -1586,25 +1570,15 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
       console.log("No royalty info available or NFT doesn't support ERC2981:", royaltyError.message);
     }
     
-    // Total transaction value should include listing price + platform fees + royalties
-    // The contract will handle the internal distribution
+    // Total transaction value includes listing price + platform fees + royalties
+    // New contract handles vibe conversion internally - no separate fee processor
     let totalWithFees = listingTotal + platformFeeTotal + royaltyAmount;
     
-    console.log("[FEE BREAKDOWN]");
+    console.log("[SIMPLIFIED FEE BREAKDOWN]");
     console.log("Listing price:", ethers.formatEther(listingTotal), "VTRU");
-    console.log("Platform fee total:", ethers.formatEther(platformFeeTotal), "VTRU");
-    console.log("- Vibe portion:", ethers.formatEther(vibePortionInPayment), "VTRU (goes to fee processor)");
-    console.log("- Protocol portion:", ethers.formatEther(protocolPortionInPayment), "VTRU (goes to protocol)");
+    console.log("Platform fee:", ethers.formatEther(platformFeeTotal), "VTRU (contract handles vibe distribution)");
     console.log("Creator royalty:", ethers.formatEther(royaltyAmount), "VTRU");
     console.log("Total transaction value:", ethers.formatEther(totalWithFees), "VTRU");
-    
-    // Verify the fee calculations
-    const expectedTotal = listingTotal + platformFeeTotal + royaltyAmount;
-    if (totalWithFees !== expectedTotal) {
-      console.warn("Fee calculation mismatch!");
-      console.warn("Expected:", ethers.formatEther(expectedTotal));
-      console.warn("Calculated:", ethers.formatEther(totalWithFees));
-    }
     
     const token = l.paymentToken;
     const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
@@ -1675,13 +1649,13 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
       } catch (callError) {
         console.error("Buy transaction failed:", callError);
         
-        // Enhanced error handling
+        // Enhanced error handling for new contract
         if (callError.reason) {
           setStatus(`Transaction failed: ${callError.reason}`);
         } else if (callError.message?.includes('amount unused')) {
-          setStatus('Error: Amount unused - possible fee calculation issue');
+          setStatus('Error: Amount unused - the contract calculated fees differently than expected');
         } else if (callError.message?.includes('insufficient funds')) {
-          setStatus('Error: Insufficient funds for transaction');
+          setStatus('Error: Insufficient funds for transaction + gas');
         } else if (callError.message?.includes('user rejected')) {
           setStatus('Transaction was rejected in your wallet');
         } else {
@@ -1729,9 +1703,9 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     } else if (errorMessage.includes('insufficient funds')) {
       setStatus('Error: Insufficient funds for gas + payment');
     } else if (errorMessage.includes('amount unused')) {
-      setStatus('Error: Marketplace fee calculation issue');
+      setStatus('Error: New marketplace contract fee calculation - trying different amount');
     } else if (errorMessage.includes('execution reverted')) {
-      setStatus('Error: Transaction reverted - contract validation failed');
+      setStatus('Error: Transaction reverted - new contract validation failed');
     } else {
       setStatus(`Purchase failed: ${errorMessage.substring(0, 100)}...`);
     }
