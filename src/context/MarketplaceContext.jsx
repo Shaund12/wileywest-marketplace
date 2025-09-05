@@ -1055,30 +1055,35 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         let cachedListings = [];
         
         try {
-            // Step 1: ALWAYS fetch from blockchain first for real-time data
-            debugLog("🌐 Always fetching from blockchain for real-time data...");
-            await fetchListingsFromBlockchain(false, []);
-            lastCacheUpdateRef.current = Date.now();
-
-            // Step 2: Optionally try to load cache in background for comparison
+            // Step 1: IMMEDIATELY show cached data if available
             if (!forceRefresh && supabaseConnected && getCachedListings) {
                 try {
-                    debugLog("Checking cache for comparison...");
+                    debugLog("🚀 Loading cached listings immediately...");
+                    setStatus('Loading cached listings...');
                     cachedListings = await getCachedListings();
                     
                     if (cachedListings && cachedListings.length > 0) {
-                        debugLog(`Found ${cachedListings.length} listings in cache (used for comparison only)`);
+                        debugLog(`✅ Showing ${cachedListings.length} cached listings immediately`);
+                        setListings(cachedListings);
+                        setHotListings(cachedListings.slice(0, 5));
+                        setStatus(`Showing ${cachedListings.length} cached listings, scanning for updates...`);
+                        setIsLoading(false); // Show cached data immediately, scanning continues in background
                     }
                 } catch (cacheError) {
-                    debugWarn("Cache check failed, continuing with blockchain data:", cacheError.message);
+                    debugWarn("Cache loading failed, proceeding with blockchain scan:", cacheError.message);
                 }
             }
+            
+            // Step 2: Fetch from blockchain with progressive updates
+            debugLog("🌐 Starting blockchain scan for latest data...");
+            await fetchListingsFromBlockchain(false, cachedListings);
+            lastCacheUpdateRef.current = Date.now();
             
         } catch (error) {
             criticalError("Error in fetchListings:", error);
             
             // Fallback: try to use cached data if blockchain fails
-            if (supabaseConnected && getCachedListings && !forceRefresh) {
+            if (supabaseConnected && getCachedListings && !forceRefresh && cachedListings.length === 0) {
                 try {
                     debugLog("🔄 Blockchain failed, trying cache as fallback...");
                     cachedListings = await getCachedListings();
@@ -1096,11 +1101,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     criticalError("Both blockchain and cache failed:", fallbackError);
                     setStatus('Failed to fetch listings from all sources');
                 }
-            } else {
+            } else if (cachedListings.length === 0) {
                 setStatus('Failed to fetch listings');
             }
         } finally {
-            setIsLoading(false);
+            if (cachedListings.length === 0) {
+                setIsLoading(false); // Only set loading false if we haven't already shown cached data
+            }
         }
     };
 
@@ -1137,22 +1144,25 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             const existingIds = new Set(existingListings.map(listing => listing.id));
             let newListingsFound = 0;
             
-            const res = [];
+            const res = [...existingListings]; // Start with existing cached listings
             const maxScanRange = MARKETPLACE_CONFIG.MAX_LISTING_SCAN;
             
-            debugLog(`🔍 Scanning listings from ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN} to ${maxScanRange} (expanded range to find all active listings)`);
-            setStatus(`Scanning listings ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN}-${maxScanRange} (expanded range)...`);
+            debugLog(`🔍 Scanning listings from ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN} to ${maxScanRange} (progressive discovery)`);
+            setStatus(`Starting progressive scan of ${maxScanRange} listings...`);
             
-            let activeListingsFound = 0;
+            let activeListingsFound = existingListings.length;
             let scannedCount = 0;
+            const PROGRESSIVE_UPDATE_BATCH = 10; // Show listings every 10 found
+            let foundInBatch = 0;
             
             for (let i = MARKETPLACE_CONFIG.MIN_LISTING_SCAN; i <= maxScanRange; i++) {
                 scannedCount++;
                 
-                // Update progress every 25 listings for expanded range
-                if (scannedCount % 25 === 0 || scannedCount <= 50) {
-                    setStatus(`Found ${activeListingsFound} active listings out of ${scannedCount} scanned (${Math.round(scannedCount/maxScanRange*100)}% complete)...`);
+                // Update progress more frequently for better UX
+                if (scannedCount % 10 === 0 || scannedCount <= 20) {
+                    setStatus(`🔍 Scanning... Found ${activeListingsFound} active listings out of ${scannedCount} scanned (${Math.round(scannedCount/maxScanRange*100)}% complete)`);
                 }
+                
                 try {
                     const listing = await marketplace.listings(i);
 
@@ -1162,6 +1172,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     }
                     
                     activeListingsFound++;
+                    foundInBatch++;
                     debugLog(`✅ Found active listing ${i}: ${listing.nftContract}:${listing.tokenId}`);
 
                     // For background updates, prioritize new listings
@@ -1169,9 +1180,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         // Use existing listing data to avoid re-fetching metadata
                         const existingListing = existingListings.find(l => l.id === i);
                         if (existingListing) {
-                            res.push(existingListing);
-                            continue;
+                            continue; // Already have this listing, skip processing
                         }
+                    }
+
+                    // Skip if we already have this listing from cache
+                    if (existingIds.has(i)) {
+                        continue;
                     }
 
                     // Create a proper deterministic fallback image URL for the NFT
@@ -1348,7 +1363,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             pricePerUnit: listing.pricePerUnit?.toString(),
                             active: listing.active,
                             metadata: metadata
-                        })
+                        }),
+                        
+                        // Add collection name if resolved
+                        collectionName
                     };
 
                     debugLog("Sanitized listing with enhanced metadata:", sanitizedListing.name);
@@ -1359,13 +1377,26 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     if (!existingIds.has(i)) {
                         newListingsFound++;
                     }
+                    
+                    // PROGRESSIVE UPDATE: Show listings as they are found
+                    if (foundInBatch >= PROGRESSIVE_UPDATE_BATCH || activeListingsFound <= 20) {
+                        debugLog(`🔄 Progressive update: Showing ${res.length} listings so far...`);
+                        setListings([...res]); // Show current progress
+                        setHotListings(res.slice(0, 5));
+                        setStatus(`🔍 Found ${activeListingsFound} listings so far... (${Math.round(scannedCount/maxScanRange*100)}% scanned)`);
+                        foundInBatch = 0; // Reset batch counter
+                        
+                        // Brief pause to allow UI update
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                    }
+                    
                 } catch (err) {
                     debugWarn(`Skipping listing ${i}:`, err.message);
                 }
             }
 
             debugLog(`✅ Listing scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
-            setStatus(`Scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
+            setStatus(`✅ Scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
 
             debugLog(`Successfully loaded ${res.length} listings from blockchain`);
             setListings(res);
@@ -1403,7 +1434,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 setTimeout(() => setStatus(''), 3000);
             } else {
                 setStatus('Failed to fetch listings - network connectivity issue');
+                setTimeout(() => setStatus(''), 5000);
             }
+        } finally {
+            setIsLoading(false);
         }
     };
 
