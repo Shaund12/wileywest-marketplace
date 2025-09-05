@@ -1666,9 +1666,62 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
     } else {
       // ERC20 token path
       console.log("Processing ERC20 token purchase...");
-      const tx = await connectedContract.buy(id, qty);
+      
+      // Check ERC20 token balance
+      const erc20Contract = new ethers.Contract(token, ERC20_ABI, provider);
+      const tokenBalance = await erc20Contract.balanceOf(wallet);
+      console.log(`ERC20 Token Balance: ${ethers.formatUnits(tokenBalance, await erc20Contract.decimals())} ${await erc20Contract.symbol()}`);
+      
+      if (BigInt(tokenBalance.toString()) < totalWithFees) {
+        const tokenSymbol = await erc20Contract.symbol();
+        const tokenDecimals = await erc20Contract.decimals();
+        setStatus(`Error: Insufficient ${tokenSymbol} balance. Need ${ethers.formatUnits(totalWithFees, tokenDecimals)} ${tokenSymbol}, have ${ethers.formatUnits(tokenBalance, tokenDecimals)} ${tokenSymbol}`);
+        return;
+      }
+      
+      // Ensure marketplace contract has approval to spend user's ERC20 tokens
+      console.log("Checking/ensuring ERC20 approval...");
+      setStatus('Checking token approval...');
+      
+      try {
+        await ensureAllowanceWithBuffer({
+          tokenAddress: token,
+          owner: wallet,
+          spender: marketplaceAddress,
+          needed: totalWithFees,
+          signer,
+          setStatus,
+          bufferBps: 1000n // 10% buffer for future transactions
+        });
+        console.log("ERC20 approval confirmed");
+      } catch (approvalError) {
+        console.error("ERC20 approval failed:", approvalError);
+        setStatus(`Error: Failed to approve token spending: ${approvalError.message}`);
+        return;
+      }
+      
+      // Estimate gas for ERC20 purchase
+      console.log("Estimating gas for ERC20 token purchase...");
+      let gasEstimate;
+      try {
+        gasEstimate = await connectedContract.buy.estimateGas(id, qty);
+        console.log("Gas estimate:", gasEstimate.toString());
+      } catch (gasError) {
+        console.warn("Gas estimation failed:", gasError.message);
+        gasEstimate = 500000n; // Fallback gas limit
+      }
+      
+      // Add 20% buffer to gas estimate
+      const gasLimit = (gasEstimate * 120n) / 100n;
+      console.log(`Executing ERC20 buy transaction with gas limit ${gasLimit}`);
+      
+      setStatus('Submitting ERC20 purchase transaction...');
+      const tx = await connectedContract.buy(id, qty, { gasLimit });
       setStatus('Transaction submitted. Waiting for confirmation...');
+      console.log("Transaction hash:", tx.hash);
+      
       const receipt = await tx.wait();
+      console.log("Transaction confirmed:", receipt);
       
       if (receipt.status === 0) {
         throw new Error("Transaction failed during execution");
