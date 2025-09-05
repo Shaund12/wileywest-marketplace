@@ -342,9 +342,9 @@ function loadPrefs() {
     try {
         const raw = localStorage.getItem(PREFS_KEY);
         if (!raw) return {};
-        
+
         const prefs = JSON.parse(raw);
-        
+
         // Clear potentially problematic filter states that might hide all listings
         // These will be reset to empty/default values to ensure listings are visible
         const cleanPrefs = {
@@ -363,7 +363,7 @@ function loadPrefs() {
             autoRefreshMs: prefs.autoRefreshMs || 60000,
             autoLoadNext: Boolean(prefs.autoLoadNext)
         };
-        
+
         return cleanPrefs;
     } catch {
         return {};
@@ -639,7 +639,6 @@ function MarketplacePage() {
     /* ----------------------------
        Persist listings to Supabase cache (deduped)
        ---------------------------- */
-    // Persist listings to Supabase cache (deduped)
     useEffect(() => {
         if (!supabaseConnected) return;
         if (!Array.isArray(listings) || listings.length === 0) return;
@@ -678,10 +677,10 @@ function MarketplacePage() {
             }
 
             debugLog(`🔍 Fetching auction metadata for ${nftContract}:${tokenId}`);
-            
+
             // Use the enhanced metadata loader from metadataLoader.js
             const metadata = await loadMetadata(nftContract, tokenId, provider);
-            
+
             if (metadata && metadata.image) {
                 debugLog(`✅ Auction metadata loaded successfully for ${nftContract}:${tokenId}`);
                 return {
@@ -703,12 +702,12 @@ function MarketplacePage() {
             }
         } catch (error) {
             criticalError(`Failed to fetch auction metadata for ${nftContract}:${tokenId}:`, error);
-            return { 
-                name: `NFT #${tokenId || 'Unknown'}`, 
+            return {
+                name: `NFT #${tokenId || 'Unknown'}`,
                 image: null,
                 description: '',
                 attributes: [],
-                error: error.message 
+                error: error.message
             };
         }
     };
@@ -1195,7 +1194,7 @@ function MarketplacePage() {
        ---------------------------- */
     useEffect(() => {
         let result = [...listings];
-        
+
         // Debug logging to help identify filtering issues
         debugLog(`🔍 Filtering ${listings.length} listings with filters:`, {
             searchTerm,
@@ -1282,7 +1281,10 @@ function MarketplacePage() {
     const totalPages = Math.ceil(filteredListings.length / itemsPerPage);
     const indexOfLastItem = Math.min(currentPage, totalPages || 1) * itemsPerPage;
     const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-    const currentItems = filteredListings.slice(0, autoLoadNext ? indexOfLastItem : Math.max(0, indexOfLastItem - itemsPerPage), autoLoadNext ? undefined : indexOfLastItem); // for auto-load, show accumulated
+    // Fixed: use indexOfFirstItem for non-autoLoad paging; accumulate for autoLoadNext
+    const currentItems = autoLoadNext
+        ? filteredListings.slice(0, indexOfLastItem)
+        : filteredListings.slice(indexOfFirstItem, indexOfLastItem);
 
     const paginate = (pageNumber) => {
         setCurrentPage(Math.max(1, Math.min(pageNumber, totalPages || 1)));
