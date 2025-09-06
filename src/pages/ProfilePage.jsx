@@ -5,7 +5,6 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { ethers } from 'ethers';
 import ListingCard from '../components/ListingCard';
-import { NFTScanner } from '../utils/nftScanner';
 import '../profile-page.css';
 import CacheStats from '../components/CacheStats';
 import { isAuctionsEnabled } from '../utils/featureFlags';
@@ -103,8 +102,6 @@ function ProfilePage() {
     const [userListings, setUserListings] = useState([]);
     const [userNfts, setUserNfts] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
-    const [isScanning, setIsScanning] = useState(false);
-    const [scanProgress, setScanProgress] = useState({ found: 0, scanned: 0, total: 0 });
     const [isListingsLoading, setIsListingsLoading] = useState(false);
     const [nftMetadata, setNftMetadata] = useState({});
     const [cancellingId, setCancellingId] = useState(null);
@@ -743,252 +740,72 @@ function ProfilePage() {
         }
     };
 
-    // Scan for ERC721 NFTs owned by user
-    const scanERC721 = async (contractAddress) => {
-        try {
-            const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
-            const balance = await contract.balanceOf(wallet);
-
-            if (balance.toString() === '0') return [];
-
-            await getContractInfo(contractAddress, 'ERC721');
-
-            const nfts = [];
-            const balanceNum = Number(balance.toString());
-
-            setScanProgress(prev => ({
-                ...prev,
-                total: prev.total + balanceNum
-            }));
-
-            const batchSize = 5;
-            for (let batchStart = 0; batchStart < balanceNum; batchStart += batchSize) {
-                const batchPromises = [];
-
-                for (let i = batchStart; i < Math.min(batchStart + batchSize, balanceNum); i++) {
-                    batchPromises.push((async () => {
-                        try {
-                            const tokenId = await contract.tokenOfOwnerByIndex(wallet, i);
-                            let tokenURI = null;
-
-                            try {
-                                tokenURI = await contract.tokenURI(tokenId);
-                            } catch { }
-
-                            const nft = {
-                                contractAddress,
-                                tokenId: tokenId.toString(),
-                                type: 'ERC721',
-                                tokenURI,
-                                balance: '1',
-                            };
-
-                            nfts.push(nft);
-
-                            setScanProgress(prev => ({
-                                ...prev,
-                                found: prev.found + 1,
-                                scanned: prev.scanned + 1
-                            }));
-
-                            return nft;
-                        } catch (e) {
-                            setScanProgress(prev => ({
-                                ...prev,
-                                scanned: prev.scanned + 1
-                            }));
-                            return null;
-                        }
-                    })());
-                }
-
-                await Promise.all(batchPromises);
-            }
-
-            if (nfts.length > 0) {
-                setTimeout(() => batchFetchMetadata(nfts), 100);
-            }
-
-            return nfts;
-        } catch (e) {
-            return [];
-        }
-    };
-
-    // Scan for ERC1155 NFTs based on recent transfer events
-    const scanERC1155 = async (contractAddress) => {
-        try {
-            const contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
-
-            await getContractInfo(contractAddress, 'ERC1155');
-
-            const transferSingleFilter = contract.filters.TransferSingle(null, null, wallet);
-            const transferBatchFilter = contract.filters.TransferBatch(null, null, wallet);
-
-            const currentBlock = await provider.getBlockNumber();
-            const fromBlock = 0;
-
-            const singleEvents = await contract.queryFilter(transferSingleFilter, fromBlock);
-            const batchEvents = await contract.queryFilter(transferBatchFilter, fromBlock);
-
-            const tokenIds = new Set();
-
-            singleEvents.forEach(event => {
-                tokenIds.add(event.args.id.toString());
-            });
-
-            batchEvents.forEach(event => {
-                event.args.ids.forEach(id => tokenIds.add(id.toString()));
-            });
-
-            listings
-                .filter(l => l.nftContract.toLowerCase() === contractAddress.toLowerCase())
-                .forEach(l => tokenIds.add(l.tokenId.toString()));
-
-            for (let i = 1; i <= 10; i++) {
-                tokenIds.add(i.toString());
-            }
-
-            const uniqueTokenIds = [...tokenIds];
-
-            setScanProgress(prev => ({
-                ...prev,
-                total: prev.total + uniqueTokenIds.length
-            }));
-
-            const nfts = [];
-
-            for (const tokenId of uniqueTokenIds) {
-                try {
-                    const balance = await contract.balanceOf(wallet, tokenId);
-
-                    if (balance.toString() !== '0') {
-                        let tokenURI = null;
-                        try {
-                            tokenURI = await contract.uri(tokenId);
-                        } catch { }
-
-                        nfts.push({
-                            contractAddress,
-                            tokenId,
-                            type: 'ERC1155',
-                            tokenURI,
-                            balance: balance.toString()
-                        });
-
-                        fetchNftMetadata(contractAddress, tokenId, tokenURI);
-
-                        setScanProgress(prev => ({
-                            ...prev,
-                            found: prev.found + 1
-                        }));
-                    }
-
-                    setScanProgress(prev => ({
-                        ...prev,
-                        scanned: prev.scanned + 1
-                    }));
-
-                } catch {
-                    setScanProgress(prev => ({
-                        ...prev,
-                        scanned: prev.scanned + 1
-                    }));
-                }
-            }
-
-            return nfts;
-        } catch (e) {
-            return [];
-        }
-    };
-
-    // Scan Transfer events for NFTs sent to the user
-    const scanForTransferEvents = async () => {
-        try {
-            const erc721TransferTopic = ethers.id('Transfer(address,address,uint256)');
-            const toUserTopic = ethers.zeroPadValue(wallet.toLowerCase(), 32);
-
-            const filter = {
-                topics: [erc721TransferTopic, null, toUserTopic],
-                fromBlock: -10000,
-                toBlock: 'latest'
-            };
-
-            const logs = await provider.getLogs(filter);
-            const contracts = [...new Set(logs.map(log => log.address.toLowerCase()))];
-
-            return contracts;
-        } catch (e) {
-            return [];
-        }
-    };
-
-    // Find ALL NFTs owned by the user with cache-first approach and throttling
+    // Load user NFTs with cache-first approach and optional manual sync
     const scanningInProgress = useRef(false);
-    const scanningTimeout = useRef(null);
 
-    // Reset scanning state with timeout protection
+    // Reset scanning state
     const resetScanningState = () => {
         scanningInProgress.current = false;
-        if (scanningTimeout.current) {
-            clearTimeout(scanningTimeout.current);
-            scanningTimeout.current = null;
-        }
     };
 
-    // Force reset scanning state (for stuck situations)
+    // Force reset scanning state
     const forceResetScanningState = () => {
         resetScanningState();
         setIsLoading(false);
-        setIsScanning(false);
     };
-
-    // Find ALL NFTs owned by the user with cache-first approach and ALWAYS scan from genesis (block 0)
-    // USER REQUIREMENT: Always load cache AND always scan from block 0 no matter what
-    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false, scanFromGenesis = true) => {
+    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false, triggerSync = false) => {
         if (!wallet || !provider) return;
 
-        if (scanFromGenesis) {
+        if (forceRefresh) {
             forceResetScanningState();
-        } else {
-            if (scanningInProgress.current && !forceRefresh) {
-                return;
-            }
-            if (forceRefresh) {
-                resetScanningState();
-            }
         }
 
         setIsLoading(true);
-        scanningInProgress.current = true;
-
-        scanningTimeout.current = setTimeout(() => {
-            forceResetScanningState();
-            setStatus("Scanning timed out - please try again");
-        }, 10 * 60 * 1000);
 
         try {
-            // Always load cache first
+            // Always load cache first for instant display
             if (supabaseConnected && getCachedProfile) {
-                setStatus("Loading profile from cache...");
+                setStatus("Loading collection from cache...");
                 try {
                     const cachedProfile = await getCachedProfile(wallet);
                     if (cachedProfile?.nfts && cachedProfile.nfts.length > 0) {
                         setUserNfts(cachedProfile.nfts);
-                        setNftMetadata(cachedProfile.metadata || {});
-                        setStatus(`Loaded ${cachedProfile.nfts.length} NFTs from cache`);
+                        
+                        // Build metadata from cached NFTs
+                        const metadata = {};
+                        cachedProfile.nfts.forEach(nft => {
+                            const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                            if (nft.metadata) {
+                                metadata[key] = {
+                                    ...nft.metadata,
+                                    name: nft.name,
+                                    imageUrl: nft.image,
+                                    loaded: true,
+                                    loading: false
+                                };
+                            }
+                        });
+                        setNftMetadata(metadata);
+                        
+                        setStatus(`✅ Loaded ${cachedProfile.nfts.length} NFTs from cache`);
                         await fetchContractInfoForNfts(cachedProfile.nfts);
-                        await batchFetchMetadata(cachedProfile.nfts);
+                        
+                        setTimeout(() => setStatus(''), 2000);
+                    } else {
+                        setStatus("No NFTs found in cache - triggering sync...");
+                        setUserNfts([]);
                     }
-                } catch { /* ignore cache errors */ }
+                } catch (error) {
+                    debugWarn("Cache load failed:", error);
+                    setStatus("Cache unavailable - will use manual sync");
+                    setUserNfts([]);
+                }
             }
 
-            // Always scan from chain (genesis or conservative)
-            setStatus(scanFromGenesis
-                ? "🔥 SCANNING ALL BLOCKCHAIN HISTORY FROM BLOCK 0 - This may take a few minutes..."
-                : "Scanning recent blockchain activity...");
-            await scanUserNftsFromBlockchain(false, forceRefresh, scanFromGenesis);
+            // If user requests sync or cache is empty, trigger backend sync
+            if (triggerSync || (userNfts.length === 0 && forceRefresh)) {
+                await triggerCollectionSync();
+            }
 
         } catch (error) {
             setStatus(`Error loading NFTs: ${error.message}`);
@@ -998,96 +815,65 @@ function ProfilePage() {
         }
     };
 
-    const scanUserNftsFromBlockchain = async (isBackgroundUpdate = false, isForceRefresh = false, scanFromGenesis = true) => {
-        if (scanFromGenesis) {
-            // always allowed
-        } else {
-            if (scanningInProgress.current && !isForceRefresh) {
-                return;
-            }
-        }
-
-        const now = Date.now();
-        if (isBackgroundUpdate && now - lastScanTime.current < SCAN_THROTTLE_MS) {
-            return;
-        }
-
-        if (!isBackgroundUpdate) {
-            setIsScanning(true);
-            setScanProgress({ found: 0, scanned: 0, total: 0 });
-            setStatus("Scanning blockchain for your NFTs...");
-            scanningInProgress.current = true;
-            scanningTimeout.current = setTimeout(() => {
-                forceResetScanningState();
-                setStatus("Scanning timed out - please try again");
-            }, 5 * 60 * 1000);
-        }
-
-        lastScanTime.current = now;
-
+    // Trigger backend collection sync
+    const triggerCollectionSync = async () => {
         try {
-            let scanner;
-            try {
-                scanner = new NFTScanner(provider, wallet, (statusMsg) => {
-                    if (!isBackgroundUpdate) {
-                        setStatus(statusMsg);
-                    }
-                });
-            } catch (scannerError) {
-                setStatus(`Error initializing scanner: ${scannerError.message}`);
-                return;
-            }
-
-            const foundNfts = await scanner.scanAllNFTs(isBackgroundUpdate, scanFromGenesis);
-
-            if (foundNfts.length > 0) {
-                setUserNfts(foundNfts);
-                if (!isBackgroundUpdate) {
-                    setStatus(`✅ Found ${foundNfts.length} NFTs in your wallet`);
-                }
-
-                await fetchContractInfoForNfts(foundNfts);
-
-                if (supabaseConnected && cacheProfileData) {
-                    try {
-                        const profileData = {
-                            nfts: foundNfts,
-                            listings: userListings,
-                            balance: await provider.getBalance(wallet).then(b => b.toString())
-                        };
-                        await cacheProfileData(wallet, profileData);
-                    } catch { }
-                }
-
-                batchFetchMetadata(foundNfts);
+            setStatus("🔄 Triggering collection sync...");
+            
+            const response = await fetch('/api/sync-user-collections', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    walletAddress: wallet,
+                    immediate: true 
+                })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                setStatus(`✅ Sync completed - found ${result.stats?.nfts || 0} NFTs`);
+                
+                // Reload from cache after sync
+                setTimeout(() => {
+                    findAllUserNfts(false, false, false);
+                }, 1000);
             } else {
-                if (isForceRefresh) {
-                    setUserNfts([]);
-                    setStatus("Force refresh complete - no NFTs found in wallet");
-                } else if (!isBackgroundUpdate) {
-                    setStatus("⚠️ Scan found 0 NFTs - there may be RPC issues. Try 'Force Refresh'.");
-                }
+                const error = await response.json();
+                setStatus(`❌ Sync failed: ${error.error || 'Unknown error'}`);
             }
-
-            if (!isBackgroundUpdate && foundNfts.length > 0) {
-                setTimeout(() => setStatus(''), 3000);
-            }
-
         } catch (error) {
-            let errorMessage = `Error scanning: ${error.message}`;
-            if (error.message?.includes?.('network')) errorMessage = "Network error - please check your connection and try again";
-            else if (error.message?.includes?.('timeout')) errorMessage = "Scan timed out - please try again";
-            else if (error.message?.includes?.('rate limit')) errorMessage = "Too many requests - please wait a moment and try again";
-            if (!isBackgroundUpdate) {
-                setStatus(errorMessage);
-            }
-        } finally {
-            if (!isBackgroundUpdate) {
-                setIsScanning(false);
-                resetScanningState();
-            }
+            setStatus(`❌ Sync request failed: ${error.message}`);
         }
     };
+
+    // Set up real-time subscriptions for profile updates with improved throttling
+    const lastSyncTime = useRef(0);
+    const SYNC_THROTTLE_MS = 10 * 60 * 1000; // 10 minutes between syncs
+
+    useEffect(() => {
+        if (supabaseConnected && subscribeToProfiles && wallet) {
+            const profileSubscription = subscribeToProfiles((payload) => {
+                if (payload.new?.wallet_address === wallet.toLowerCase()) {
+                    const now = Date.now();
+                    if (scanningInProgress.current || isLoading) {
+                        return;
+                    }
+                    if (now - lastSyncTime.current > SYNC_THROTTLE_MS) {
+                        lastSyncTime.current = now;
+                        findAllUserNfts(false, false, false); // Just reload from cache
+                    }
+                }
+            });
+
+            return () => {
+                if (profileSubscription) {
+                    profileSubscription.unsubscribe();
+                }
+            };
+        }
+    }, [supabaseConnected, wallet]);
 
     // Toggle collection collapse state
     const toggleCollectionCollapse = (collectionAddress) => {
@@ -1225,41 +1011,6 @@ function ProfilePage() {
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
     }, [modalRef]);
-
-    // Fetch NFTs when tab is changed to collection
-    useEffect(() => {
-        if (activeTab === 'collection' && wallet && !userNfts.length) {
-            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) for initial load
-            findAllUserNfts(false, true, true); // forceRefresh=false, allowBackgroundUpdate=true, scanFromGenesis=true
-        }
-    }, [activeTab, wallet]);
-
-    // Set up real-time subscriptions for profile updates with improved throttling
-    const lastScanTime = useRef(0);
-    const SCAN_THROTTLE_MS = 2 * 60 * 1000; // Increased to 2 minutes to reduce frequency
-
-    useEffect(() => {
-        if (supabaseConnected && subscribeToProfiles && wallet) {
-            const profileSubscription = subscribeToProfiles((payload) => {
-                if (payload.new?.wallet_address === wallet.toLowerCase()) {
-                    const now = Date.now();
-                    if (scanningInProgress.current || isScanning) {
-                        return;
-                    }
-                    if (now - lastScanTime.current > SCAN_THROTTLE_MS) {
-                        lastScanTime.current = now;
-                        findAllUserNfts(false, false, true); // scanFromGenesis = true
-                    }
-                }
-            });
-
-            return () => {
-                if (profileSubscription) {
-                    profileSubscription.unsubscribe();
-                }
-            };
-        }
-    }, [supabaseConnected, wallet]); // Removed subscribeToProfiles from dependencies
 
     // Cleanup scanning state when wallet changes or component unmounts
     useEffect(() => {
@@ -1525,39 +1276,39 @@ function ProfilePage() {
                                 <div className="action-buttons">
                                     <button
                                         className="primary-button action-button"
-                                        onClick={() => findAllUserNfts(false, true, true)} // USER REQUIREMENT: ALWAYS scan from genesis
+                                        onClick={() => findAllUserNfts(false, true, false)}
                                         disabled={isLoading || isScanning}
                                     >
-                                        {isScanning ? (
+                                        {isLoading ? (
                                             <>
                                                 <span className="spinner"></span>
-                                                Scanning...
+                                                Loading...
                                             </>
                                         ) : (
                                             <>
                                                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
                                                     <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
                                                 </svg>
-                                                Find All NFTs
+                                                Refresh Collection
                                             </>
                                         )}
                                     </button>
                                     <button
-                                        className="tertiary-button action-button scan-history-button"
+                                        className="secondary-button action-button"
                                         onClick={() => findAllUserNfts(false, false, true)}
                                         disabled={isLoading || isScanning}
-                                        title="Comprehensive scan from blockchain genesis (block 0) - finds all historical NFTs"
+                                        title="Trigger immediate collection sync via backend"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
-                                            <path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zM12.5 7H11v6l5.25 3.15.75-1.23-4.5-2.67z" />
+                                            <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
                                         </svg>
-                                        Scan All History
+                                        Sync Data
                                     </button>
                                     <button
-                                        className="secondary-button action-button force-refresh-button"
-                                        onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
+                                        className="tertiary-button action-button force-refresh-button"
+                                        onClick={() => findAllUserNfts(true, false, true)}
                                         disabled={false}
-                                        title="Force refresh - bypasses stuck scanning state and cache"
+                                        title="Force refresh - clears cache and triggers new sync"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
                                             <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
@@ -1609,31 +1360,12 @@ function ProfilePage() {
                             </div>
                         )}
 
-                        {isScanning && (
-                            <div className="scan-progress">
-                                <div className="progress-bar">
-                                    <div
-                                        className="progress-fill"
-                                        style={{
-                                            width: `${scanProgress.total > 0 ? (scanProgress.scanned / scanProgress.total * 100) : 0}%`
-                                        }}
-                                    ></div>
-                                </div>
-                                <div className="progress-stats">
-                                    <span>Found: <strong>{scanProgress.found} NFTs</strong></span>
-                                    <span>Scanned: <strong>{scanProgress.scanned}/{scanProgress.total || '?'}</strong></span>
-                                </div>
-                                {/* Add the disclaimer here */}
-                                <NFTScannerDisclaimer />
-                            </div>
-                        )}
-
-                        {isLoading && !isScanning ? (
+                        {isLoading && (
                             <div className="loading-container">
                                 <div className="loading-spinner"></div>
                                 <p>Loading your NFT collection...</p>
                             </div>
-                        ) : groupByCollection ? (
+                        )} : groupByCollection ? (
                             // Grouped by collection view
                             <div className="collections-view">
                                 {paginatedItems.length > 0 ? (
@@ -1722,15 +1454,15 @@ function ProfilePage() {
                                         ) : (
                                             <>
                                                 <p>No NFTs found in your wallet</p>
-                                                <p className="small">Try scanning for all your NFTs</p>
+                                                <p className="small">Try syncing your collection data</p>
                                             </>
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
-                                            disabled={isScanning}
+                                            onClick={() => findAllUserNfts(true, false, true)}
+                                            disabled={isLoading}
                                         >
-                                            {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
+                                            {isLoading ? 'Loading...' : 'Sync Collection Data'}
                                         </button>
                                     </div>
                                 )}
@@ -1799,16 +1531,16 @@ function ProfilePage() {
                                         ) : (
                                             <>
                                                 <p>No NFTs found in your wallet</p>
-                                                <p className="small">Try scanning for all your NFTs</p>
+                                                <p className="small">Try syncing your collection data</p>
                                             </>
 
                                         )}
                                         <button
                                             className="primary-button"
-                                            onClick={() => findAllUserNfts(true, false, true)} // USER REQUIREMENT: ALWAYS scan from genesis
-                                            disabled={isScanning}
+                                            onClick={() => findAllUserNfts(true, false, true)}
+                                            disabled={isLoading}
                                         >
-                                            {isScanning ? 'Scanning...' : 'Force Refresh NFTs'}
+                                            {isLoading ? 'Loading...' : 'Sync Collection Data'}
                                         </button>
                                     </div>
                                 )}
@@ -2053,35 +1785,6 @@ function ProfilePage() {
         }
     }
 
-    // Add this function inside ProfilePage component before the return statement
-    function NFTScannerDisclaimer() {
-        return (
-            <div className="nft-scanner-disclaimer">
-                <div className="disclaimer-header">
-                    <i className="fas fa-info-circle"></i>
-                    <h3>Enhanced NFT Scanning</h3>
-                </div>
-                <p>Searching for your NFTs using a balanced approach that covers the last 6 months of blockchain history. This ensures comprehensive coverage while maintaining good performance.</p>
-                <div className="tips-container">
-                    <h4>What we're doing:</h4>
-                    <ul>
-                        <li>Scanning known NFT contracts and recent transfer history</li>
-                        <li>Automatically retrying failed network requests</li>
-                        <li>Caching results for instant future loading</li>
-                        <li>Using timeouts to prevent hanging requests</li>
-                    </ul>
-                </div>
-                {scanProgress.total > 0 && (
-                    <div className="scan-details">
-                        <small>
-                            Progress: {scanProgress.scanned}/{scanProgress.total} contracts checked,
-                            {scanProgress.found} NFTs found
-                        </small>
-                    </div>
-                )}
-            </div>
-        );
-    }
 }
 
 // NFT Detail View Component for the modal

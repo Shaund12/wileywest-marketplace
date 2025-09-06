@@ -3,6 +3,10 @@
     {
       "path": "/api/sync-listings",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/sync-user-collections",
+      "schedule": "*/15 * * * *"
     }
   ],
   "rewrites": [
