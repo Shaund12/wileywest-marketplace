@@ -835,7 +835,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             let volume1hUSDC = 0, volume6hUSDC = 0, volume12hUSDC = 0;
             let volume24hUSDC = 0, volume7dUSDC = 0, volume30dUSDC = 0;
             let sales1h = 0, sales6h = 0, sales12h = 0;
-            let sales24h = 0, sales7d = 0, sales30h = 0;
+            let sales24h = 0, sales7d = 0, sales30d = 0;
             
             // Advanced analytics tracking
             let priceSum = 0, priceCount = 0;

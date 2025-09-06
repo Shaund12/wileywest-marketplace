@@ -1277,7 +1277,7 @@ function ProfilePage() {
                                     <button
                                         className="primary-button action-button"
                                         onClick={() => findAllUserNfts(false, true, false)}
-                                        disabled={isLoading || isScanning}
+                                        disabled={isLoading}
                                     >
                                         {isLoading ? (
                                             <>
@@ -1296,7 +1296,7 @@ function ProfilePage() {
                                     <button
                                         className="secondary-button action-button"
                                         onClick={() => findAllUserNfts(false, false, true)}
-                                        disabled={isLoading || isScanning}
+                                        disabled={isLoading}
                                         title="Trigger immediate collection sync via backend"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
