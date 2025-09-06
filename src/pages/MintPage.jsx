@@ -20,6 +20,7 @@ const MintPage = () => {
     const [userTokens, setUserTokens] = useState([]);
     const [payoutAddress, setPayoutAddress] = useState('');
     const [contractHealthy, setContractHealthy] = useState(true);
+    const [contractDiagnostics, setContractDiagnostics] = useState(null);
 
     const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
 
@@ -71,21 +72,107 @@ const MintPage = () => {
             setSaleActive(active);
             setPayoutAddress(payout);
             
-            // Check contract health
-            const isHealthy = payout !== '0x0000000000000000000000000000000000000000';
-            setContractHealthy(isHealthy);
-            
-            if (!isHealthy) {
-                debugWarn('Contract payout address is zero address - minting will fail');
-            }
+            // Enhanced contract health checking
+            await performContractDiagnostics(payout, active, price);
             
             debugLog('Contract data loaded successfully');
         } catch (error) {
             debugWarn('Error loading contract data:', error);
             setStatus('Failed to load contract information');
             setContractHealthy(false);
+            setContractDiagnostics({
+                error: true,
+                message: 'Failed to load contract data',
+                details: error.message
+            });
         } finally {
             setLoading(false);
+        }
+    };
+
+    const performContractDiagnostics = async (payout, active, price) => {
+        const diagnostics = {
+            payoutAddressValid: false,
+            saleActive: active,
+            priceValid: false,
+            gasEstimationWorks: false,
+            contractCallable: true,
+            payoutAddressBalance: '0',
+            recommendations: []
+        };
+
+        try {
+            // Check payout address
+            const isZeroAddress = payout === '0x0000000000000000000000000000000000000000';
+            diagnostics.payoutAddressValid = !isZeroAddress;
+            
+            if (isZeroAddress) {
+                diagnostics.recommendations.push('Contract payout address is set to zero address');
+            }
+
+            // Check if payout address can receive ETH (if not zero address)
+            if (!isZeroAddress && provider) {
+                try {
+                    const balance = await provider.getBalance(payout);
+                    diagnostics.payoutAddressBalance = ethers.formatEther(balance);
+                    debugLog(`Payout address ${payout} balance: ${diagnostics.payoutAddressBalance} VTRU`);
+                } catch (error) {
+                    debugWarn('Could not check payout address balance:', error);
+                }
+            }
+
+            // Check price validity
+            diagnostics.priceValid = price > 0;
+            
+            if (!diagnostics.priceValid) {
+                diagnostics.recommendations.push('Mint price is set to 0, which may cause issues');
+            }
+
+            // Test gas estimation for mint (only if sale is active and we have a wallet)
+            if (active && signer && diagnostics.payoutAddressValid && diagnostics.priceValid) {
+                try {
+                    const contractWithSigner = nftContract.connect(signer);
+                    const mintPriceWei = ethers.parseEther(ethers.formatEther(price));
+                    
+                    // Try to estimate gas - this will fail if payout mechanism has issues
+                    await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
+                    diagnostics.gasEstimationWorks = true;
+                    debugLog('Gas estimation test passed - contract appears healthy');
+                } catch (error) {
+                    diagnostics.gasEstimationWorks = false;
+                    debugWarn('Gas estimation test failed:', error);
+                    
+                    if (error.message.includes('payout fail')) {
+                        diagnostics.recommendations.push('Contract payout mechanism is failing - this may be a contract bug or configuration issue');
+                    } else if (error.message.includes('insufficient funds')) {
+                        // This is actually good - it means gas estimation worked but user doesn't have enough ETH
+                        diagnostics.gasEstimationWorks = true;
+                        diagnostics.recommendations.push('Gas estimation works, but you need more VTRU for minting');
+                    } else {
+                        diagnostics.recommendations.push(`Contract error during gas estimation: ${error.message}`);
+                    }
+                }
+            }
+
+            // Determine overall health
+            const isHealthy = diagnostics.payoutAddressValid && 
+                             diagnostics.saleActive && 
+                             diagnostics.priceValid && 
+                             diagnostics.gasEstimationWorks;
+            
+            setContractHealthy(isHealthy);
+            setContractDiagnostics(diagnostics);
+            
+            if (!isHealthy) {
+                debugWarn('Contract health check failed:', diagnostics);
+            }
+            
+        } catch (error) {
+            debugWarn('Error during contract diagnostics:', error);
+            diagnostics.contractCallable = false;
+            diagnostics.recommendations.push('Contract is not responding to calls');
+            setContractHealthy(false);
+            setContractDiagnostics(diagnostics);
         }
     };
 
@@ -142,18 +229,13 @@ const MintPage = () => {
             const contractWithSigner = nftContract.connect(signer);
             const mintPriceWei = ethers.parseEther(mintPrice);
             
-            // Check contract state before attempting mint
-            setStatus('Checking contract state...');
-            try {
-                const payoutAddress = await nftContract.payout();
-                debugLog('Contract payout address:', payoutAddress);
-                
-                if (payoutAddress === '0x0000000000000000000000000000000000000000') {
-                    setStatus('Contract error: Payout address not configured. Please contact support.');
-                    return;
-                }
-            } catch (error) {
-                debugWarn('Could not check payout address:', error);
+            // Enhanced pre-flight checks
+            setStatus('Running pre-flight diagnostics...');
+            await performContractDiagnostics(payoutAddress, saleActive, ethers.parseEther(mintPrice));
+            
+            if (!contractHealthy) {
+                setStatus('Contract health check failed. Please see diagnostics below.');
+                return;
             }
             
             // Estimate gas for the mint function (minting 1 NFT)
@@ -161,12 +243,24 @@ const MintPage = () => {
             let gasEstimate;
             try {
                 gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
+                debugLog('Gas estimation successful:', gasEstimate.toString());
             } catch (gasError) {
                 criticalError('Gas estimation failed:', gasError);
                 
-                // Handle specific contract errors
+                // Enhanced error handling with more specific messages
                 if (gasError.message.includes('payout fail')) {
-                    setStatus('Contract error: Mint payout mechanism is currently failing. Please contact the contract administrator to fix the payout configuration.');
+                    setStatus('❌ Contract Error: The minting payout mechanism is failing. This appears to be a contract-level issue that needs to be resolved by the contract administrator. Please contact support with this error.');
+                    
+                    // Log detailed diagnostic information
+                    debugLog('Payout fail diagnostics:', {
+                        payoutAddress,
+                        saleActive,
+                        mintPrice,
+                        totalSupply,
+                        maxSupply,
+                        diagnostics: contractDiagnostics
+                    });
+                    
                     return;
                 } else if (gasError.message.includes('sale not active')) {
                     setStatus('Minting is not currently active');
@@ -177,6 +271,9 @@ const MintPage = () => {
                 } else if (gasError.message.includes('insufficient payment')) {
                     setStatus('Insufficient payment amount. Please check the mint price.');
                     return;
+                } else if (gasError.message.includes('insufficient funds')) {
+                    setStatus('Insufficient VTRU balance to mint. You need more VTRU in your wallet.');
+                    return;
                 } else {
                     setStatus(`Contract error: ${gasError.reason || gasError.message}`);
                     return;
@@ -186,12 +283,16 @@ const MintPage = () => {
             const gasLimit = gasEstimate * 120n / 100n; // 20% buffer
             
             setStatus('Sending mint transaction...');
+            debugLog('Sending mint transaction with gas limit:', gasLimit.toString());
+            
             const tx = await contractWithSigner.mint(1, {
                 value: mintPriceWei,
                 gasLimit: gasLimit
             });
             
             setStatus('Transaction submitted, waiting for confirmation...');
+            debugLog('Transaction hash:', tx.hash);
+            
             const receipt = await tx.wait();
             
             if (receipt.status === 1) {
@@ -211,7 +312,8 @@ const MintPage = () => {
                     tokenId = parsed.args.tokenId.toString();
                 }
                 
-                setStatus(`Successfully minted RevShare NFT #${tokenId}!`);
+                setStatus(`✅ Successfully minted RevShare NFT #${tokenId}!`);
+                debugLog('Mint successful! Token ID:', tokenId);
                 
                 // Refresh data
                 await loadContractData();
@@ -219,19 +321,26 @@ const MintPage = () => {
                 
                 setTimeout(() => setStatus(''), 8000);
             } else {
-                setStatus('Mint transaction failed');
+                setStatus('❌ Mint transaction failed');
+                debugWarn('Transaction failed with status:', receipt.status);
             }
             
         } catch (error) {
             criticalError('Error minting NFT:', error);
+            
+            // Enhanced error messages
             if (error.code === 'INSUFFICIENT_FUNDS') {
-                setStatus('Insufficient VTRU balance to mint');
+                setStatus('❌ Insufficient VTRU balance to mint');
             } else if (error.message.includes('user rejected')) {
-                setStatus('Transaction cancelled by user');
+                setStatus('⚠️ Transaction cancelled by user');
             } else if (error.message.includes('payout fail')) {
-                setStatus('Contract error: Mint payout mechanism is currently failing. Please contact the contract administrator.');
+                setStatus('❌ Contract Error: Mint payout mechanism is currently failing. This is a contract-level issue - please contact the contract administrator.');
+            } else if (error.code === 'NETWORK_ERROR') {
+                setStatus('❌ Network error. Please check your connection and try again.');
+            } else if (error.code === 'TIMEOUT') {
+                setStatus('❌ Transaction timeout. Please try again with higher gas.');
             } else {
-                setStatus(`Mint failed: ${error.reason || error.message}`);
+                setStatus(`❌ Mint failed: ${error.reason || error.message}`);
             }
         } finally {
             setMinting(false);
@@ -307,8 +416,73 @@ const MintPage = () => {
                         ⚠️ Contract Configuration Issue
                     </div>
                     <div style={{ fontSize: '0.9rem', color: 'rgba(255, 255, 255, 0.8)' }}>
-                        The contract's payout address is not properly configured (zero address: {payoutAddress}). 
-                        Minting is currently disabled until the contract administrator fixes this issue.
+                        The contract's payout mechanism is not working properly. 
+                        {payoutAddress === '0x0000000000000000000000000000000000000000' 
+                            ? ` The payout address is set to zero address (${payoutAddress}).` 
+                            : ` Payout address: ${payoutAddress}`}
+                        Minting is currently disabled until this issue is resolved.
+                    </div>
+                    
+                    {/* Contract Diagnostics */}
+                    {contractDiagnostics && (
+                        <div style={{ 
+                            marginTop: '1rem', 
+                            padding: '0.8rem', 
+                            background: 'rgba(0, 0, 0, 0.3)', 
+                            borderRadius: '4px',
+                            fontSize: '0.8rem'
+                        }}>
+                            <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>🔍 Diagnostics:</div>
+                            <div>Payout Address Valid: {contractDiagnostics.payoutAddressValid ? '✅' : '❌'}</div>
+                            <div>Sale Active: {contractDiagnostics.saleActive ? '✅' : '❌'}</div>
+                            <div>Price Valid: {contractDiagnostics.priceValid ? '✅' : '❌'}</div>
+                            <div>Gas Estimation Works: {contractDiagnostics.gasEstimationWorks ? '✅' : '❌'}</div>
+                            <div>Contract Callable: {contractDiagnostics.contractCallable ? '✅' : '❌'}</div>
+                            {contractDiagnostics.payoutAddressBalance && (
+                                <div>Payout Address Balance: {contractDiagnostics.payoutAddressBalance} VTRU</div>
+                            )}
+                            
+                            {contractDiagnostics.recommendations && contractDiagnostics.recommendations.length > 0 && (
+                                <div style={{ marginTop: '0.5rem' }}>
+                                    <div style={{ fontWeight: 'bold' }}>📝 Issues Found:</div>
+                                    {contractDiagnostics.recommendations.map((rec, index) => (
+                                        <div key={index} style={{ color: '#ffcc00', marginLeft: '1rem' }}>
+                                            • {rec}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Debug Information (for development) */}
+            {import.meta.env.VITE_DEBUG_MODE === 'true' && contractDiagnostics && (
+                <div style={{
+                    padding: '1rem',
+                    marginBottom: '1.5rem',
+                    borderRadius: '8px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: '#fff',
+                    fontSize: '0.8rem'
+                }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                        🛠️ Debug Information
+                    </div>
+                    <div style={{ fontFamily: 'monospace' }}>
+                        <div>Contract Address: {nftAddress}</div>
+                        <div>Payout Address: {payoutAddress}</div>
+                        <div>Mint Price: {mintPrice} VTRU</div>
+                        <div>Sale Active: {saleActive ? 'true' : 'false'}</div>
+                        <div>Total Supply: {totalSupply} / {maxSupply}</div>
+                        <div>User Balance: {userBalance} NFTs</div>
+                        <div>Wallet Connected: {wallet || 'None'}</div>
+                        <div>Signer Available: {signer ? 'Yes' : 'No'}</div>
+                        <div style={{ marginTop: '0.5rem' }}>
+                            Diagnostics: {JSON.stringify(contractDiagnostics, null, 2)}
+                        </div>
                     </div>
                 </div>
             )}
