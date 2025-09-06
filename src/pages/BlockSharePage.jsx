@@ -219,8 +219,10 @@ const BlockSharePage = () => {
                 
                 // Convert from X18 precision to ether using ethers.formatUnits
                 const totalClaimedEther = ethers.formatUnits(totalClaimedAmount, 18);
-                setTotalClaimed(totalClaimedEther);
-                debugLog('Total claimed calculated:', totalClaimedEther);
+                // Ensure we store a clean decimal string
+                const cleanTotalClaimed = parseFloat(totalClaimedEther).toString();
+                setTotalClaimed(cleanTotalClaimed);
+                debugLog('Total claimed calculated:', cleanTotalClaimed);
             } catch (error) {
                 debugWarn('Failed to calculate total claimed:', error);
                 setTotalClaimed('0');
@@ -327,8 +329,12 @@ const BlockSharePage = () => {
             debugLog('Total claimable amount calculated:', claimableEther, 'VTRU');
             debugLog('Raw totalClaimable:', totalClaimable.toString());
             
+            // Ensure we return a properly formatted decimal string, not the raw BigInt
+            const cleanAmount = parseFloat(claimableEther).toString();
+            debugLog('Cleaned claimable amount:', cleanAmount);
+            
             setMethodsWorking(prev => ({ ...prev, actualContract: true }));
-            return claimableEther;
+            return cleanAmount;
             
         } catch (error) {
             debugWarn('Error calculating claimable amount with actual contract:', error);
@@ -388,7 +394,8 @@ const BlockSharePage = () => {
                     
                     // If there's cumulative distribution, use it as revenue per share
                     if (parseFloat(cumulativePerToken) > 0) {
-                        revenuePerShare = cumulativePerToken;
+                        // Ensure we store a clean decimal string, not the raw formatUnits result
+                        revenuePerShare = parseFloat(cumulativePerToken).toString();
                         debugLog('Using cumulative distribution as revenue per share:', revenuePerShare);
                     }
                 }
@@ -557,6 +564,21 @@ const BlockSharePage = () => {
     };
 
     const formatVTRU = (amount) => {
+        // Handle BigInt or very large string numbers that might be in wei
+        if (typeof amount === 'string' && amount.length > 10 && !amount.includes('.')) {
+            // This looks like a wei value, convert it using ethers.formatUnits
+            try {
+                const formatted = ethers.formatUnits(amount, 18);
+                const num = parseFloat(formatted);
+                if (num === 0) return '0.0000';
+                if (num < 0.0001) return '< 0.0001';
+                return num.toFixed(4);
+            } catch (error) {
+                // If conversion fails, fall back to original logic
+                console.warn('formatVTRU: Failed to convert potential wei value:', amount, error);
+            }
+        }
+        
         const num = parseFloat(amount);
         if (num === 0) return '0.0000';
         if (num < 0.0001) return '< 0.0001';
