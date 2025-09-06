@@ -18,6 +18,8 @@ const MintPage = () => {
     const [saleActive, setSaleActive] = useState(false);
     const [userBalance, setUserBalance] = useState(0);
     const [userTokens, setUserTokens] = useState([]);
+    const [payoutAddress, setPayoutAddress] = useState('');
+    const [contractHealthy, setContractHealthy] = useState(true);
 
     const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
 
@@ -55,22 +57,33 @@ const MintPage = () => {
             setLoading(true);
             debugLog('Loading contract data...');
             
-            const [price, total, max, active] = await Promise.all([
+            const [price, total, max, active, payout] = await Promise.all([
                 nftContract.mintPrice(),
                 nftContract.totalSupply(),
                 nftContract.MAX_SUPPLY(),
-                nftContract.saleActive()
+                nftContract.saleActive(),
+                nftContract.payout()
             ]);
             
             setMintPrice(ethers.formatEther(price));
             setTotalSupply(parseInt(total.toString()));
             setMaxSupply(parseInt(max.toString()));
             setSaleActive(active);
+            setPayoutAddress(payout);
+            
+            // Check contract health
+            const isHealthy = payout !== '0x0000000000000000000000000000000000000000';
+            setContractHealthy(isHealthy);
+            
+            if (!isHealthy) {
+                debugWarn('Contract payout address is zero address - minting will fail');
+            }
             
             debugLog('Contract data loaded successfully');
         } catch (error) {
             debugWarn('Error loading contract data:', error);
             setStatus('Failed to load contract information');
+            setContractHealthy(false);
         } finally {
             setLoading(false);
         }
@@ -129,8 +142,47 @@ const MintPage = () => {
             const contractWithSigner = nftContract.connect(signer);
             const mintPriceWei = ethers.parseEther(mintPrice);
             
+            // Check contract state before attempting mint
+            setStatus('Checking contract state...');
+            try {
+                const payoutAddress = await nftContract.payout();
+                debugLog('Contract payout address:', payoutAddress);
+                
+                if (payoutAddress === '0x0000000000000000000000000000000000000000') {
+                    setStatus('Contract error: Payout address not configured. Please contact support.');
+                    return;
+                }
+            } catch (error) {
+                debugWarn('Could not check payout address:', error);
+            }
+            
             // Estimate gas for the mint function (minting 1 NFT)
-            const gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
+            setStatus('Estimating gas for mint transaction...');
+            let gasEstimate;
+            try {
+                gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
+            } catch (gasError) {
+                criticalError('Gas estimation failed:', gasError);
+                
+                // Handle specific contract errors
+                if (gasError.message.includes('payout fail')) {
+                    setStatus('Contract error: Mint payout mechanism is currently failing. Please contact the contract administrator to fix the payout configuration.');
+                    return;
+                } else if (gasError.message.includes('sale not active')) {
+                    setStatus('Minting is not currently active');
+                    return;
+                } else if (gasError.message.includes('max supply reached')) {
+                    setStatus('All RevShare NFTs have been minted');
+                    return;
+                } else if (gasError.message.includes('insufficient payment')) {
+                    setStatus('Insufficient payment amount. Please check the mint price.');
+                    return;
+                } else {
+                    setStatus(`Contract error: ${gasError.reason || gasError.message}`);
+                    return;
+                }
+            }
+            
             const gasLimit = gasEstimate * 120n / 100n; // 20% buffer
             
             setStatus('Sending mint transaction...');
@@ -176,8 +228,10 @@ const MintPage = () => {
                 setStatus('Insufficient VTRU balance to mint');
             } else if (error.message.includes('user rejected')) {
                 setStatus('Transaction cancelled by user');
+            } else if (error.message.includes('payout fail')) {
+                setStatus('Contract error: Mint payout mechanism is currently failing. Please contact the contract administrator.');
             } else {
-                setStatus(`Mint failed: ${error.message}`);
+                setStatus(`Mint failed: ${error.reason || error.message}`);
             }
         } finally {
             setMinting(false);
@@ -225,17 +279,37 @@ const MintPage = () => {
                     borderRadius: '8px',
                     background: status.includes('Successfully') 
                         ? 'rgba(34, 197, 94, 0.1)' 
-                        : status.includes('failed') || status.includes('Error')
+                        : status.includes('failed') || status.includes('Error') || status.includes('Contract error')
                         ? 'rgba(239, 68, 68, 0.1)'
                         : 'rgba(85, 51, 255, 0.1)',
                     border: `1px solid ${status.includes('Successfully') 
                         ? 'rgba(34, 197, 94, 0.3)' 
-                        : status.includes('failed') || status.includes('Error')
+                        : status.includes('failed') || status.includes('Error') || status.includes('Contract error')
                         ? 'rgba(239, 68, 68, 0.3)'
                         : 'rgba(85, 51, 255, 0.3)'}`,
                     color: '#fff'
                 }}>
                     {status}
+                </div>
+            )}
+
+            {/* Contract Health Warning */}
+            {!contractHealthy && !loading && (
+                <div style={{
+                    padding: '1rem',
+                    marginBottom: '1.5rem',
+                    borderRadius: '8px',
+                    background: 'rgba(239, 68, 68, 0.1)',
+                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                    color: '#fff'
+                }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>
+                        ⚠️ Contract Configuration Issue
+                    </div>
+                    <div style={{ fontSize: '0.9rem', color: 'rgba(255, 255, 255, 0.8)' }}>
+                        The contract's payout address is not properly configured (zero address: {payoutAddress}). 
+                        Minting is currently disabled until the contract administrator fixes this issue.
+                    </div>
                 </div>
             )}
 
@@ -268,6 +342,12 @@ const MintPage = () => {
                         <div className="hp-mini__label">Your NFTs</div>
                         <div className="hp-mini__value">{userBalance}</div>
                     </div>
+                    <div className="hp-mini__card">
+                        <div className="hp-mini__label">Contract Status</div>
+                        <div className="hp-mini__value" style={{ color: contractHealthy ? '#00ff88' : '#ff4444' }}>
+                            {contractHealthy ? '✅ Healthy' : '⚠️ Issue'}
+                        </div>
+                    </div>
                 </div>
 
                 {/* Progress Bar */}
@@ -298,7 +378,7 @@ const MintPage = () => {
                 </div>
 
                 {/* Mint Button */}
-                {wallet && saleActive && totalSupply < maxSupply && (
+                {wallet && saleActive && totalSupply < maxSupply && contractHealthy && (
                     <div style={{ marginTop: '2rem', textAlign: 'center' }}>
                         <button 
                             className="hp-btn hp-btn--primary"
@@ -315,6 +395,18 @@ const MintPage = () => {
                         >
                             {minting ? 'Minting...' : `Mint for ${formatVTRU(mintPrice)} VTRU`}
                         </button>
+                    </div>
+                )}
+
+                {wallet && !contractHealthy && (
+                    <div style={{ 
+                        marginTop: '2rem', 
+                        textAlign: 'center',
+                        color: '#ff4444',
+                        fontSize: '1.1rem',
+                        fontWeight: 'bold'
+                    }}>
+                        ⚠️ Contract configuration issue - minting disabled
                     </div>
                 )}
 
