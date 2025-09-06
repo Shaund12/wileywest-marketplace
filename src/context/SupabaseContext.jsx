@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
+import { ethers } from 'ethers';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 const SupabaseContext = createContext();
 
@@ -31,18 +33,11 @@ export function SupabaseProvider({ children }) {
             const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
             const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-            console.log('🔧 Supabase Config Check:', {
-                hasUrl: !!supabaseUrl,
-                hasKey: !!supabaseKey,
-                url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'not set',
-                isDummy: supabaseUrl === 'https://dummy.supabase.co'
-            });
-
             if (supabaseUrl && supabaseKey && supabaseUrl !== 'https://dummy.supabase.co') {
                 const client = createClient(supabaseUrl, supabaseKey);
                 setSupabase(client);
                 setIsConnected(true);
-                console.log('✅ Supabase client initialized for caching');
+                debugLog('✅ Supabase client initialized for caching');
 
                 // for quick console testing if you want:
                 // @ts-ignore
@@ -51,11 +46,11 @@ export function SupabaseProvider({ children }) {
                 // Test the connection
                 testSupabaseConnection(client);
             } else {
-                console.log('⚠️ Supabase not configured - running without cache');
+                debugLog('⚠️ Supabase not configured - running without cache');
                 setIsConnected(false);
             }
         } catch (error) {
-            console.warn('❌ Supabase initialization failed:', error.message);
+            debugWarn('❌ Supabase initialization failed:', error.message);
             setIsConnected(false);
         }
     }, []);
@@ -63,16 +58,12 @@ export function SupabaseProvider({ children }) {
     // Test Supabase connection
     const testSupabaseConnection = async (client) => {
         try {
-            console.log('🧪 Testing Supabase connection...');
             const { error } = await client.from('marketplace_listings').select('id').limit(1);
             if (error) {
-                console.warn('⚠️ Supabase connection test failed:', error.message);
-                console.log('📝 Ensure tables exist and RLS policies allow inserts/updates with anon key');
-            } else {
-                console.log('✅ Supabase connection test successful');
+                debugWarn('⚠️ Supabase connection test failed:', error.message);
             }
         } catch (error) {
-            console.warn('⚠️ Supabase connection test error:', error.message);
+            debugWarn('⚠️ Supabase connection test error:', error.message);
         }
     };
 
@@ -100,36 +91,71 @@ export function SupabaseProvider({ children }) {
 
     const setCache = (key, data, type = 'listings') => {
         try {
-            cache.current.set(key, { data, type, timestamp: Date.now() });
+            const cacheItem = { data, type, timestamp: Date.now() };
+            cache.current.set(key, cacheItem);
+            
+            // Also persist to localStorage for auctions to survive page refresh
+            if (type === 'auctions') {
+                try {
+                    localStorage.setItem(`cache_${key}`, JSON.stringify(cacheItem));
+                } catch (e) {
+                    debugWarn('localStorage error:', e);
+                }
+            }
+            
             updateCacheStats('updates');
             if (cache.current.size > CACHE_CONFIG.MAX_CACHE_SIZE) {
                 const oldestKey = cache.current.keys().next().value;
                 cache.current.delete(oldestKey);
             }
-            // console.log(`📦 Cached ${type}:`, key);
+            // debugLog(`📦 Cached ${type}:`, key);
         } catch (error) {
-            console.warn('Cache set error:', error);
+            debugWarn('Cache set error:', error);
             updateCacheStats('errors');
         }
     };
 
     const getCache = (key) => {
         try {
-            const item = cache.current.get(key);
+            // First check in-memory cache
+            let item = cache.current.get(key);
+            
+            // If not in memory and it might be auction data, check localStorage
+            if (!item && key.includes('auction')) {
+                try {
+                    const stored = localStorage.getItem(`cache_${key}`);
+                    if (stored) {
+                        item = JSON.parse(stored);
+                        // Restore to in-memory cache
+                        cache.current.set(key, item);
+                    }
+                } catch (e) {
+                    debugWarn('localStorage retrieval error:', e);
+                }
+            }
+            
             if (!item) {
                 updateCacheStats('misses');
                 return null;
             }
             if (isExpired(item)) {
                 cache.current.delete(key);
+                // Also remove from localStorage
+                if (key.includes('auction')) {
+                    try {
+                        localStorage.removeItem(`cache_${key}`);
+                    } catch (e) {
+                        debugWarn('localStorage removal error:', e);
+                    }
+                }
                 updateCacheStats('misses');
                 return null;
             }
             updateCacheStats('hits');
-            // console.log(`🎯 Cache hit: ${key}`);
+            // debugLog(`🎯 Cache hit: ${key}`);
             return item.data;
         } catch (error) {
-            console.warn('Cache get error:', error);
+            debugWarn('Cache get error:', error);
             updateCacheStats('errors');
             return null;
         }
@@ -141,13 +167,13 @@ export function SupabaseProvider({ children }) {
                 for (const key of cache.current.keys()) {
                     if (key.includes(pattern)) cache.current.delete(key);
                 }
-                console.log(`🧹 Cleared cache pattern: ${pattern}`);
+                debugLog(`🧹 Cleared cache pattern: ${pattern}`);
             } else {
                 cache.current.clear();
-                console.log('🧹 Cleared all cache');
+                debugLog('🧹 Cleared all cache');
             }
         } catch (error) {
-            console.warn('Cache clear error:', error);
+            debugWarn('Cache clear error:', error);
         }
     };
 
@@ -157,11 +183,11 @@ export function SupabaseProvider({ children }) {
             try {
                 await ensureSupabaseReady();
                 if (!supabase) {
-                    console.log('⚠️ Supabase not available - skipping listings cache');
+                    debugLog('⚠️ Supabase not available - skipping listings cache');
                     return;
                 }
                 if (!Array.isArray(listings) || listings.length === 0) {
-                    console.log('⚠️ No listings to cache');
+                    debugLog('⚠️ No listings to cache');
                     return;
                 }
 
@@ -213,11 +239,11 @@ export function SupabaseProvider({ children }) {
                 );
 
                 if (toSave.length === 0) {
-                    console.warn('⚠️ No valid rows to upsert (required fields missing). Example:', rows[0]);
+                    debugWarn('⚠️ No valid rows to upsert (required fields missing). Example:', rows[0]);
                     return;
                 }
 
-                console.log(`💾 Upserting ${toSave.length} listings to Supabase...`);
+                debugLog(`💾 Upserting ${toSave.length} listings to Supabase...`);
 
                 // Chunked upserts (avoid payload too large)
                 const CHUNK = 500;
@@ -228,8 +254,8 @@ export function SupabaseProvider({ children }) {
                         .upsert(chunk, { onConflict: 'listing_id', ignoreDuplicates: false });
 
                     if (error) {
-                        console.warn('❌ Database cache error:', error);
-                        console.warn('🔍 Error details:', {
+                        debugWarn('❌ Database cache error:', error);
+                        debugWarn('🔍 Error details:', {
                             message: error.message,
                             details: error.details,
                             hint: error.hint,
@@ -237,7 +263,7 @@ export function SupabaseProvider({ children }) {
                         });
                         updateCacheStats('errors');
                     } else {
-                        console.log(`✅ Cached ${chunk.length} listings [${i + 1}-${i + chunk.length}]`);
+                        debugLog(`✅ Cached ${chunk.length} listings [${i + 1}-${i + chunk.length}]`);
                         // also cache in memory
                         chunk.forEach((dbRow) => {
                             const id = dbRow.listing_id;
@@ -250,7 +276,7 @@ export function SupabaseProvider({ children }) {
                 // maintain an in-memory "all" snapshot for quick reads
                 setCache('all_listings', listings, 'listings');
             } catch (error) {
-                console.warn('❌ Error caching listings:', error);
+                debugWarn('❌ Error caching listings:', error);
                 updateCacheStats('errors');
             }
         },
@@ -264,7 +290,6 @@ export function SupabaseProvider({ children }) {
         }
 
         try {
-            console.log('🔍 Fetching cached listings from Supabase...');
             const { data, error } = await supabase
                 .from('marketplace_listings')
                 .select('*')
@@ -272,12 +297,10 @@ export function SupabaseProvider({ children }) {
                 .order('updated_at', { ascending: false });
 
             if (error) {
-                console.warn('Error fetching cached listings:', error);
+                debugWarn('Error fetching cached listings:', error);
                 updateCacheStats('errors');
                 return [];
             }
-
-            console.log(`📦 Retrieved ${data.length} cached listings from database`);
 
             const listings = data.map((item) => ({
                 id: Number(item.listing_id),
@@ -300,7 +323,7 @@ export function SupabaseProvider({ children }) {
             setCache('all_listings', listings, 'listings');
             return listings;
         } catch (error) {
-            console.warn('Error retrieving cached listings:', error);
+            debugWarn('Error retrieving cached listings:', error);
             updateCacheStats('errors');
             return [];
         }
@@ -311,7 +334,7 @@ export function SupabaseProvider({ children }) {
         async (address, profileData) => {
             if (!supabase || !address) return;
             try {
-                console.log(`💾 Caching profile data for ${address}...`);
+                debugLog(`💾 Caching profile data for ${address}...`);
                 const profileRecord = {
                     wallet_address: String(address).toLowerCase(),
                     nfts: profileData.nfts || [],
@@ -325,15 +348,15 @@ export function SupabaseProvider({ children }) {
                     .upsert(profileRecord, { onConflict: 'wallet_address', ignoreDuplicates: false });
 
                 if (error) {
-                    console.warn('Profile cache error:', error);
+                    debugWarn('Profile cache error:', error);
                     updateCacheStats('errors');
                 } else {
-                    console.log(`✅ Cached profile for ${address}`);
+                    debugLog(`✅ Cached profile for ${address}`);
                     const key = getCacheKey('profile', String(address).toLowerCase());
                     setCache(key, profileData, 'profile');
                 }
             } catch (error) {
-                console.warn('Error caching profile:', error);
+                debugWarn('Error caching profile:', error);
                 updateCacheStats('errors');
             }
         },
@@ -350,7 +373,7 @@ export function SupabaseProvider({ children }) {
             if (!supabase) return null;
 
             try {
-                console.log(`🔍 Fetching cached profile for ${address}...`);
+                debugLog(`🔍 Fetching cached profile for ${address}...`);
                 const { data, error } = await supabase
                     .from('user_profiles')
                     .select('*')
@@ -358,12 +381,12 @@ export function SupabaseProvider({ children }) {
                     .maybeSingle();
 
                 if (error) {
-                    console.warn('Error fetching cached profile:', error);
+                    debugWarn('Error fetching cached profile:', error);
                     updateCacheStats('misses');
                     return null;
                 }
                 if (!data) {
-                    console.log(`📭 No cached profile found for ${address}`);
+                    debugLog(`📭 No cached profile found for ${address}`);
                     updateCacheStats('misses');
                     return null;
                 }
@@ -374,10 +397,10 @@ export function SupabaseProvider({ children }) {
                     balance: data.balance || '0'
                 };
                 setCache(memKey, profileData, 'profile');
-                console.log(`📦 Retrieved cached profile for ${address}`);
+                debugLog(`📦 Retrieved cached profile for ${address}`);
                 return profileData;
             } catch (error) {
-                console.warn('Error retrieving cached profile:', error);
+                debugWarn('Error retrieving cached profile:', error);
                 updateCacheStats('errors');
                 return null;
             }
@@ -391,15 +414,15 @@ export function SupabaseProvider({ children }) {
             try {
                 await ensureSupabaseReady();
                 if (!supabase) {
-                    console.log('⚠️ Supabase not available - skipping sales history cache');
+                    debugLog('⚠️ Supabase not available - skipping sales history cache');
                     return;
                 }
                 if (!Array.isArray(salesHistory) || salesHistory.length === 0) {
-                    console.log('⚠️ No sales history to cache');
+                    debugLog('⚠️ No sales history to cache');
                     return;
                 }
 
-                console.log(`💾 Caching ${salesHistory.length} sales transactions to Supabase...`);
+                debugLog(`💾 Caching ${salesHistory.length} sales transactions to Supabase...`);
 
                 const rows = salesHistory.map((s) => ({
                     listing_id: String(s.listingId ?? ''),
@@ -422,16 +445,16 @@ export function SupabaseProvider({ children }) {
                         .upsert(chunk, { onConflict: 'transaction_hash', ignoreDuplicates: true });
 
                     if (error) {
-                        console.warn('❌ Database sales cache error:', error);
+                        debugWarn('❌ Database sales cache error:', error);
                         updateCacheStats('errors');
                     } else {
-                        console.log(`✅ Cached ${chunk.length} sales [${i + 1}-${i + chunk.length}]`);
+                        debugLog(`✅ Cached ${chunk.length} sales [${i + 1}-${i + chunk.length}]`);
                     }
                 }
 
                 setCache('sales_history', salesHistory, 'sales');
             } catch (error) {
-                console.warn('❌ Error caching sales history:', error);
+                debugWarn('❌ Error caching sales history:', error);
                 updateCacheStats('errors');
             }
         },
@@ -445,7 +468,6 @@ export function SupabaseProvider({ children }) {
         if (!supabase) return [];
 
         try {
-            console.log('🔍 Loading sales history from Supabase cache...');
             const { data, error } = await supabase
                 .from('sales_history')
                 .select('*')
@@ -453,12 +475,10 @@ export function SupabaseProvider({ children }) {
                 .limit(1000);
 
             if (error) {
-                console.warn('Error fetching cached sales history:', error);
+                debugWarn('Error fetching cached sales history:', error);
                 updateCacheStats('errors');
                 return [];
             }
-
-            console.log(`📦 Loaded ${data.length} sales from Supabase cache`);
 
             const sales = data.map((item) => ({
                 listingId: item.listing_id,
@@ -476,7 +496,7 @@ export function SupabaseProvider({ children }) {
             setCache('sales_history', sales, 'sales');
             return sales;
         } catch (error) {
-            console.warn('Error retrieving cached sales history:', error);
+            debugWarn('Error retrieving cached sales history:', error);
             updateCacheStats('errors');
             return [];
         }
@@ -486,14 +506,14 @@ export function SupabaseProvider({ children }) {
     const subscribeToListings = (callback) => {
         if (!supabase) return null;
         try {
-            console.log('🔄 Setting up real-time subscription for listings...');
+            debugLog('🔄 Setting up real-time subscription for listings...');
             const subscription = supabase
                 .channel('marketplace_listings')
                 .on(
                     'postgres_changes',
                     { event: '*', schema: 'public', table: 'marketplace_listings' },
                     (payload) => {
-                        console.log('📡 Real-time listing update:', payload);
+                        debugLog('📡 Real-time listing update:', payload);
                         clearCache('listing');
                         clearCache('all_listings');
                         if (callback) callback(payload);
@@ -504,7 +524,7 @@ export function SupabaseProvider({ children }) {
             subscriptions.current.set('listings', subscription);
             return subscription;
         } catch (error) {
-            console.warn('Error setting up listings subscription:', error);
+            debugWarn('Error setting up listings subscription:', error);
             return null;
         }
     };
@@ -513,14 +533,14 @@ export function SupabaseProvider({ children }) {
         (callback) => {
             if (!supabase) return null;
             try {
-                console.log('🔄 Setting up real-time subscription for profiles...');
+                debugLog('🔄 Setting up real-time subscription for profiles...');
                 const subscription = supabase
                     .channel('user_profiles')
                     .on(
                         'postgres_changes',
                         { event: '*', schema: 'public', table: 'user_profiles' },
                         (payload) => {
-                            console.log('📡 Real-time profile update:', payload);
+                            debugLog('📡 Real-time profile update:', payload);
                             clearCache('profile');
                             if (callback) setTimeout(() => callback(payload), 1000);
                         }
@@ -530,7 +550,7 @@ export function SupabaseProvider({ children }) {
                 subscriptions.current.set('profiles', subscription);
                 return subscription;
             } catch (error) {
-                console.warn('Error setting up profiles subscription:', error);
+                debugWarn('Error setting up profiles subscription:', error);
                 return null;
             }
         },
@@ -541,7 +561,7 @@ export function SupabaseProvider({ children }) {
     useEffect(() => {
         return () => {
             subscriptions.current.forEach((subscription, key) => {
-                console.log(`🔌 Unsubscribing from ${key}`);
+                debugLog(`🔌 Unsubscribing from ${key}`);
                 try {
                     subscription.unsubscribe();
                 } catch { }
@@ -549,6 +569,501 @@ export function SupabaseProvider({ children }) {
             subscriptions.current.clear();
         };
     }, []);
+
+    // Auction management functions
+    const cacheAuctions = useCallback(
+        async (auctions, marketplaceAddress) => {
+            if (!auctions?.length) return;
+
+            // If no Supabase, use in-memory cache only
+            if (!supabase) {
+                debugLog(`💾 Caching ${auctions.length} auctions to memory for marketplace ${marketplaceAddress}...`);
+                
+                // Cache each individual auction
+                auctions.forEach((auction) => {
+                    const id = auction.id?.toString() || auction.auctionId?.toString();
+                    if (id) {
+                        const key = getCacheKey('auction', id);
+                        setCache(key, auction, 'auctions');
+                    }
+                });
+                
+                // Cache all auctions
+                setCache('all_auctions', auctions, 'auctions');
+                
+                // Cache auctions filtered by seller and marketplace
+                const sellerAuctions = auctions.filter(a => a.seller);
+                const sellerGroups = {};
+                sellerAuctions.forEach(auction => {
+                    const seller = auction.seller.toLowerCase();
+                    if (!sellerGroups[seller]) sellerGroups[seller] = [];
+                    sellerGroups[seller].push(auction);
+                });
+                
+                Object.entries(sellerGroups).forEach(([seller, auctionList]) => {
+                    let cacheKey = `auctions_${seller}`;
+                    if (marketplaceAddress) {
+                        cacheKey += `_${marketplaceAddress.toLowerCase()}`;
+                    }
+                    setCache(cacheKey, auctionList, 'auctions');
+                });
+                
+                debugLog(`✅ Cached ${auctions.length} auctions to memory`);
+                return;
+            }
+
+            try {
+                debugLog(`💾 Caching ${auctions.length} auctions to Supabase for marketplace ${marketplaceAddress}...`);
+
+                const rows = auctions.map((auction) => {
+                    // Generate a valid auction ID if missing
+                    const auctionId = auction.id?.toString() || 
+                                    auction.auctionId?.toString() || 
+                                    `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    
+                    return {
+                        auction_id: auctionId,
+                        marketplace_address: marketplaceAddress?.toLowerCase() || '0x0000000000000000000000000000000000000000',
+                        seller: auction.seller || '0x0000000000000000000000000000000000000000',
+                        nft_contract: auction.nftContract || '0x0000000000000000000000000000000000000000',
+                        token_id: auction.tokenId?.toString() || '0',
+                        quantity: auction.quantity?.toString() || '1',
+                        reserve_price: auction.reservePrice?.toString() || '0',
+                        start_price: auction.startPrice?.toString() || '0', 
+                        end_time: auction.endTime || Math.floor(Date.now() / 1000) + 86400,
+                        payment_token: auction.paymentToken || '0x0000000000000000000000000000000000000000',
+                        min_bid_increment_bps: auction.minBidIncrementBps || 500,
+                        anti_snipe_seconds: auction.antiSnipeSeconds || 300,
+                        highest_bid: auction.highestBid?.toString() || '0',
+                        highest_bidder: auction.highestBidder || '0x0000000000000000000000000000000000000000',
+                        settled: auction.settled || false,
+                        transaction_hash: auction.transactionHash || `0x${'0'.repeat(64)}`,
+                        block_number: auction.blockNumber || 0,
+                        log_index: auction.logIndex || 0,
+                        timestamp: auction.timestamp || Math.floor(Date.now() / 1000),
+                        metadata: auction.metadata || {}
+                    };
+                });
+
+                // Filter invalid rows - ensure all required fields are present
+                const toSave = rows.filter(
+                    (r) =>
+                        r.auction_id &&
+                        r.auction_id !== 'undefined' &&
+                        r.marketplace_address &&
+                        r.seller &&
+                        r.seller !== '0x0000000000000000000000000000000000000000' &&
+                        r.nft_contract &&
+                        r.nft_contract !== '0x0000000000000000000000000000000000000000' &&
+                        r.token_id &&
+                        r.reserve_price &&
+                        r.start_price &&
+                        r.end_time &&
+                        r.payment_token &&
+                        r.timestamp
+                );
+
+                if (toSave.length === 0) {
+                    debugWarn('⚠️ No valid auction rows to upsert');
+                    return;
+                }
+
+                debugLog(`💾 Upserting ${toSave.length} auctions to Supabase...`);
+
+                // Chunked upserts with metadata fallback
+                const CHUNK = 100;
+                for (let i = 0; i < toSave.length; i += CHUNK) {
+                    const chunk = toSave.slice(i, i + CHUNK);
+                    
+                    // Try with metadata first, fallback without metadata if column doesn't exist
+                    let { data, error } = await supabase
+                        .from('auctions')
+                        .upsert(chunk, { onConflict: 'auction_id', ignoreDuplicates: false });
+
+                    // If metadata column error, retry without metadata
+                    if (error && error.message?.includes("metadata") && error.code === 'PGRST204') {
+                        debugWarn('⚠️ Metadata column not found, retrying without metadata...');
+                        const chunkWithoutMetadata = chunk.map(({ metadata, ...item }) => item);
+                        
+                        const fallbackResult = await supabase
+                            .from('auctions')
+                            .upsert(chunkWithoutMetadata, { onConflict: 'auction_id', ignoreDuplicates: false });
+                        
+                        data = fallbackResult.data;
+                        error = fallbackResult.error;
+                    }
+
+                    if (error) {
+                        debugWarn('❌ Database auction cache error:', error);
+                        updateCacheStats('errors');
+                        
+                        // If Supabase fails, continue with localStorage caching
+                        debugLog('💾 Supabase failed, using localStorage for auction persistence...');
+                        chunk.forEach((auction) => {
+                            try {
+                                const id = auction.auction_id;
+                                const key = getCacheKey('auction', id);
+                                setCache(key, auction, 'auctions');
+                                localStorage.setItem(`auction_${id}`, JSON.stringify(auction));
+                            } catch (e) {
+                                debugWarn('localStorage auction cache error:', e);
+                            }
+                        });
+                    } else {
+                        debugLog(`✅ Cached ${chunk.length} auctions [${i + 1}-${i + chunk.length}]`);
+                        // Cache in memory
+                        chunk.forEach((dbRow) => {
+                            const id = dbRow.auction_id;
+                            const key = getCacheKey('auction', id);
+                            setCache(key, dbRow, 'auctions');
+                        });
+                    }
+                }
+
+                setCache('all_auctions', auctions, 'auctions');
+            } catch (error) {
+                debugWarn('❌ Error caching auctions:', error);
+                updateCacheStats('errors');
+            }
+        },
+        [supabase]
+    );
+
+    const getCachedAuctions = useCallback(async (sellerAddress = null, marketplaceAddress = null) => {
+        // Always try memory cache first
+        let cacheKey = sellerAddress ? `auctions_${sellerAddress.toLowerCase()}` : 'all_auctions';
+        if (marketplaceAddress) {
+            cacheKey += `_${marketplaceAddress.toLowerCase()}`;
+        }
+        const cachedData = getCache(cacheKey);
+        
+        if (cachedData && cachedData.length > 0) {
+            debugLog(`📦 Retrieved ${cachedData.length} auctions from memory cache`);
+            return cachedData;
+        }
+
+        // Fallback to localStorage if no Supabase
+        if (!supabase) {
+            debugLog('🔍 Supabase unavailable, checking localStorage for auctions...');
+            try {
+                const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_') || key.startsWith('cache_auction'));
+                const localAuctions = keys.map(key => {
+                    try {
+                        const auctionData = JSON.parse(localStorage.getItem(key));
+                        
+                        // Normalize auction data structure
+                        const normalizedAuction = {
+                            id: auctionData.id || auctionData.auctionId || auctionData.auction_id,
+                            auctionId: auctionData.auctionId || auctionData.id || auctionData.auction_id,
+                            seller: auctionData.seller || '0x0000000000000000000000000000000000000000',
+                            nftContract: auctionData.nftContract || auctionData.nft_contract || '0x0000000000000000000000000000000000000000',
+                            tokenId: auctionData.tokenId || auctionData.token_id || '0',
+                            quantity: auctionData.quantity || '1',
+                            reservePrice: auctionData.reservePrice || auctionData.reserve_price || '0',
+                            startPrice: auctionData.startPrice || auctionData.start_price || auctionData.startingBid || '0',
+                            endTime: auctionData.endTime || auctionData.end_time || Math.floor(Date.now() / 1000) + 86400,
+                            paymentToken: auctionData.paymentToken || auctionData.payment_token || ethers.ZeroAddress,
+                            minBidIncrementBps: auctionData.minBidIncrementBps || auctionData.min_bid_increment_bps || 500,
+                            antiSnipeSeconds: auctionData.antiSnipeSeconds || auctionData.anti_snipe_seconds || 300,
+                            highestBid: auctionData.highestBid || auctionData.highest_bid || '0',
+                            highestBidder: auctionData.highestBidder || auctionData.highest_bidder || '0x0000000000000000000000000000000000000000',
+                            settled: auctionData.settled || false,
+                            transactionHash: auctionData.transactionHash || auctionData.transaction_hash || `0x${'0'.repeat(64)}`,
+                            blockNumber: auctionData.blockNumber || auctionData.block_number || 0,
+                            timestamp: auctionData.timestamp || Math.floor(Date.now() / 1000),
+                            metadata: auctionData.metadata || {}
+                        };
+                        
+                        return normalizedAuction;
+                    } catch (e) {
+                        debugWarn('Error parsing localStorage auction:', e);
+                        return null;
+                    }
+                }).filter(auction => {
+                    if (!auction) return false;
+                    
+                    // Ensure auction has valid ID and is not undefined
+                    const hasValidId = auction.id && 
+                                     auction.id !== 'undefined' && 
+                                     auction.id !== 'null' && 
+                                     auction.id !== undefined &&
+                                     auction.id !== null;
+                    
+                    // Filter by seller if specified
+                    if (sellerAddress && auction.seller && auction.seller.toLowerCase() !== sellerAddress.toLowerCase()) {
+                        return false;
+                    }
+                    
+                    return hasValidId;
+                });
+                
+                debugLog(`📦 Retrieved ${localAuctions.length} auctions from localStorage fallback`);
+                if (localAuctions.length > 0) {
+                    setCache(cacheKey, localAuctions, 'auctions');
+                    
+                    // Log auction IDs for debugging
+                    const auctionIds = localAuctions.map(a => a.id || a.auctionId).filter(Boolean);
+                    debugLog(`🆔 Auction IDs found: [${auctionIds.join(', ')}]`);
+                }
+                return localAuctions;
+            } catch (e) {
+                debugWarn('localStorage auction retrieval error:', e);
+                return [];
+            }
+        }
+
+        try {
+            debugLog(`🔍 Fetching cached auctions from Supabase${sellerAddress ? ` for seller ${sellerAddress}` : ''}${marketplaceAddress ? ` for marketplace ${marketplaceAddress}` : ''}...`);
+            
+            let query = supabase
+                .from('auctions')
+                .select('*');
+
+            if (sellerAddress) {
+                query = query.eq('seller', sellerAddress.toLowerCase());
+            }
+
+            if (marketplaceAddress) {
+                // Ensure marketplace address is properly formatted and valid
+                const validMarketplaceAddress = marketplaceAddress.toLowerCase();
+                if (validMarketplaceAddress && validMarketplaceAddress !== 'undefined' && validMarketplaceAddress !== 'null') {
+                    query = query.eq('marketplace_address', validMarketplaceAddress);
+                }
+            }
+
+            // Try different ordering strategies based on available columns
+            let { data, error } = await query.order('created_at', { ascending: false });
+
+            // If created_at fails, try id ordering as fallback
+            if (error && error.message?.includes('created_at')) {
+                debugWarn('⚠️ created_at column not found, trying id ordering...');
+                query = supabase.from('auctions').select('*');
+                
+                if (sellerAddress) {
+                    query = query.eq('seller', sellerAddress.toLowerCase());
+                }
+                if (marketplaceAddress) {
+                    const validMarketplaceAddress = marketplaceAddress.toLowerCase();
+                    if (validMarketplaceAddress && validMarketplaceAddress !== 'undefined' && validMarketplaceAddress !== 'null') {
+                        query = query.eq('marketplace_address', validMarketplaceAddress);
+                    }
+                }
+                
+                const fallbackResult = await query.order('id', { ascending: false });
+                data = fallbackResult.data;
+                error = fallbackResult.error;
+            }
+
+            if (error) {
+                debugWarn('Error fetching cached auctions:', error);
+                updateCacheStats('errors');
+                
+                // Fallback to localStorage on Supabase error
+                debugLog('🔄 Supabase error, falling back to localStorage...');
+                try {
+                    const keys = Object.keys(localStorage).filter(key => key.startsWith('auction_') || key.startsWith('cache_auction'));
+                    const localAuctions = keys.map(key => {
+                        try {
+                            const auctionData = JSON.parse(localStorage.getItem(key));
+                            // Normalize auction data structure
+                            const normalizedAuction = {
+                                id: auctionData.id || auctionData.auctionId || auctionData.auction_id,
+                                auctionId: auctionData.auctionId || auctionData.id || auctionData.auction_id,
+                                seller: auctionData.seller || '0x0000000000000000000000000000000000000000',
+                                nftContract: auctionData.nftContract || auctionData.nft_contract || '0x0000000000000000000000000000000000000000',
+                                tokenId: auctionData.tokenId || auctionData.token_id || '0',
+                                quantity: auctionData.quantity || '1',
+                                reservePrice: auctionData.reservePrice || auctionData.reserve_price || '0',
+                                startPrice: auctionData.startPrice || auctionData.start_price || auctionData.startingBid || '0',
+                                endTime: auctionData.endTime || auctionData.end_time || Math.floor(Date.now() / 1000) + 86400,
+                                paymentToken: auctionData.paymentToken || auctionData.payment_token || ethers.ZeroAddress,
+                                minBidIncrementBps: auctionData.minBidIncrementBps || auctionData.min_bid_increment_bps || 500,
+                                antiSnipeSeconds: auctionData.antiSnipeSeconds || auctionData.anti_snipe_seconds || 300,
+                                highestBid: auctionData.highestBid || auctionData.highest_bid || '0',
+                                highestBidder: auctionData.highestBidder || auctionData.highest_bidder || '0x0000000000000000000000000000000000000000',
+                                settled: auctionData.settled || false,
+                                transactionHash: auctionData.transactionHash || auctionData.transaction_hash || `0x${'0'.repeat(64)}`,
+                                blockNumber: auctionData.blockNumber || auctionData.block_number || 0,
+                                timestamp: auctionData.timestamp || Math.floor(Date.now() / 1000),
+                                metadata: auctionData.metadata || {}
+                            };
+                            
+                            return normalizedAuction;
+                        } catch (e) {
+                            debugWarn('Error parsing localStorage auction:', e);
+                            return null;
+                        }
+                    }).filter(auction => {
+                        if (!auction) return false;
+                        
+                        // Ensure auction has valid ID and is not undefined
+                        const hasValidId = auction.id && 
+                                         auction.id !== 'undefined' && 
+                                         auction.id !== 'null' && 
+                                         auction.id !== undefined &&
+                                         auction.id !== null;
+                        
+                        // Filter by seller if specified
+                        if (sellerAddress && auction.seller && auction.seller.toLowerCase() !== sellerAddress.toLowerCase()) {
+                            return false;
+                        }
+                        
+                        return hasValidId;
+                    });
+                    
+                    debugLog(`📦 Retrieved ${localAuctions.length} auctions from localStorage fallback`);
+                    if (localAuctions.length > 0) {
+                        setCache(cacheKey, localAuctions, 'auctions');
+                        
+                        // Log auction IDs for debugging
+                        const auctionIds = localAuctions.map(a => a.id || a.auctionId).filter(Boolean);
+                        debugLog(`🆔 Auction IDs found: [${auctionIds.join(', ')}]`);
+                    }
+                    return localAuctions;
+                } catch (e) {
+                    debugWarn('localStorage fallback error:', e);
+                    return [];
+                }
+            }
+
+            debugLog(`📦 Retrieved ${data.length} cached auctions from database`);
+
+            const auctions = data.map((item) => {
+                // Ensure auction ID is properly set and not undefined
+                let auctionId = item.auction_id;
+                if (!auctionId || auctionId === 'undefined' || auctionId === 'null') {
+                    auctionId = `db_${item.id}`;
+                }
+                
+                return {
+                    id: auctionId,
+                    auctionId: auctionId,
+                    seller: item.seller || '0x0000000000000000000000000000000000000000',
+                    nftContract: item.nft_contract || '0x0000000000000000000000000000000000000000',
+                    tokenId: item.token_id || '0',
+                    quantity: item.quantity || '1',
+                    reservePrice: item.reserve_price || '0',
+                    startPrice: item.start_price || item.starting_bid || '0',
+                    endTime: item.end_time || Math.floor(Date.now() / 1000) + 86400,
+                    paymentToken: item.payment_token || '0x0000000000000000000000000000000000000000',
+                    minBidIncrementBps: item.min_bid_increment_bps || 500,
+                    antiSnipeSeconds: item.anti_snipe_seconds || 300,
+                    highestBid: item.highest_bid || '0',
+                    highestBidder: item.highest_bidder || '0x0000000000000000000000000000000000000000',
+                    settled: item.settled || false,
+                    transactionHash: item.transaction_hash || `0x${'0'.repeat(64)}`,
+                    blockNumber: item.block_number || 0,
+                    timestamp: item.timestamp || Math.floor(Date.now() / 1000),
+                    metadata: item.metadata || {}
+                };
+            }).filter(auction => {
+                // Ensure auction ID is valid and not undefined/null
+                return auction.id && 
+                       auction.id !== 'undefined' && 
+                       auction.id !== 'null' &&
+                       auction.id !== undefined &&
+                       auction.id !== null;
+            });
+
+            const cacheKey = sellerAddress ? `auctions_${sellerAddress.toLowerCase()}` : 'all_auctions';
+            setCache(cacheKey, auctions, 'auctions');
+            return auctions;
+        } catch (error) {
+            debugWarn('Error retrieving cached auctions:', error);
+            updateCacheStats('errors');
+            return [];
+        }
+    }, [supabase]);
+
+    const getAuctionBids = useCallback(async (auctionId) => {
+        if (!supabase) {
+            const cachedData = getCache(`auction_bids_${auctionId}`);
+            return cachedData || [];
+        }
+
+        try {
+            debugLog(`🔍 Fetching bids for auction ${auctionId}...`);
+            
+            // Handle undefined auctionId
+            if (!auctionId || auctionId === 'undefined') {
+                debugWarn('⚠️ Invalid auction ID provided to getAuctionBids');
+                return [];
+            }
+            
+            let query = supabase
+                .from('auction_bids')
+                .select('*')
+                .eq('auction_id', auctionId);
+
+            // Try different ordering strategies based on available columns
+            let { data, error } = await query.order('created_at', { ascending: false });
+
+            // If created_at fails, try id ordering as fallback
+            if (error && error.message?.includes('created_at')) {
+                debugWarn('⚠️ created_at column not found in auction_bids, trying id ordering...');
+                query = supabase
+                    .from('auction_bids')
+                    .select('*')
+                    .eq('auction_id', auctionId);
+                    
+                const fallbackResult = await query.order('id', { ascending: false });
+                data = fallbackResult.data;
+                error = fallbackResult.error;
+            }
+
+            if (error) {
+                debugWarn('Error fetching auction bids:', error);
+                updateCacheStats('errors');
+                return [];
+            }
+
+            debugLog(`📦 Retrieved ${data.length} bids for auction ${auctionId}`);
+
+            const bids = data.map((item) => ({
+                auctionId: item.auction_id,
+                bidder: item.bidder,
+                amount: item.amount,
+                newEndTime: item.new_end_time,
+                isNative: item.is_native,
+                transactionHash: item.transaction_hash,
+                blockNumber: item.block_number,
+                timestamp: item.timestamp
+            }));
+
+            setCache(`auction_bids_${auctionId}`, bids, 'auctions');
+            return bids;
+        } catch (error) {
+            debugWarn('Error retrieving auction bids:', error);
+            updateCacheStats('errors');
+            return [];
+        }
+    }, [supabase]);
+
+    const subscribeToAuctions = useCallback((callback) => {
+        if (!supabase) return null;
+        try {
+            debugLog('🔄 Setting up real-time subscription for auctions...');
+            const subscription = supabase
+                .channel('auctions')
+                .on(
+                    'postgres_changes',
+                    { event: '*', schema: 'public', table: 'auctions' },
+                    (payload) => {
+                        debugLog('📡 Real-time auction update:', payload);
+                        clearCache('auction');
+                        clearCache('all_auctions');
+                        if (callback) callback(payload);
+                    }
+                )
+                .subscribe();
+
+            subscriptions.current.set('auctions', subscription);
+            return subscription;
+        } catch (error) {
+            debugWarn('Error setting up auctions subscription:', error);
+            return null;
+        }
+    }, [supabase]);
 
     const value = {
         supabase,
@@ -568,9 +1083,15 @@ export function SupabaseProvider({ children }) {
         cacheSalesHistory,
         getCachedSalesHistory,
 
+        // Auction ops
+        cacheAuctions,
+        getCachedAuctions,
+        getAuctionBids,
+
         // Realtime
         subscribeToListings,
         subscribeToProfiles,
+        subscribeToAuctions,
 
         // Utils
         ensureSupabaseReady

@@ -9,10 +9,16 @@ import MarketplaceStats from '../components/MarketplaceStats';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
+import { isAuctionsEnabled } from '../utils/featureFlags';
+import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
 import blockdustLogo from '../assets/blockdust-logo.png';
+// IMPORTANT: use on-chain ABI with auction events/functions
+// IMPORTANT: use on-chain ABI with auction events/functions
+import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 /* =========================
    On-chain collection name resolver
@@ -20,6 +26,14 @@ import blockdustLogo from '../assets/blockdust-logo.png';
 const ERC721_METADATA_ABI = [
     'function name() view returns (string)',
     'function symbol() view returns (string)',
+];
+
+const ERC721_URI_ABI = [
+    'function tokenURI(uint256 tokenId) view returns (string)',
+];
+
+const ERC1155_URI_ABI = [
+    'function uri(uint256 id) view returns (string)',
 ];
 
 const shortAddr = (a = '') => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
@@ -74,24 +88,20 @@ function useCollectionNames(addresses = [], provider) {
    Smart IPFS Image + SVG fallback
    ========================= */
 const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/',
-    'https://cf-ipfs.com/ipfs/',
-    'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://infura-ipfs.io/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/',
-    'https://ipfs.io/ipfs/',
+    'https://ipfs.io/ipfs/',              // Official gateway - most reliable
+    'https://dweb.link/ipfs/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipfs/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
+    'https://4everland.io/ipfs/',         // 4everland gateway
 ];
 const IPNS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipns/',
-    'https://cf-ipfs.com/ipns/',
-    'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/',
-    'https://infura-ipfs.io/ipns/',
-    'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/',
-    'https://ipfs.io/ipns/',
+    'https://ipfs.io/ipns/',              // Official gateway - most reliable
+    'https://dweb.link/ipns/',            // Protocol Labs gateway
+    'https://gateway.pinata.cloud/ipns/', // Pinata gateway - good CORS support
+    'https://w3s.link/ipns/',             // Web3.Storage gateway
+    'https://nftstorage.link/ipns/',      // NFT.Storage gateway
+    'https://4everland.io/ipns/',         // 4everland gateway
 ];
 
 const smartImageCache = new Map(); // key -> working URL
@@ -313,6 +323,15 @@ function coerceMs(v) {
     }
     return NaN;
 }
+const timeLeft = (endMs) => {
+    const d = Math.max(0, endMs - Date.now());
+    const s = Math.floor(d / 1000);
+    const m = Math.floor(s / 60);
+    const h = Math.floor(m / 60);
+    if (h > 0) return `${h}h ${m % 60}m`;
+    if (m > 0) return `${m}m ${s % 60}s`;
+    return `${s}s`;
+};
 
 /* =========================
    UI Prefs persistence
@@ -322,7 +341,30 @@ const PREFS_KEY = 'marketplace_ui_prefs_v1';
 function loadPrefs() {
     try {
         const raw = localStorage.getItem(PREFS_KEY);
-        return raw ? JSON.parse(raw) : {};
+        if (!raw) return {};
+
+        const prefs = JSON.parse(raw);
+
+        // Clear potentially problematic filter states that might hide all listings
+        // These will be reset to empty/default values to ensure listings are visible
+        const cleanPrefs = {
+            ...prefs,
+            // Reset search and filters to prevent hiding all listings
+            searchTerm: '',
+            selectedCategories: [],
+            selectedCollections: [],
+            priceRange: { min: '', max: '' },
+            // Keep safe UI preferences
+            viewMode: prefs.viewMode || 'grid',
+            sortMethod: prefs.sortMethod || 'newest',
+            itemsPerPage: prefs.itemsPerPage || 12,
+            trendMode: prefs.trendMode || 'volume',
+            autoRefreshEnabled: Boolean(prefs.autoRefreshEnabled),
+            autoRefreshMs: prefs.autoRefreshMs || 60000,
+            autoLoadNext: Boolean(prefs.autoLoadNext)
+        };
+
+        return cleanPrefs;
     } catch {
         return {};
     }
@@ -336,15 +378,17 @@ function MarketplacePage() {
         listings,
         hotListings,
         fetchListings,
+        triggerManualSync,
         status,
         setStatus,
         isInitialized,
         marketplaceStats,
         canceledListings,
+        marketplaceAddress, // + address for contracts
     } = useMarketplace();
 
     const { wallet, connect, provider } = useWallet();
-    const { cacheListings, isConnected } = useSupabase();
+    const { cacheListings, isConnected: supabaseConnected, supabase } = useSupabase();
 
     const prefs = useRef(loadPrefs());
 
@@ -382,6 +426,11 @@ function MarketplacePage() {
     const [autoRefreshMs, setAutoRefreshMs] = useState(prefs.current.autoRefreshMs || 60000);
     const [autoLoadNext, setAutoLoadNext] = useState(Boolean(prefs.current.autoLoadNext));
     const [nextRefreshAt, setNextRefreshAt] = useState(null);
+
+    // NEW: Auctions state
+    const [auctions, setAuctions] = useState([]);
+    const [isAuctionsLoading, setIsAuctionsLoading] = useState(false);
+    const auctionsEnabled = isAuctionsEnabled();
 
     const topRef = useRef(null);
     const hasLoadedRef = useRef(false);
@@ -440,8 +489,10 @@ function MarketplacePage() {
         for (const c of collections || []) if (c?.address) s.add(c.address.toLowerCase());
         if (featuredNFT?.nftContract) s.add(featuredNFT.nftContract.toLowerCase());
         for (const addr of selectedCollections || []) s.add(addr.toLowerCase());
+        // include auctions collections
+        for (const a of auctions || []) if (a.nftContract) s.add(a.nftContract.toLowerCase());
         return Array.from(s);
-    }, [collections, featuredNFT, selectedCollections]);
+    }, [collections, featuredNFT, selectedCollections, auctions]);
 
     const nameMap = useCollectionNames(addressesNeedingNames, provider);
 
@@ -492,21 +543,23 @@ function MarketplacePage() {
     const deepRescan = useCallback(async () => {
         try {
             setIsLoading(true);
-            setStatus && setStatus('Force refreshing listings (deep rescan)...');
+            setStatus && setStatus('Triggering fresh data sync...');
             clearLocalCaches();
-            const maybeOptions = { force: true, deep: true, fullRescan: true, fromBlock: 0, clearCache: true };
-            try {
-                await fetchListings(maybeOptions);
-            } catch {
+            
+            // Use the new API-based sync instead of blockchain scanning
+            if (triggerManualSync) {
+                await triggerManualSync();
+            } else {
+                // Fallback to cache refresh
                 await fetchListings(true);
             }
         } catch (error) {
-            console.error('[Marketplace] Deep rescan error:', error);
-            setStatus && setStatus('Error force refreshing listings');
+            criticalError('[Marketplace] Deep rescan error:', error);
+            setStatus && setStatus('Error refreshing listings');
         } finally {
             setIsLoading(false);
         }
-    }, [fetchListings, clearLocalCaches, setStatus]);
+    }, [triggerManualSync, fetchListings, clearLocalCaches, setStatus]);
 
     /* ----------------------------
        Auto-refresh + keyboard shortcuts
@@ -519,8 +572,9 @@ function MarketplacePage() {
             setNextRefreshAt(Date.now() + autoRefreshMs);
             try {
                 await fetchListings(true);
+                if (auctionsEnabled) await fetchAuctions(false);
             } catch (e) {
-                console.warn('[Marketplace] Auto-refresh failed:', e);
+                debugWarn('[Marketplace] Auto-refresh failed:', e);
             } finally {
                 if (active) {
                     setTimeout(tick, autoRefreshMs);
@@ -529,20 +583,20 @@ function MarketplacePage() {
         };
         const id = setTimeout(tick, autoRefreshMs);
         return () => { active = false; clearTimeout(id); };
-    }, [autoRefreshEnabled, autoRefreshMs, fetchListings]);
+    }, [autoRefreshEnabled, autoRefreshMs, fetchListings, auctionsEnabled]);
 
     useEffect(() => {
         const onKey = (e) => {
             if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
             if (e.key === '/') { e.preventDefault(); searchInputRef.current?.focus(); }
-            if (e.key.toLowerCase() === 'r') { fetchListings(true); }
+            if (e.key.toLowerCase() === 'r') { fetchListings(true); if (auctionsEnabled) fetchAuctions(false); }
             if (e.key.toLowerCase() === 'd') { deepRescan(); }
             if (e.key.toLowerCase() === 'g') { setViewMode('grid'); }
             if (e.key.toLowerCase() === 'l') { setViewMode('list'); }
         };
         window.addEventListener('keydown', onKey);
         return () => window.removeEventListener('keydown', onKey);
-    }, [fetchListings, deepRescan]);
+    }, [fetchListings, deepRescan, auctionsEnabled]);
 
     /* ----------------------------
        Load listings
@@ -553,9 +607,10 @@ function MarketplacePage() {
                 try {
                     setIsLoading(true);
                     await fetchListings();
+                    if (auctionsEnabled) await fetchAuctions(false);
                     hasLoadedRef.current = true;
                 } catch (error) {
-                    console.error('[Marketplace] Error fetching listings:', error);
+                    criticalError('[Marketplace] Error fetching listings:', error);
                     setStatus('Error loading marketplace data');
                 } finally {
                     setIsLoading(false);
@@ -573,21 +628,22 @@ function MarketplacePage() {
                     await deepRescan();
                 } else {
                     await fetchListings(true);
+                    if (auctionsEnabled) await fetchAuctions(false);
                 }
             } catch (error) {
-                console.error('[Marketplace] Refresh error:', error);
+                criticalError('[Marketplace] Refresh error:', error);
             } finally {
                 setIsLoading(false);
             }
         };
         return () => { delete window.refreshMarketplace; };
-    }, [isInitialized, fetchListings, setStatus, deepRescan]);
+    }, [isInitialized, fetchListings, setStatus, deepRescan, auctionsEnabled]);
 
     /* ----------------------------
        Persist listings to Supabase cache (deduped)
        ---------------------------- */
     useEffect(() => {
-        if (!isConnected) return;
+        if (!supabaseConnected) return;
         if (!Array.isArray(listings) || listings.length === 0) return;
 
         const active = listings.filter((l) => l.active && !(canceledListings?.has?.(String(l.id))));
@@ -606,11 +662,226 @@ function MarketplacePage() {
         cacheSigRef.current = sig;
 
         const t = setTimeout(() => {
-            try { cacheListings(active, canceledListings || new Set()); } catch (e) { console.warn('Cache listings error:', e); }
+            try { cacheListings(active, canceledListings || new Set()); } catch (e) { debugWarn('Cache listings error:', e); }
         }, 300);
 
         return () => clearTimeout(t);
-    }, [isConnected, listings, canceledListings, cacheListings]);
+    }, [supabaseConnected, listings, canceledListings, cacheListings]);
+
+    /* ----------------------------
+       Auctions: load from Supabase (if present) + conservative on-chain scan (events)
+       ---------------------------- */
+    // Enhanced metadata fetching using the robust metadata loading system
+    const fetchAuctionMetadata = async (nftContract, tokenId, is1155) => {
+        try {
+            if (!provider || !nftContract || (!tokenId && tokenId !== 0 && tokenId !== '0')) {
+                debugWarn('Invalid parameters for auction metadata fetch');
+                return { name: `NFT #${tokenId || 'Unknown'}`, image: null };
+            }
+
+            debugLog(`🔍 Fetching auction metadata for ${nftContract}:${tokenId}`);
+
+            // Use the enhanced metadata loader from metadataLoader.js
+            const metadata = await loadMetadata(nftContract, tokenId, provider);
+
+            if (metadata && metadata.image) {
+                debugLog(`✅ Auction metadata loaded successfully for ${nftContract}:${tokenId}`);
+                return {
+                    name: metadata.name || `NFT #${tokenId}`,
+                    image: metadata.image,
+                    description: metadata.description,
+                    attributes: metadata.attributes || [],
+                    raw: metadata
+                };
+            } else {
+                debugWarn(`⚠️ Auction metadata incomplete for ${nftContract}:${tokenId}`);
+                return {
+                    name: metadata?.name || `NFT #${tokenId}`,
+                    image: null,
+                    description: metadata?.description || '',
+                    attributes: metadata?.attributes || [],
+                    raw: metadata
+                };
+            }
+        } catch (error) {
+            criticalError(`Failed to fetch auction metadata for ${nftContract}:${tokenId}:`, error);
+            return {
+                name: `NFT #${tokenId || 'Unknown'}`,
+                image: null,
+                description: '',
+                attributes: [],
+                error: error.message
+            };
+        }
+    };
+
+    const fetchAuctions = useCallback(async (showStatus = true) => {
+        if (!auctionsEnabled) { setAuctions([]); return; }
+        if (!provider || !marketplaceAddress) {
+            // Provide test auction data when network is unavailable
+            if (showStatus) {
+                debugWarn('No provider or marketplace address, using test auction data');
+                const testAuctions = [
+                    {
+                        source: 'test',
+                        id: '1',
+                        nftContract: '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906',
+                        tokenId: '1',
+                        seller: '0x0327Fab0F5A79C884b9E3fc611d490a19147D235',
+                        paymentToken: ethers.ZeroAddress,
+                        reservePrice: '1000000000000000000',
+                        startPrice: '500000000000000000',
+                        startTime: Date.now() - 60000,
+                        endTime: Date.now() + 3600000,
+                        highestBid: '750000000000000000',
+                        highestBidder: '0x123...',
+                        isERC1155: false,
+                        quantity: '1',
+                        image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                        imageUrl: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                        name: 'Test Pixel Ninja Cat #1',
+                        description: 'A test auction item to demonstrate image loading',
+                        attributes: [],
+                        metadata: {
+                            name: 'Test Pixel Ninja Cat #1',
+                            image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                            description: 'A test auction item to demonstrate image loading'
+                        },
+                        active: true,
+                    }
+                ];
+                setAuctions(testAuctions);
+            }
+            return;
+        }
+
+        setIsAuctionsLoading(true);
+        try {
+            // 1) Try Supabase tables if present (lightweight)
+            let rows = [];
+            if (supabaseConnected && supabase) {
+                const candidates = ['auctions', 'marketplace_auctions', 'auction_listings'];
+                for (const table of candidates) {
+                    try {
+                        const { data, error } = await supabase
+                            .from(table)
+                            .select('*')
+                            .order('created_at', { ascending: false })
+                            .limit(100);
+                        if (!error && Array.isArray(data) && data.length) {
+                            rows = data;
+                            break;
+                        }
+                    } catch { /* ignore */ }
+                }
+            }
+
+            const normalizedFromDb = rows.map(r => ({
+                source: 'db',
+                id: String(r.id ?? r.auction_id ?? ''),
+                nftContract: (r.nft_contract || r.contract || '').toLowerCase(),
+                tokenId: String(r.token_id ?? r.tokenId ?? ''),
+                seller: (r.seller || '').toLowerCase(),
+                paymentToken: r.payment_token || ethers.ZeroAddress,
+                reservePrice: String(r.reserve_price ?? r.reservePrice ?? '0'),
+                startPrice: String(r.start_price ?? r.startPrice ?? '0'),
+                startTime: Number(coerceMs(r.start_time || r.startTime)) || 0,
+                endTime: Number(coerceMs(r.end_time || r.ends_at || r.endTime)) || 0,
+                highestBid: String(r.highest_bid ?? r.highestBid ?? '0'),
+                highestBidder: (r.highest_bidder || r.highestBidder || '').toLowerCase(),
+                isERC1155: !!r.is_erc1155,
+                quantity: String(r.quantity ?? '1'),
+                image: r.image_url || null,
+                name: r.name || null,
+                status: (r.status || '').toLowerCase(),
+            }));
+
+            // 2) Conservative on-chain scan for AuctionCreated events (recent 50k blocks)
+            const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, provider);
+            let chainAuctions = [];
+            try {
+                const current = await provider.getBlockNumber();
+                const fromBlock = Math.max(0, current - 50000);
+                if (showStatus) setStatus?.(`Scanning recent auctions ${fromBlock}-${current}...`);
+                const created = await contract.queryFilter(contract.filters.AuctionCreated(), fromBlock, current);
+
+                // Limit processing to avoid heavy scanning
+                const toProcess = created.slice(-100); // last 100
+                // For each event, read current auction state from storage
+                chainAuctions = await Promise.all(toProcess.map(async (ev) => {
+                    try {
+                        const auctionId = String(ev.args?.auctionId?.toString?.() || ev.args?.[0]?.toString?.() || '');
+                        if (!auctionId) return null;
+                        const a = await contract.auctions(auctionId);
+                        // Active = started && !settled && now < endTime
+                        const endSec = Number(a.endTime || 0);
+                        const endMs = endSec ? endSec * 1000 : 0;
+                        const active = Boolean(a.started) && !Boolean(a.settled) && (endMs ? (Date.now() < endMs) : true);
+
+                        // Enhanced metadata fetch with robust error handling
+                        let meta = { name: `NFT #${a.tokenId}`, image: null };
+                        try {
+                            meta = await fetchAuctionMetadata(a.nftContract, a.tokenId?.toString?.() || '0', Boolean(a.isERC1155));
+                            debugLog(`✅ Auction metadata fetched for ${a.nftContract}:${a.tokenId}`, meta);
+                        } catch (metaError) {
+                            debugWarn(`⚠️ Auction metadata fetch failed for ${a.nftContract}:${a.tokenId}:`, metaError);
+                            // Continue with fallback metadata
+                        }
+
+                        return {
+                            source: 'chain',
+                            id: auctionId,
+                            nftContract: (a.nftContract || '').toLowerCase(),
+                            tokenId: String(a.tokenId?.toString?.() || '0'),
+                            seller: (a.seller || '').toLowerCase(),
+                            paymentToken: a.paymentToken || ethers.ZeroAddress,
+                            reservePrice: String(a.reservePrice || '0'),
+                            startPrice: String(a.startPrice || '0'),
+                            startTime: Number(a.startTime || 0) * 1000,
+                            endTime: endMs,
+                            highestBid: String(a.highestBid || '0'),
+                            highestBidder: (a.highestBidder || '').toLowerCase(),
+                            isERC1155: Boolean(a.isERC1155),
+                            quantity: String(a.quantity || '1'),
+                            image: meta.image || null,
+                            imageUrl: meta.image || null, // Additional fallback field
+                            name: meta.name || `NFT #${a.tokenId?.toString?.() || '0'}`,
+                            description: meta.description || '',
+                            attributes: meta.attributes || [],
+                            metadata: meta.raw || null, // Store raw metadata for additional fallback
+                            active,
+                        };
+                    } catch {
+                        return null;
+                    }
+                }));
+                chainAuctions = chainAuctions.filter(Boolean);
+            } catch (e) {
+                debugWarn('[Auctions] Chain scan failed:', e?.message || e);
+            }
+
+            // Merge DB + chain, prefer chain state for activeness and latest bids
+            const byId = new Map();
+            for (const a of normalizedFromDb) byId.set(a.id, a);
+            for (const a of chainAuctions) byId.set(a.id, { ...(byId.get(a.id) || {}), ...a });
+
+            // Only keep active or recently ended (last 6h) to avoid noise
+            const recentCutoff = Date.now() - 6 * 60 * 60 * 1000;
+            const merged = Array.from(byId.values())
+                .filter(a => {
+                    const endMs = a.endTime;
+                    if (!endMs) return true;
+                    if (Date.now() < endMs) return true;
+                    return endMs >= recentCutoff; // ended recently
+                })
+                .sort((a, b) => (a.endTime || 0) - (b.endTime || 0)); // ending soonest first
+
+            setAuctions(merged);
+            if (showStatus) setTimeout(() => setStatus?.(''), 2000);
+        } finally {
+            setIsAuctionsLoading(false);
+        }
+    }, [auctionsEnabled, provider, marketplaceAddress, supabaseConnected, supabase, setStatus]);
 
     /* ----------------------------
        Process listings & compute enhanced stats (incl. HOT/NEW signals)
@@ -711,9 +982,9 @@ function MarketplacePage() {
                             convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider)
                                 .then((usdcPrice) => {
                                     hasAnyUSDCRates = true;
-                                    return { listing, usdcPrice, hasRate: true, ts, isRecent };
+                                    return { listing, usdcPrice, hasRate: true, isRecent, ts };
                                 })
-                                .catch(() => ({ listing, usdcPrice: 0, hasRate: false, ts, isRecent }))
+                                .catch(() => ({ listing, usdcPrice: 0, hasRate: false, isRecent, ts }))
                         );
                     }
 
@@ -773,15 +1044,14 @@ function MarketplacePage() {
                         setFeaturedNFT(highest.listing);
                     }
                 } catch (error) {
-                    console.error('Error processing listings with enhanced stats:', error);
-                    // Fallback (no USDC conversion): compute basic recency signals with native amounts
+                    criticalError('Error processing listings with enhanced stats:', error);
+                    // Fallback (no USDC conversion)
                     const activeListings = listings.filter(
                         (listing) => listing.active && !canceledListings.has(listing.id?.toString())
                     );
                     const collectionMap = {};
                     let totalVolume = 0;
                     let lowestPrice = Infinity;
-                    const cutoff = nowMs() - RECENT_WINDOW_MS;
 
                     activeListings.forEach((listing) => {
                         const collectionAddress = listing.nftContract;
@@ -820,7 +1090,7 @@ function MarketplacePage() {
                                 firstTs: Number.POSITIVE_INFINITY,
                                 lastTs: 0,
                                 recentListings: 0,
-                                recentVolume: 0, // in native units here
+                                recentVolume: 0,
                             };
                         }
 
@@ -833,7 +1103,7 @@ function MarketplacePage() {
                             coerceMs(listing.blockTimestamp) ??
                             coerceMs(listing.listedAt);
                         const ts = Number.isFinite(tsCandidate) ? tsCandidate : 0;
-                        const isRecent = ts >= cutoff && ts > 0;
+                        const isRecent = ts >= nowMs() - RECENT_WINDOW_MS && ts > 0;
 
                         collectionMap[collectionAddress].items.push(listing);
                         collectionMap[collectionAddress].totalVolume += priceInEth;
@@ -928,6 +1198,14 @@ function MarketplacePage() {
     useEffect(() => {
         let result = [...listings];
 
+        // Debug logging to help identify filtering issues
+        debugLog(`🔍 Filtering ${listings.length} listings with filters:`, {
+            searchTerm,
+            selectedCategories: selectedCategories.length,
+            selectedCollections: selectedCollections.length,
+            priceRange
+        });
+
         if (searchTerm) {
             const term = searchTerm.toLowerCase();
             result = result.filter(
@@ -937,6 +1215,7 @@ function MarketplacePage() {
                     item.metadata?.description?.toLowerCase().includes(term) ||
                     item.tokenId.toString().includes(term)
             );
+            debugLog(`🔍 After search filter: ${result.length} listings remaining`);
         }
 
         if (selectedCategories.length > 0) {
@@ -946,19 +1225,23 @@ function MarketplacePage() {
                     item.metadata?.attributes?.find((attr) => attr.trait_type === 'Category')?.value;
                 return category && selectedCategories.includes(String(category).toLowerCase());
             });
+            debugLog(`🔍 After category filter: ${result.length} listings remaining`);
         }
 
         if (selectedCollections.length > 0) {
             result = result.filter((item) => selectedCollections.includes(item.nftContract.toLowerCase()));
+            debugLog(`🔍 After collection filter: ${result.length} listings remaining`);
         }
 
         if (priceRange.min !== '') {
             const minWei = ethers.parseEther(priceRange.min.toString());
             result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) >= minWei);
+            debugLog(`🔍 After min price filter: ${result.length} listings remaining`);
         }
         if (priceRange.max !== '') {
             const maxWei = ethers.parseEther(priceRange.max.toString());
             result = result.filter((item) => ethers.getBigInt(item.pricePerUnit) <= maxWei);
+            debugLog(`🔍 After max price filter: ${result.length} listings remaining`);
         }
 
         switch (sortMethod) {
@@ -978,6 +1261,7 @@ function MarketplacePage() {
                 break;
         }
 
+        debugLog(`🔍 Final filtered result: ${result.length} listings for display`);
         setFilteredListings(result);
         setCurrentPage(1); // reset paging on filter/sort change
     }, [listings, searchTerm, sortMethod, selectedCategories, selectedCollections, priceRange]);
@@ -1000,7 +1284,10 @@ function MarketplacePage() {
     const totalPages = Math.ceil(filteredListings.length / itemsPerPage);
     const indexOfLastItem = Math.min(currentPage, totalPages || 1) * itemsPerPage;
     const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-    const currentItems = filteredListings.slice(0, autoLoadNext ? indexOfLastItem : Math.max(0, indexOfLastItem - itemsPerPage), autoLoadNext ? undefined : indexOfLastItem); // for auto-load, show accumulated
+    // Fixed: use indexOfFirstItem for non-autoLoad paging; accumulate for autoLoadNext
+    const currentItems = autoLoadNext
+        ? filteredListings.slice(0, indexOfLastItem)
+        : filteredListings.slice(indexOfFirstItem, indexOfLastItem);
 
     const paginate = (pageNumber) => {
         setCurrentPage(Math.max(1, Math.min(pageNumber, totalPages || 1)));
@@ -1200,6 +1487,87 @@ function MarketplacePage() {
                     <small>{stats.hasUSDCRates ? 'USDC' : 'Estimated'}</small>
                 </div>
             </div>
+
+            {/* Live Auctions */}
+            {auctionsEnabled && (
+                <section className="live-auctions">
+                    <div className="section-header">
+                        <h2>Live Auctions</h2>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <button
+                                className="refresh-button"
+                                onClick={() => fetchAuctions(true)}
+                                disabled={isAuctionsLoading}
+                                title="Refresh auctions"
+                            >
+                                <RefreshIcon /> {isAuctionsLoading ? 'Loading...' : 'Refresh Auctions'}
+                            </button>
+                            <Link to="/auctions/create" className="see-all-button">Create Auction →</Link>
+                        </div>
+                    </div>
+
+                    {auctions.length > 0 ? (
+                        <div className="auctions-grid">
+                            {auctions.slice(0, 8).map((a) => {
+                                const endMs = a.endTime || 0;
+                                const endsIn = endMs ? timeLeft(endMs) : '—';
+                                const hasBid = ethers.getBigInt(a.highestBid || 0) > 0n;
+                                const price = hasBid ? a.highestBid : a.startPrice;
+                                const title = a.name || `#${a.tokenId}`;
+                                const collectionLabel = labelForAddress(a.nftContract, '');
+                                return (
+                                    <Link
+                                        key={a.id}
+                                        to={`/auctions/${a.id}`}
+                                        className="auction-card"
+                                        aria-label={`Open auction ${title}`}
+                                    >
+                                        <div className="auction-image">
+                                            <SmartImage
+                                                srcList={[
+                                                    a.image,
+                                                    a.imageUrl,
+                                                    a.image_url,
+                                                    // Add fallback sources from raw metadata if available
+                                                    ...(a.metadata?.image ? [a.metadata.image] : []),
+                                                    ...(a.metadata?.image_url ? [a.metadata.image_url] : []),
+                                                    ...(a.metadata?.imageUrl ? [a.metadata.imageUrl] : [])
+                                                ].filter(Boolean)}
+                                                alt={title}
+                                                width={320}
+                                                height={200}
+                                                seed={`${a.nftContract}-${a.tokenId}`}
+                                                title={title}
+                                            />
+                                            <div className="auction-badge">AUCTION</div>
+                                        </div>
+                                        <div className="auction-details">
+                                            <h3 title={title}>{title}</h3>
+                                            <p className="auction-collection" title={collectionLabel}>{collectionLabel}</p>
+                                            <div className="auction-meta">
+                                                <div className="meta">
+                                                    <span className="label">{hasBid ? 'Highest Bid' : 'Start Price'}</span>
+                                                    <span className="value">{formatPrice(price)} VTRU</span>
+                                                </div>
+                                                <div className="meta">
+                                                    <span className="label">Ends In</span>
+                                                    <span className="value">{endsIn}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </Link>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="empty-state card" style={{ marginTop: 8 }}>
+                            <div className="empty-icon">🏷️</div>
+                            <h3>No live auctions</h3>
+                            <p>Auctions you create or bid on will appear here.</p>
+                        </div>
+                    )}
+                </section>
+            )}
 
             {/* Popular Collections Carousel */}
             <section className="hot-collections">
@@ -1436,7 +1804,7 @@ function MarketplacePage() {
                     <div className="marketplace-actions">
                         <button
                             className="refresh-button"
-                            onClick={() => fetchListings(true)}
+                            onClick={() => { fetchListings(true); if (auctionsEnabled) fetchAuctions(true); }}
                             disabled={isLoading}
                             title="Refresh listings from blockchain (R)"
                         >
@@ -1447,10 +1815,10 @@ function MarketplacePage() {
                             className="refresh-button deep"
                             onClick={deepRescan}
                             disabled={isLoading}
-                            title="Force deep rescan (clears caches, scans from genesis) (D)"
+                            title="Trigger fresh data sync from blockchain (S)"
                         >
                             <DeepIcon />
-                            {isLoading ? 'Scanning...' : 'Deep Rescan'}
+                            {isLoading ? 'Syncing...' : 'Sync Data'}
                         </button>
                         <label className="filter-button" title="Auto refresh every interval">
                             <input
@@ -1702,9 +2070,9 @@ function MarketplacePage() {
                                 description={
                                     anyActiveFilter
                                         ? "Try adjusting your filters or search criteria to find what you're looking for."
-                                        : 'There are currently no active listings in the marketplace. Try a deep rescan if you expect items to appear.'
+                                        : 'There are currently no active listings in the marketplace. Try syncing fresh data if you expect items to appear.'
                                 }
-                                actionText={anyActiveFilter ? 'Clear Filters' : 'Deep Rescan'}
+                                actionText={anyActiveFilter ? 'Clear Filters' : 'Sync Data'}
                                 onAction={() => {
                                     if (anyActiveFilter) {
                                         clearAllFilters();
@@ -1712,12 +2080,12 @@ function MarketplacePage() {
                                         deepRescan();
                                     }
                                 }}
-                                secondaryActionText={anyActiveFilter ? 'Deep Rescan' : 'List Your NFT'}
+                                secondaryActionText={anyActiveFilter ? 'Sync Data' : 'Create Auction'}
                                 onSecondaryAction={() => {
                                     if (anyActiveFilter) {
                                         deepRescan();
                                     } else {
-                                        window.location.href = '/sell';
+                                        window.location.href = '/auctions/create';
                                     }
                                 }}
                                 className="marketplace"
@@ -1737,11 +2105,15 @@ function MarketplacePage() {
                     <p>Join creators and collectors in the vibrant Vitruveo marketplace</p>
                     <div className="cta-buttons">
                         {wallet ? (
-                            <a href="/sell" className="primary-button">Create a Listing</a>
+                            <>
+                                <a href="/sell" className="primary-button">Create a Listing</a>
+                                <a href="/auctions/create" className="primary-button">Create Auction</a>
+                            </>
                         ) : (
                             <button className="primary-button" onClick={connect}>Connect Wallet</button>
                         )}
                         <a href="/profile" className="secondary-button">View Your Profile</a>
+                        <a href="/vibe-dashboard" className="secondary-button">VIBE Analytics</a>
                     </div>
                 </div>
                 <div className="cta-image">

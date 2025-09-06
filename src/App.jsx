@@ -1,9 +1,7 @@
 ﻿import './styles.css';
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
-import { ethers } from 'ethers';
-import MarketplaceAbi from './abi/Marketplace.json';
-import { createClient } from '@supabase/supabase-js';
+import MarketplaceAbi from './abi/VTRUNFTMarketplace.json';
 import { Analytics } from '@vercel/analytics/react';
 
 // Components
@@ -20,37 +18,23 @@ const TermsPage = lazy(() => import('./pages/TermsPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SellPage = lazy(() => import('./pages/SellPage'));
 const CollectionPage = lazy(() => import('./pages/CollectionPage'));
+const BlockSharePage = lazy(() => import('./pages/BlockSharePage'));
+const MintPage = lazy(() => import('./pages/MintPage'));
+
+// Auction pages (lazy-loaded)
+const CreateAuctionPage = lazy(() => import('./pages/CreateAuctionPage'));
+const AuctionDetailPage = lazy(() => import('./pages/AuctionDetailPage'));
+const MyAuctionsPage = lazy(() => import('./pages/MyAuctionsPage'));
+const AdminPathsPage = lazy(() => import('./pages/AdminPathsPage'));
+const VibeDashboardPage = lazy(() => import('./pages/VibeDashboardPage'));
 
 // Providers
 import { WalletProvider } from './context/WalletContext';
 import { MarketplaceProvider } from './context/MarketplaceContext';
 import { SupabaseProvider } from './context/SupabaseContext';
 
-// Optional Supabase client - only create if URL is provided
-let supabase = null;
-try {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-    if (supabaseUrl && supabaseKey && supabaseUrl !== 'https://dummy.supabase.co') {
-        supabase = createClient(supabaseUrl, supabaseKey);
-    }
-} catch (error) {
-    console.warn('Supabase not configured, continuing without it:', error.message);
-}
-
 const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
 const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '';
-
-// Small index component (optional)
-function CollectionsIndex() {
-    return (
-        <div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
-            <div className="hp-section__head"><h2>Collections</h2></div>
-            <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
-        </div>
-    );
-}
 
 // Alias so /collection/:address also works
 function CollectionAliasRedirect() {
@@ -58,34 +42,53 @@ function CollectionAliasRedirect() {
     return <Navigate to={`/collections/${address}`} replace />;
 }
 
-// Scroll to top on route change
+// Scroll to hash (anchors) or top on route change
 function ScrollToTop() {
-    const { pathname } = useLocation();
-    useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }, [pathname]);
+    const { pathname, hash } = useLocation();
+    useEffect(() => {
+        if (hash && hash.length > 1) {
+            const el = document.getElementById(hash.slice(1));
+            if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+            }
+        }
+        window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    }, [pathname, hash]);
     return null;
 }
 
-// Lightweight route change progress bar (no deps)
+// Lightweight route change progress bar (reduced-motion aware)
 function RouteProgressBar() {
     const { pathname } = useLocation();
     const [visible, setVisible] = useState(false);
     const [width, setWidth] = useState(0);
 
     useEffect(() => {
-        let raf = 0, hideT = 0, growT = 0;
+        const prefersReduced = typeof window !== 'undefined' &&
+            window.matchMedia &&
+            window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        let growT = 0, finT = 0, hideT = 0;
         setVisible(true);
-        setWidth(8);
-        growT = window.setInterval(() => {
-            setWidth((w) => (w < 85 ? Math.min(85, w + 7) : w));
-        }, 60);
-        raf = window.setTimeout(() => {
-            setWidth(100);
-            hideT = window.setTimeout(() => { setVisible(false); setWidth(0); }, 240);
-        }, 320);
+        setWidth(prefersReduced ? 100 : 8);
+
+        if (!prefersReduced) {
+            growT = window.setInterval(() => {
+                setWidth((w) => (w < 85 ? Math.min(85, w + 7) : w));
+            }, 60);
+            finT = window.setTimeout(() => {
+                setWidth(100);
+                hideT = window.setTimeout(() => { setVisible(false); setWidth(0); }, 240);
+            }, 320);
+        } else {
+            // No animation: show briefly
+            hideT = window.setTimeout(() => { setVisible(false); setWidth(0); }, 160);
+        }
 
         return () => {
             window.clearInterval(growT);
-            window.clearTimeout(raf);
+            window.clearTimeout(finT);
             window.clearTimeout(hideT);
         };
     }, [pathname]);
@@ -186,7 +189,14 @@ function TitleSetter() {
             { test: /^\/hot-listings/, title: `🔥 Hot Listings • ${siteName}` },
             { test: /^\/sell/, title: `List & Sell • ${siteName}` },
             { test: /^\/profile/, title: `Your Profile • ${siteName}` },
+            { test: /^\/blockshare/, title: `BlockShare Revenue • ${siteName}` },
+            { test: /^\/mint/, title: `Mint RevShare NFT • ${siteName}` },
             { test: /^\/collections\/[0-9a-zA-Z]+/, title: `Collection • ${siteName}` },
+            { test: /^\/my-auctions/, title: `My Auctions • ${siteName}` },
+            { test: /^\/auctions\/create/, title: `Create Auction • ${siteName}` },
+            { test: /^\/auctions\/[0-9]+/, title: `Auction • ${siteName}` },
+            { test: /^\/vibe-dashboard/, title: `VIBE Dashboard • ${siteName}` },
+            { test: /^\/admin\/paths/, title: `Admin Paths • ${siteName}` },
             { test: /^\/terms/, title: `Terms • ${siteName}` },
             { test: /^\/privacy/, title: `Privacy • ${siteName}` },
         ];
@@ -196,11 +206,39 @@ function TitleSetter() {
     return null;
 }
 
+// Idle route prefetch (speeds up subsequent navigations)
+function useIdleRoutePrefetch() {
+    useEffect(() => {
+        const preloaders = [
+            () => import('./pages/MarketplacePage'),
+            () => import('./pages/HotListingsPage'),
+            () => import('./pages/SellPage'),
+            () => import('./pages/ProfilePage'),
+            () => import('./pages/BlockSharePage'),
+            () => import('./pages/MintPage'),
+            () => import('./pages/CreateAuctionPage'),
+            () => import('./pages/MyAuctionsPage'),
+            () => import('./pages/AuctionDetailPage'),
+            () => import('./pages/VibeDashboardPage'),
+            () => import('./pages/CollectionPage'),
+            () => import('./pages/TermsPage'),
+            () => import('./pages/PrivacyPage'),
+        ];
+        const run = () => preloaders.forEach((fn, i) => setTimeout(() => { try { fn(); } catch { /* ignore */ } }, 50 + i * 60));
+        const ri = (window.requestIdleCallback || ((cb) => setTimeout(cb, 250)));
+        const id = ri(run, { timeout: 1500 });
+        return () => clearTimeout(id);
+    }, []);
+}
+
 function App() {
+    useIdleRoutePrefetch();
+
     return (
         <SupabaseProvider>
             <WalletProvider rpcUrl={rpcUrl}>
-                <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi}>
+                {/* Pass ABI array, not the whole artifact */}
+                <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi.abi}>
                     <BrowserRouter>
                         <RouteProgressBar />
                         <ScrollToTop />
@@ -227,13 +265,25 @@ function App() {
                                             <Route path="/marketplace" element={<MarketplacePage />} />
                                             <Route path="/hot-listings" element={<HotListingsPage />} />
                                             <Route path="/sell" element={<SellPage />} />
+                                            <Route path="/blockshare" element={<BlockSharePage />} />
+                                            <Route path="/mint" element={<MintPage />} />
                                             <Route path="/terms" element={<TermsPage />} />
                                             <Route path="/privacy" element={<PrivacyPage />} />
 
                                             {/* collections routes */}
-                                            <Route path="/collections" element={<CollectionsIndex />} />
+                                            <Route path="/collections" element={<div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
+                                                <div className="hp-section__head"><h2>Collections</h2></div>
+                                                <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
+                                            </div>} />
                                             <Route path="/collections/:address" element={<CollectionPage />} />
                                             <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
+
+                                            {/* Auction routes - always enabled */}
+                                            <Route path="/auctions/create" element={<CreateAuctionPage />} />
+                                            <Route path="/auctions/:id" element={<AuctionDetailPage />} />
+                                            <Route path="/my-auctions" element={<MyAuctionsPage />} />
+                                            <Route path="/admin/paths" element={<AdminPathsPage />} />
+                                            <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
 
                                             {/* Fallback */}
                                             <Route path="*" element={<Navigate to="/" replace />} />
@@ -243,7 +293,7 @@ function App() {
                             </div>
                             <Footer />
                         </div>
-                        <Analytics />
+                        {import.meta.env.PROD && <Analytics />}
                     </BrowserRouter>
                 </MarketplaceProvider>
             </WalletProvider>

@@ -1,25 +1,5 @@
 import { ethers } from 'ethers';
-
-// Add missing logging utility functions
-const criticalError = (message, error) => {
-    console.error(`❌ CRITICAL: ${message}`, error);
-};
-
-const debugLog = (message, data) => {
-    if (data) {
-        console.log(`🔍 DEBUG: ${message}`, data);
-    } else {
-        console.log(`🔍 DEBUG: ${message}`);
-    }
-};
-
-const debugWarn = (message, data) => {
-    if (data) {
-        console.warn(`⚠️ WARNING: ${message}`, data);
-    } else {
-        console.warn(`⚠️ WARNING: ${message}`);
-    }
-};
+import { debugLog, debugWarn, criticalError } from './debugUtils';
 
 // Add ERC20 ABI for detection
 const ERC20_ABI = [
@@ -118,7 +98,7 @@ export class NFTScanner {
                 }
             }
         } catch (e) {
-            console.warn('Error loading cached NFTs:', e);
+            debugWarn('Error loading cached NFTs:', e);
         }
         
         return null;
@@ -136,7 +116,7 @@ export class NFTScanner {
             
             localStorage.setItem(cacheKey, JSON.stringify(cacheData));
         } catch (e) {
-            console.warn('Error saving NFTs to cache:', e);
+            debugWarn('Error saving NFTs to cache:', e);
         }
     }
 
@@ -148,7 +128,7 @@ export class NFTScanner {
                 return JSON.parse(contractCacheData);
             }
         } catch (e) {
-            console.warn('Error loading contract cache:', e);
+            debugWarn('Error loading contract cache:', e);
         }
         
         return {};
@@ -159,7 +139,7 @@ export class NFTScanner {
         try {
             localStorage.setItem('nft_contract_cache', JSON.stringify(this.contractCache));
         } catch (e) {
-            console.warn('Error saving contract cache:', e);
+            debugWarn('Error saving contract cache:', e);
         }
     }
 
@@ -172,7 +152,7 @@ export class NFTScanner {
                 tokens.forEach(addr => this.knownErc20s.add(addr.toLowerCase()));
             }
         } catch (e) {
-            console.warn('Error loading known ERC20 tokens:', e);
+            debugWarn('Error loading known ERC20 tokens:', e);
         }
     }
 
@@ -182,7 +162,7 @@ export class NFTScanner {
             localStorage.setItem('known_erc20_tokens', 
                 JSON.stringify([...this.knownErc20s]));
         } catch (e) {
-            console.warn('Error saving known ERC20 tokens:', e);
+            debugWarn('Error saving known ERC20 tokens:', e);
         }
     }
 
@@ -194,7 +174,7 @@ export class NFTScanner {
                 return JSON.parse(metadataCache);
             }
         } catch (e) {
-            console.warn('Error loading metadata cache:', e);
+            debugWarn('Error loading metadata cache:', e);
         }
         
         return {};
@@ -219,7 +199,7 @@ export class NFTScanner {
             
             localStorage.setItem('nft_metadata_cache', JSON.stringify(minimalCache));
         } catch (e) {
-            console.warn('Error saving metadata cache:', e);
+            debugWarn('Error saving metadata cache:', e);
         }
     }
 
@@ -293,44 +273,45 @@ export class NFTScanner {
         return nfts;
     }
     
-    // DISABLED: Start a background scan that doesn't block UI - to prevent mass data collection
+    // Smart background scan with rate limiting for production use
     startBackgroundScan() {
-        // DISABLED to prevent mass data collection to Supabase
-        console.log("⚠️ Background NFT scanning DISABLED to prevent mass data collection");
-        console.log("💡 Users can manually refresh NFTs if needed");
+        // Check if we should do a smart background refresh
+        const lastScan = localStorage.getItem('nft_last_background_scan');
+        const BACKGROUND_SCAN_COOLDOWN = 10 * 60 * 1000; // 10 minutes minimum between scans
         
-        // Don't start background scanning that creates massive data
-        return;
-        
-        /*
-        // Only start if we're not already scanning
-        if (!this.isBackgroundScanning && !this.backgroundScanPromise) {
-            this.isBackgroundScanning = true;
-            
-            // Use low priority to avoid blocking UI
-            this.backgroundScanPromise = new Promise(resolve => {
-                setTimeout(async () => {
-                    try {
-                        // Get fresh NFTs
-                        const freshNfts = await this.scanAllNFTs(true);
-                        
-                        // Update cache with new results
-                        this.saveNftsToCache(freshNfts);
-                        
-                        // Update current NFTs
-                        this.nfts = freshNfts;
-                        this.updateStatus(`Background scan complete - found ${freshNfts.length} NFTs`);
-                    } catch (e) {
-                        console.error('Background scan error:', e);
-                    } finally {
-                        this.isBackgroundScanning = false;
-                        this.backgroundScanPromise = null;
-                        resolve();
-                    }
-                }, 3000); // Wait 3 seconds before starting background scan
-            });
+        if (lastScan && (Date.now() - parseInt(lastScan)) < BACKGROUND_SCAN_COOLDOWN) {
+            debugLog("⏱️ Background scan skipped - still in cooldown period");
+            return;
         }
-        */
+        
+        // Only scan if we have a reasonable number of cached NFTs (not overwhelming)
+        if (this.nfts.length > 100) {
+            debugLog("⚠️ Background scan skipped - too many NFTs to scan efficiently");
+            return;
+        }
+        
+        // Start a conservative background refresh
+        setTimeout(async () => {
+            try {
+                debugLog("🔄 Starting smart background NFT refresh...");
+                localStorage.setItem('nft_last_background_scan', Date.now().toString());
+                
+                // Only scan recent blocks for new NFTs, not full history
+                const recentNfts = await this.scanAllNFTs(false, false);
+                
+                // Only update if we found new NFTs
+                if (recentNfts.length > this.nfts.length) {
+                    this.nfts = recentNfts;
+                    this.saveNftsToCache(recentNfts);
+                    this.updateStatus(`Found ${recentNfts.length - this.nfts.length} new NFTs`);
+                    debugLog(`✅ Background scan complete - found ${recentNfts.length - this.nfts.length} new NFTs`);
+                } else {
+                    debugLog("📋 Background scan complete - no new NFTs found");
+                }
+            } catch (error) {
+                debugWarn("❌ Background scan failed:", error);
+            }
+        }, 5000); // Start after 5 seconds delay
     }
 
     // USER REQUIREMENT: ALWAYS scan from genesis (block 0) for all NFT discovery 
@@ -346,7 +327,7 @@ export class NFTScanner {
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
             
             // USER REQUIREMENT: ALWAYS scan from genesis (block 0) - no more conservative scanning
-            console.log(`🔍 DEBUG: scanAllNFTs called with scanFromGenesis=${scanFromGenesis}`);
+            debugLog(`🔍 DEBUG: scanAllNFTs called with scanFromGenesis=${scanFromGenesis}`);
             this.updateStatus("🔍 Comprehensive NFT scanning from blockchain genesis (block 0)");
             debugLog("🌐 Comprehensive NFT discovery from all blockchain history");
             debugLog("💡 Scanning known contracts + complete blockchain history for maximum coverage");
@@ -359,13 +340,13 @@ export class NFTScanner {
                 // FORCE GENESIS SCANNING: Pass true regardless of input parameter
                 recentContracts = await this.findContractsByRecentTransfers(true);
             } catch (error) {
-                console.warn("Main contract discovery failed, using fallback method:", error);
+                debugWarn("Main contract discovery failed, using fallback method:", error);
                 // Fallback to the method that respects scanFromGenesis flag
                 try {
                     // FORCE GENESIS SCANNING: Pass true regardless of input parameter
                     recentContracts = await this.findContractsByRecentTransfersFallback(true);
                 } catch (fallbackError) {
-                    console.error("Fallback contract discovery also failed:", fallbackError);
+                    criticalError("Fallback contract discovery also failed:", fallbackError);
                     recentContracts = []; // Continue with known contracts only
                 }
             }
@@ -469,7 +450,7 @@ export class NFTScanner {
                     // First check if this is an ERC20 token (with improved handling)
                     if (await this.isERC20Token(address)) {
                         this.knownErc20s.add(address.toLowerCase());
-                        console.log(`Skipping ERC20 token: ${address}`);
+                        debugLog(`Skipping ERC20 token: ${address}`);
                         return [];
                     }
                     
@@ -500,7 +481,7 @@ export class NFTScanner {
                         retryError.message.includes('rate limit') ||
                         retryError.code === 'NETWORK_ERROR'
                     )) {
-                        console.log(`Retrying contract ${address} due to network error (attempt ${retry + 1}/${maxRetries + 1})`);
+                        debugLog(`Retrying contract ${address} due to network error (attempt ${retry + 1}/${maxRetries + 1})`);
                         await new Promise(r => setTimeout(r, 1000 * (retry + 1))); // Exponential backoff
                         continue;
                     }
@@ -508,7 +489,7 @@ export class NFTScanner {
                     // If it's an execution revert or other contract error, don't retry
                     if (retryError.message.includes('execution reverted') ||
                         retryError.message.includes('call revert exception')) {
-                        console.log(`Contract ${address} - execution reverted (not an NFT contract)`);
+                        debugLog(`Contract ${address} - execution reverted (not an NFT contract)`);
                         return [];
                     }
                     
@@ -526,7 +507,7 @@ export class NFTScanner {
             if (!this.errors[errorKey]) {
                 // Only log first few unique errors to avoid console spam
                 if (Object.keys(this.errors).length < 10) {
-                    console.warn(`Error scanning contract ${address}:`, error.message);
+                    debugWarn(`Error scanning contract ${address}:`, error.message);
                 }
                 this.errors[errorKey] = error.message;
             }
@@ -573,7 +554,7 @@ export class NFTScanner {
                     // Just means the contract doesn't have a decimals function
                 } else {
                     // Only log unexpected errors
-                    console.warn(`Unexpected error checking decimals for ${contractAddress}:`, e.message);
+                    debugWarn(`Unexpected error checking decimals for ${contractAddress}:`, e.message);
                 }
             }
             
@@ -630,7 +611,7 @@ export class NFTScanner {
                     // Expected errors - don't log
                 } else {
                     // Only log truly unexpected errors
-                    console.warn(`Unexpected error checking transfers for ${contractAddress}:`, e.message);
+                    debugWarn(`Unexpected error checking transfers for ${contractAddress}:`, e.message);
                 }
             }
             
@@ -647,7 +628,7 @@ export class NFTScanner {
                 return false;
             } else {
                 // Only log unexpected errors
-                console.warn(`Unexpected error checking if ${contractAddress} is ERC20:`, error.message);
+                debugWarn(`Unexpected error checking if ${contractAddress} is ERC20:`, error.message);
                 return false;
             }
         }
@@ -662,7 +643,7 @@ export class NFTScanner {
             const currentBlock = await this.provider.getBlockNumber();
             const fromBlock = 0; // FORCE GENESIS: Always start from block 0
             
-            console.log(`🔍 DEBUG: findContractsByRecentTransfers - FORCING genesis scan from block 0 to ${currentBlock}`);
+            debugLog(`🔍 DEBUG: findContractsByRecentTransfers - FORCING genesis scan from block 0 to ${currentBlock}`);
             this.updateStatus(`🔍 Comprehensive blockchain scan (block 0 to ${currentBlock}) - scanning all history...`);
             debugLog(`🌐 Comprehensive blockchain scan: blocks 0 to ${currentBlock} for complete coverage`);
             
@@ -677,7 +658,7 @@ export class NFTScanner {
                     ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32),
                     contracts, fromBlock, currentBlock, true);
             } catch (chunkedError) {
-                console.warn("Chunked transfer scanning failed, using fallback approach:", chunkedError);
+                debugWarn("Chunked transfer scanning failed, using fallback approach:", chunkedError);
                 // Fall back to the fallback method which respects scanFromGenesis
                 throw chunkedError; // Let the caller handle this by calling the fallback method
             }
@@ -705,9 +686,9 @@ export class NFTScanner {
             const currentBlock = await this.provider.getBlockNumber();
             const fromBlock = 0; // FORCE GENESIS: Always start from block 0
             
-            console.log(`🔍 DEBUG: findContractsByRecentTransfersFallback - FORCING genesis scan from block 0 to ${currentBlock}`);
+            debugLog(`🔍 DEBUG: findContractsByRecentTransfersFallback - FORCING genesis scan from block 0 to ${currentBlock}`);
             this.updateStatus(`🔄 Fallback genesis scan: blocks 0 to ${currentBlock} (using smaller chunks)...`);
-            console.log(`🔄 Fallback genesis scanning: blocks 0 to ${currentBlock} (comprehensive with smaller chunks)`);
+            debugLog(`🔄 Fallback genesis scanning: blocks 0 to ${currentBlock} (comprehensive with smaller chunks)`);
             
             // Scan fallback transfers with error handling - always from genesis
             await this.findTransfersByRecentBlocks(ethers.id("Transfer(address,address,uint256)"), 
@@ -727,7 +708,7 @@ export class NFTScanner {
             this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from fallback genesis scan`);
             return filteredContracts;
         } catch (error) {
-            console.error("Error in fallback transfer scanning:", error);
+            criticalError("Error in fallback transfer scanning:", error);
             return [];
         }
     }
@@ -770,7 +751,7 @@ export class NFTScanner {
             this.updateStatus(`Found ${contracts.size} potential NFT contracts in recent blocks`);
             
         } catch (error) {
-            console.error("Error in recent transfer search:", error);
+            criticalError("Error in recent transfer search:", error);
         }
     }
     
@@ -782,7 +763,7 @@ export class NFTScanner {
             let chunkSize = 25000; // Smaller chunks for comprehensive approach
             let failedAttempts = 0;
             
-            console.log(`🔍 DEBUG: findTransfersByChunks starting from block ${startBlock} to ${currentBlock}`);
+            debugLog(`🔍 DEBUG: findTransfersByChunks starting from block ${startBlock} to ${currentBlock}`);
             
             // Comprehensive processing: smaller chunks, thorough scanning from genesis
             for (let chunkStart = startBlock; chunkStart < currentBlock; chunkStart += chunkSize) {
@@ -903,7 +884,7 @@ export class NFTScanner {
                     e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                     // Expected error - try interface check before giving up
                 } else {
-                    console.warn(`Unexpected balanceOf error for ${contractAddress}:`, e.message);
+                    debugWarn(`Unexpected balanceOf error for ${contractAddress}:`, e.message);
                 }
                 
                 // balanceOf failed, try interface check before giving up on ERC721
@@ -927,7 +908,7 @@ export class NFTScanner {
                         interfaceError.code === -32603 || interfaceError.code === -32000 || interfaceError.code === 'CALL_EXCEPTION') {
                         // Expected error - move on to ERC1155
                     } else {
-                        console.warn(`Unexpected interface error for ${contractAddress}:`, interfaceError.message);
+                        debugWarn(`Unexpected interface error for ${contractAddress}:`, interfaceError.message);
                     }
                 }
             }
@@ -963,7 +944,7 @@ export class NFTScanner {
                             // Expected error - skip this token ID
                             continue;
                         } else {
-                            console.warn(`Unexpected ERC1155 balance error for ${contractAddress} token ${id}:`, e.message);
+                            debugWarn(`Unexpected ERC1155 balance error for ${contractAddress} token ${id}:`, e.message);
                             continue;
                         }
                     }
@@ -995,7 +976,7 @@ export class NFTScanner {
                         e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                         // Expected error - not an ERC1155
                     } else {
-                        console.warn(`Unexpected ERC1155 interface error for ${contractAddress}:`, e.message);
+                        debugWarn(`Unexpected ERC1155 interface error for ${contractAddress}:`, e.message);
                     }
                 }
             } catch (e) {
@@ -1007,7 +988,7 @@ export class NFTScanner {
                     e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                     // Expected error - not an ERC1155
                 } else {
-                    console.warn(`Unexpected ERC1155 error for ${contractAddress}:`, e.message);
+                    debugWarn(`Unexpected ERC1155 error for ${contractAddress}:`, e.message);
                 }
             }
             
@@ -1024,7 +1005,7 @@ export class NFTScanner {
                 return null;
             } else {
                 // Only log unexpected errors
-                console.warn(`Unexpected error detecting NFT standard for ${contractAddress}:`, error.message);
+                debugWarn(`Unexpected error detecting NFT standard for ${contractAddress}:`, error.message);
                 return null;
             }
         }
@@ -1040,7 +1021,7 @@ export class NFTScanner {
                 balance = await contract.balanceOf(this.walletAddress);
                 balance = Number(balance);
             } catch (e) {
-                console.warn(`Error getting ERC721 balance for ${contractAddress}:`, e);
+                debugWarn(`Error getting ERC721 balance for ${contractAddress}:`, e);
                 return [];
             }
             
@@ -1084,12 +1065,12 @@ export class NFTScanner {
                         enumerationErrors++;
                         // Only log first few errors to prevent console spam
                         if (enumerationErrors <= 2) {
-                            console.warn(`Error with tokenOfOwnerByIndex for ${contractAddress} at index ${i}:`, e);
+                            debugWarn(`Error with tokenOfOwnerByIndex for ${contractAddress} at index ${i}:`, e);
                         }
                         
                         // If we're getting too many enumeration errors, break out and try event approach
                         if (enumerationErrors > Math.min(5, balance / 2)) {
-                            console.warn(`Too many enumeration errors (${enumerationErrors}), switching to event-based scanning`);
+                            debugWarn(`Too many enumeration errors (${enumerationErrors}), switching to event-based scanning`);
                             break;
                         }
                     }
@@ -1107,7 +1088,7 @@ export class NFTScanner {
                 }
             } catch (e) {
                 // Contract doesn't support enumeration or has issues, try event-based approach
-                console.warn(`Enumeration failed for ${contractAddress}, using events instead:`, e);
+                debugWarn(`Enumeration failed for ${contractAddress}, using events instead:`, e);
             }
             
             // If we get here, either enumeration failed completely or found only some tokens
@@ -1125,7 +1106,7 @@ export class NFTScanner {
             
             return results;
         } catch (error) {
-            console.error(`Error in ERC721 scan for ${contractAddress}:`, error);
+            criticalError(`Error in ERC721 scan for ${contractAddress}:`, error);
             return [];
         }
     }
@@ -1149,10 +1130,10 @@ export class NFTScanner {
                 
                 if (scanFromGenesis) {
                     this.updateStatus(`Comprehensive ERC721 scan: blocks 0-${currentBlock} for complete coverage...`);
-                    console.log(`🌐 COMPREHENSIVE ERC721 scan: 0-${currentBlock} blocks for maximum coverage`);
+                    debugLog(`🌐 COMPREHENSIVE ERC721 scan: 0-${currentBlock} blocks for maximum coverage`);
                 } else {
                     this.updateStatus(`Conservative ERC721 scan: blocks ${comprehensiveStartBlock}-${currentBlock} for recent coverage...`);
-                    console.log(`🌐 CONSERVATIVE ERC721 scan: ${comprehensiveStartBlock}-${currentBlock} blocks for recent coverage`);
+                    debugLog(`🌐 CONSERVATIVE ERC721 scan: ${comprehensiveStartBlock}-${currentBlock} blocks for recent coverage`);
                 }
                 
                 // Use chunked approach for comprehensive scanning to avoid RPC limits
@@ -1209,19 +1190,19 @@ export class NFTScanner {
                             e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                             // Expected errors - token doesn't exist or we don't own it
                         } else {
-                            console.warn(`Unexpected error checking ownership of token ${tokenId}:`, e.message);
+                            debugWarn(`Unexpected error checking ownership of token ${tokenId}:`, e.message);
                         }
                     }
                 }
             } catch (logError) {
-                console.error(`Error scanning comprehensive transfer events for ${contractAddress}:`, logError);
+                criticalError(`Error scanning comprehensive transfer events for ${contractAddress}:`, logError);
                 
                 // Fallback to recent blocks if comprehensive scan fails
-                console.log("Falling back to recent block scanning for ERC721 transfers...");
+                debugLog("Falling back to recent block scanning for ERC721 transfers...");
                 return await this.scanERC721ByEventsFallback(contractAddress, contract, contractInfo, existingResults, scanFromGenesis);
             }
         } catch (error) {
-            console.error(`Error in comprehensive event-based scan for ${contractAddress}:`, error);
+            criticalError(`Error in comprehensive event-based scan for ${contractAddress}:`, error);
         }
         
         return results;
@@ -1245,10 +1226,10 @@ export class NFTScanner {
             
             if (scanFromGenesis) {
                 this.updateStatus(`Fallback ERC721 genesis scan: blocks 0-${currentBlock} (using smaller chunks)...`);
-                console.log(`🔄 Fallback ERC721 genesis scan: 0-${currentBlock} blocks (comprehensive with smaller chunks)`);
+                debugLog(`🔄 Fallback ERC721 genesis scan: 0-${currentBlock} blocks (comprehensive with smaller chunks)`);
             } else {
                 this.updateStatus(`Fallback ERC721 scan: blocks ${fallbackStartBlock}-${currentBlock}...`);
-                console.log(`🔄 Fallback ERC721 scan: ${fallbackStartBlock}-${currentBlock} blocks`);
+                debugLog(`🔄 Fallback ERC721 scan: ${fallbackStartBlock}-${currentBlock} blocks`);
             }
             
             const filter = {
@@ -1269,7 +1250,7 @@ export class NFTScanner {
                         const tokenId = ethers.toBigInt(log.topics[3]);
                         tokenIds.add(tokenId.toString());
                     } catch (e) {
-                        console.warn(`Error extracting token ID from log:`, e);
+                        debugWarn(`Error extracting token ID from log:`, e);
                     }
                 }
             }
@@ -1317,12 +1298,12 @@ export class NFTScanner {
                     // We don't own this token anymore or error accessing it
                     // Only log unexpected errors
                     if (!e.message.includes('timeout') && !e.message.includes('execution reverted')) {
-                        console.warn(`Error checking ownership of token ${tokenId}:`, e.message);
+                        debugWarn(`Error checking ownership of token ${tokenId}:`, e.message);
                     }
                 }
             }
         } catch (error) {
-            console.error(`Error in fallback event-based scan for ${contractAddress}:`, error);
+            criticalError(`Error in fallback event-based scan for ${contractAddress}:`, error);
         }
         
         return results;
@@ -1367,9 +1348,9 @@ export class NFTScanner {
                     e.message.includes('missing revert data') ||
                     e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                     // Expected RPC errors - skip this chunk
-                    console.log(`RPC error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}, skipping...`);
+                    debugLog(`RPC error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}, skipping...`);
                 } else {
-                    console.warn(`Unexpected error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}:`, e.message);
+                    debugWarn(`Unexpected error scanning ERC721 transfers in blocks ${startBlock}-${endBlock}:`, e.message);
                 }
             }
         }
@@ -1432,7 +1413,7 @@ export class NFTScanner {
                 }
             }
         } catch (error) {
-            console.error(`Error in sequential ID scan for ${contractAddress}:`, error);
+            criticalError(`Error in sequential ID scan for ${contractAddress}:`, error);
         }
         
         return results;
@@ -1505,7 +1486,7 @@ export class NFTScanner {
                     }
                 } catch (e) {
                     // Batch call failed, try individual calls
-                    console.warn(`Batch balance check failed for ${contractInfo.name}, trying individual calls`);
+                    debugWarn(`Batch balance check failed for ${contractInfo.name}, trying individual calls`);
                     
                     for (const tokenId of batch) {
                         try {
@@ -1550,7 +1531,7 @@ export class NFTScanner {
             
             return results;
         } catch (error) {
-            console.error(`Error in ERC1155 scan for ${contractAddress}:`, error);
+            criticalError(`Error in ERC1155 scan for ${contractAddress}:`, error);
             return [];
         }
     }
@@ -1567,10 +1548,10 @@ export class NFTScanner {
             
             if (scanFromGenesis) {
                 this.updateStatus(`Comprehensive ERC1155 scan: blocks 0-${toBlock} for complete coverage...`);
-                console.log(`🌐 COMPREHENSIVE ERC1155 discovery: 0-${toBlock} blocks for maximum coverage`);
+                debugLog(`🌐 COMPREHENSIVE ERC1155 discovery: 0-${toBlock} blocks for maximum coverage`);
             } else {
                 this.updateStatus(`Conservative ERC1155 scan: blocks ${fromBlock}-${toBlock} for recent coverage...`);
-                console.log(`🌐 CONSERVATIVE ERC1155 discovery: ${fromBlock}-${toBlock} blocks for recent coverage`);
+                debugLog(`🌐 CONSERVATIVE ERC1155 discovery: ${fromBlock}-${toBlock} blocks for recent coverage`);
             }
             
             try {
@@ -1580,7 +1561,7 @@ export class NFTScanner {
                 this.updateStatus(`Found ${tokenIds.size} total token IDs including batch events`);
                 
             } catch (error) {
-                console.warn(`Error getting comprehensive events for ${contractAddress}, using fallback discovery:`, error.message);
+                debugWarn(`Error getting comprehensive events for ${contractAddress}, using fallback discovery:`, error.message);
                 
                 // Enhanced fallback: More comprehensive than conservative approach
                 this.updateStatus("Using enhanced fallback token ID discovery...");
@@ -1607,10 +1588,10 @@ export class NFTScanner {
                 }
             }
             
-            console.log(`🌐 COMPREHENSIVE ERC1155 discovery: ${tokenIds.size} token IDs to check (maximum coverage)`);
+            debugLog(`🌐 COMPREHENSIVE ERC1155 discovery: ${tokenIds.size} token IDs to check (maximum coverage)`);
             return [...tokenIds];
         } catch (error) {
-            console.error(`Error discovering ERC1155 token IDs for ${contractAddress}:`, error);
+            criticalError(`Error discovering ERC1155 token IDs for ${contractAddress}:`, error);
             
             // Return enhanced common token IDs as fallback
             const enhancedIds = [];
@@ -1653,9 +1634,9 @@ export class NFTScanner {
                         singleError.message.includes('missing revert data') ||
                         singleError.code === -32603 || singleError.code === -32000 || singleError.code === 'CALL_EXCEPTION') {
                         // Expected RPC errors - skip this chunk
-                        console.log(`RPC error getting TransferSingle events in blocks ${startBlock}-${endBlock}, skipping...`);
+                        debugLog(`RPC error getting TransferSingle events in blocks ${startBlock}-${endBlock}, skipping...`);
                     } else {
-                        console.warn(`Unexpected error getting TransferSingle events in blocks ${startBlock}-${endBlock}:`, singleError.message);
+                        debugWarn(`Unexpected error getting TransferSingle events in blocks ${startBlock}-${endBlock}:`, singleError.message);
                     }
                 }
                 
@@ -1683,9 +1664,9 @@ export class NFTScanner {
                         batchError.message.includes('missing revert data') ||
                         batchError.code === -32603 || batchError.code === -32000 || batchError.code === 'CALL_EXCEPTION') {
                         // Expected RPC errors - skip this chunk
-                        console.log(`RPC error getting TransferBatch events in blocks ${startBlock}-${endBlock}, skipping...`);
+                        debugLog(`RPC error getting TransferBatch events in blocks ${startBlock}-${endBlock}, skipping...`);
                     } else {
-                        console.warn(`Unexpected error getting TransferBatch events in blocks ${startBlock}-${endBlock}:`, batchError.message);
+                        debugWarn(`Unexpected error getting TransferBatch events in blocks ${startBlock}-${endBlock}:`, batchError.message);
                     }
                 }
                 
@@ -1697,9 +1678,9 @@ export class NFTScanner {
                     chunkError.message.includes('missing revert data') ||
                     chunkError.code === -32603 || chunkError.code === -32000 || chunkError.code === 'CALL_EXCEPTION') {
                     // Expected RPC errors - skip this chunk
-                    console.log(`RPC error scanning ERC1155 events in blocks ${startBlock}-${endBlock}, skipping...`);
+                    debugLog(`RPC error scanning ERC1155 events in blocks ${startBlock}-${endBlock}, skipping...`);
                 } else {
-                    console.warn(`Unexpected error scanning ERC1155 events in blocks ${startBlock}-${endBlock}:`, chunkError.message);
+                    debugWarn(`Unexpected error scanning ERC1155 events in blocks ${startBlock}-${endBlock}:`, chunkError.message);
                 }
             }
         }
@@ -1727,7 +1708,7 @@ export class NFTScanner {
                             tokenIds.add(event.args.id.toString());
                         });
                     } catch (e) {
-                        console.warn(`Error getting TransferSingle events in blocks ${startBlock}-${endBlock}:`, e);
+                        debugWarn(`Error getting TransferSingle events in blocks ${startBlock}-${endBlock}:`, e);
                     }
                     
                     // TransferBatch events
@@ -1739,14 +1720,14 @@ export class NFTScanner {
                             event.args.ids.forEach(id => tokenIds.add(id.toString()));
                         });
                     } catch (e) {
-                        console.warn(`Error getting TransferBatch events in blocks ${startBlock}-${endBlock}:`, e);
+                        debugWarn(`Error getting TransferBatch events in blocks ${startBlock}-${endBlock}:`, e);
                     }
                 } catch (error) {
-                    console.warn(`Error scanning blocks ${startBlock}-${endBlock} for ERC1155 tokens:`, error);
+                    debugWarn(`Error scanning blocks ${startBlock}-${endBlock} for ERC1155 tokens:`, error);
                 }
             }
         } catch (error) {
-            console.error(`Error in chunked ERC1155 token ID discovery:`, error);
+            criticalError(`Error in chunked ERC1155 token ID discovery:`, error);
         }
     }
 
@@ -1785,7 +1766,7 @@ export class NFTScanner {
             
             return info;
         } catch (error) {
-            console.warn(`Error getting contract info for ${contractAddress}:`, error);
+            debugWarn(`Error getting contract info for ${contractAddress}:`, error);
             const fallbackName = `Collection ${contractAddress.slice(0, 6)}...${contractAddress.slice(-4)}`;
             
             // Cache the fallback result
@@ -1880,7 +1861,7 @@ export class NFTScanner {
             return fallbackMetadata;
             
         } catch (error) {
-            console.warn(`Error fetching metadata for ${contractAddress} token ${tokenId}:`, error);
+            debugWarn(`Error fetching metadata for ${contractAddress} token ${tokenId}:`, error);
             
             // Use fallback on error
             const fallbackMetadata = this.createFallbackMetadata(contractAddress, tokenId);
@@ -1990,7 +1971,7 @@ export class NFTScanner {
         
         if (nftsToFetch.length === 0) return;
         
-        console.log(`Lazy loading metadata for ${nftsToFetch.length} NFTs`);
+        debugLog(`Lazy loading metadata for ${nftsToFetch.length} NFTs`);
         
         // Process in smaller batches to avoid overwhelming network
         for (let i = 0; i < nftsToFetch.length; i += batchSize) {
@@ -2000,7 +1981,7 @@ export class NFTScanner {
             await Promise.all(
                 batch.map(nft => 
                     this.getMetadata(nft.contractAddress, nft.tokenId, nft.tokenURI)
-                        .catch(err => console.warn(`Error loading metadata for token ${nft.tokenId}:`, err))
+                        .catch(err => debugWarn(`Error loading metadata for token ${nft.tokenId}:`, err))
                 )
             );
             
@@ -2010,7 +1991,7 @@ export class NFTScanner {
             }
         }
         
-        console.log(`Completed loading metadata for ${nftsToFetch.length} NFTs`);
+        debugLog(`Completed loading metadata for ${nftsToFetch.length} NFTs`);
     }
 
     // Add this static method to your NFTScanner class for user guidance

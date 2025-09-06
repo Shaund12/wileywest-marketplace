@@ -1,9 +1,10 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './SellPage.css';
 
 /* =========================================================
@@ -376,7 +377,32 @@ function SellPage() {
     const [activePreviewTab, setActivePreviewTab] = useState('details');
     const [fees] = useState({ marketplaceFee: 2.5, creatorRoyalty: 5.0, networkFee: 0.001 });
 
+    // New: marketplace fee (bps) and vibe share (bps) from contract
+    const [platformFeeBps, setPlatformFeeBps] = useState(null);
+    const [vibeShareBps, setVibeShareBps] = useState(null);
+
     const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
+
+    // Load platform fee and vibe share from contract
+    useEffect(() => {
+        const loadFees = async () => {
+            try {
+                if (!provider || !marketplaceAddress) return;
+                const artifact = await import('../abi/VTRUNFTMarketplace.json');
+                const abi = artifact.default?.abi || artifact.abi;
+                const mkt = new ethers.Contract(marketplaceAddress, abi, provider);
+                const [pf, vibe] = await Promise.all([
+                    mkt.platformFeeBps().catch(() => null),
+                    mkt.vibeShareBps().catch(() => null),
+                ]);
+                if (pf !== null) setPlatformFeeBps(Number(pf));
+                if (vibe !== null) setVibeShareBps(Number(vibe));
+            } catch (e) {
+                debugWarn('Could not load marketplace fees (platform/vibe):', e);
+            }
+        };
+        loadFees();
+    }, [provider, marketplaceAddress]);
 
     // Cursor parallax effect
     useEffect(() => {
@@ -386,8 +412,6 @@ function SellPage() {
             const x = (e.clientX - rect.left) / rect.width;
             const y = (e.clientY - rect.top) / rect.height;
             setMousePosition({ x, y });
-            
-            // Update CSS variables for parallax effect
             sellContainerRef.current.style.setProperty('--mx', x.toFixed(2));
             sellContainerRef.current.style.setProperty('--my', y.toFixed(2));
         };
@@ -522,11 +546,8 @@ function SellPage() {
                 formData.paymentToken
             );
             
-            // Show success animation with confetti
             setListingSuccess(true);
             setSellProgress(100);
-            
-            // Reset confetti after animation completes
             setTimeout(() => {
                 setListingSuccess(false);
             }, 3000);
@@ -576,7 +597,7 @@ function SellPage() {
             await fetchUniswapPrices(0, initialized);
         };
         init().catch((err) => {
-            console.error(err);
+            criticalError(err);
             setStatus('Error initializing tokens. Please refresh the page.');
         });
     }, [provider]);
@@ -608,11 +629,11 @@ function SellPage() {
 
     const fetchUniswapPrices = async (retryCount = 0, providedTokenList = null) => {
         const MAX_RETRIES = 3;
-        const RETRY_DELAY = 2000;
-        const activeTokenList = providedTokenList || tokenList;
-        if (!activeTokenList || Object.keys(activeTokenList).length === 0) return;
+        theRetry: try {
+            const RETRY_DELAY = 2000;
+            const activeTokenList = providedTokenList || tokenList;
+            if (!activeTokenList || Object.keys(activeTokenList).length === 0) return;
 
-        try {
             const previousPrices = { ...livePrice };
             const newPrices = {};
             const changes = {};
@@ -690,7 +711,7 @@ function SellPage() {
             }
         } catch (error) {
             if (retryCount < MAX_RETRIES && /(network|timeout|fetch)/i.test(error.message || '')) {
-                setTimeout(() => fetchUniswapPrices(retryCount + 1, activeTokenList), RETRY_DELAY);
+                setTimeout(() => fetchUniswapPrices(retryCount + 1, providedTokenList || tokenList), RETRY_DELAY);
             } else {
                 setStatus('Warning: Some token prices could not be fetched. You can still create listings.');
             }
@@ -989,14 +1010,30 @@ function SellPage() {
        ========================= */
     const calculateProceeds = () => {
         if (!displayPrice.eth || !formData.quantity)
-            return { subtotal: '0', marketplaceFee: '0', royaltyFee: '0', total: '0', usdValue: '0' };
+            return {
+                subtotal: '0',
+                marketplaceFee: '0',
+                royaltyFee: '0',
+                total: '0',
+                usdValue: '0',
+                vibeFee: '0',
+                vibePctOfSale: 0,
+            };
 
-        const quantity = parseFloat(formData.quantity);
-        const pricePerUnit = parseFloat(displayPrice.eth);
+        const quantity = parseFloat(formData.quantity || '1');
+        const pricePerUnit = parseFloat(displayPrice.eth || '0');
         const subtotal = quantity * pricePerUnit;
 
-        const marketplaceFeeAmount = subtotal * (fees.marketplaceFee / 100);
-        const royaltyFeeAmount = subtotal * (fees.creatorRoyalty / 100);
+        // Use on-chain platformFeeBps if available, else fallback to fixed 2.5%
+        const pfBps = platformFeeBps !== null ? platformFeeBps : Math.round((fees.marketplaceFee || 2.5) * 100);
+        const marketplaceFeeAmount = subtotal * (pfBps / 10000);
+
+        // Vibe fee is a portion of the platform fee (not an extra deduction for sellers)
+        const vibeBps = vibeShareBps !== null ? vibeShareBps : null;
+        const vibeFeeAmount = vibeBps !== null ? marketplaceFeeAmount * (vibeBps / 10000) : 0;
+        const vibePctOfSale = vibeBps !== null ? (pfBps * vibeBps) / 1_000_000 : 0; // percent of sale
+
+        const royaltyFeeAmount = subtotal * ((fees.creatorRoyalty || 0) / 100);
         const total = subtotal - marketplaceFeeAmount - royaltyFeeAmount;
 
         let usdValue = 'Unknown';
@@ -1009,6 +1046,8 @@ function SellPage() {
             royaltyFee: royaltyFeeAmount.toFixed(6),
             total: total.toFixed(6),
             usdValue,
+            vibeFee: vibeFeeAmount.toFixed(6),
+            vibePctOfSale,
         };
     };
 
@@ -1035,17 +1074,14 @@ function SellPage() {
             <div className="page-header">
                 <h1>Sell Your NFT</h1>
                 <p>Create a listing for your digital asset</p>
-            </div>
-
-            {/* Progress Stepper */}
-            <div className="sell-progress">
-                <div className="progress-track">
-                    <div className="progress-fill" style={{ '--progress': `${sellProgress}%` }}></div>
-                </div>
-                <div className="progress-labels">
-                    <span className={activeStep === 'details' ? 'active' : ''}>NFT Details</span>
-                    <span className={activeStep === 'listing' ? 'active' : ''}>Listing Info</span>
-                    <span className={activeStep === 'pricing' ? 'active' : ''}>Review & Submit</span>
+                <div className="selling-options">
+                    <p className="options-intro">Choose how you want to sell:</p>
+                    <div className="sell-buttons">
+                        <span className="current-option">📋 Fixed Price Listing</span>
+                        <Link to="/auctions/create" className="alt-option">
+                            🔨 Create Auction
+                        </Link>
+                    </div>
                 </div>
             </div>
 
@@ -1585,7 +1621,14 @@ function SellPage() {
 
                                             <div className="pricing-row fee">
                                                 <div className="pricing-label">
-                                                    <span>Marketplace Fee ({fees.marketplaceFee}%)</span>
+                                                    <span>
+                                                        Marketplace Fee (
+                                                        {platformFeeBps !== null
+                                                            ? (platformFeeBps / 100).toFixed(2)
+                                                            : (fees.marketplaceFee || 2.5).toFixed(2)
+                                                        }
+                                                        %)
+                                                    </span>
                                                     <span className="info-icon" title="Fee charged by the marketplace">
                                                         ⓘ
                                                     </span>
@@ -1595,9 +1638,27 @@ function SellPage() {
                                                 </div>
                                             </div>
 
+                                            {/* New: Vibe Fee breakdown (part of marketplace fee) */}
+                                            {vibeShareBps !== null && (
+                                                <div className="pricing-row" style={{ opacity: 0.85 }}>
+                                                    <div className="pricing-label">
+                                                        <span>
+                                                            Vibe Fee ({(vibeShareBps / 100).toFixed(2)}% of marketplace fee
+                                                            {platformFeeBps !== null ? ` • ≈ ${proceeds.vibePctOfSale.toFixed(2)}% of sale` : ''})
+                                                        </span>
+                                                        <span className="info-icon" title="Portion of the marketplace fee allocated to the Vibe program">
+                                                            ⓘ
+                                                        </span>
+                                                    </div>
+                                                    <div className="pricing-value">
+                                                        {proceeds.vibeFee} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    </div>
+                                                </div>
+                                            )}
+
                                             <div className="pricing-row fee">
                                                 <div className="pricing-label">
-                                                    <span>Creator Royalty ({fees.creatorRoyalty}%)</span>
+                                                    <span>Creator Royalty ({(fees.creatorRoyalty || 0).toFixed(2)}%)</span>
                                                     <span className="info-icon" title="Royalty paid to the original creator">
                                                         ⓘ
                                                     </span>
@@ -1670,9 +1731,24 @@ function SellPage() {
                                         <div className="pricing-explainer">
                                             <h4>How our fees work</h4>
                                             <p>
-                                                Our marketplace charges {fees.marketplaceFee}% on all sales to support our platform development and operations.
-                                                Creator royalties of {fees.creatorRoyalty}% ensure original creators are compensated for their work.
+                                                Our marketplace fee is taken from each sale. A portion of that fee (the Vibe fee) is allocated to the Vibe program.
+                                                Creator royalties ensure original creators are compensated for their work.
                                             </p>
+                                            <ul style={{ margin: '0.5rem 0 0', paddingLeft: '1.2rem', color: 'var(--hp-muted, #a6accd)' }}>
+                                                <li>
+                                                    Marketplace Fee:{' '}
+                                                    {platformFeeBps !== null
+                                                        ? (platformFeeBps / 100).toFixed(2) + '%'
+                                                        : (fees.marketplaceFee || 2.5).toFixed(2) + '%'}
+                                                </li>
+                                                {vibeShareBps !== null && (
+                                                    <li>
+                                                        Vibe Fee: {(vibeShareBps / 100).toFixed(2)}% of marketplace fee
+                                                        {platformFeeBps !== null ? ` (~${proceeds.vibePctOfSale.toFixed(2)}% of sale)` : ''}
+                                                    </li>
+                                                )}
+                                                <li>Creator Royalty: {(fees.creatorRoyalty || 0).toFixed(2)}%</li>
+                                            </ul>
                                         </div>
                                     </div>
                                 )}

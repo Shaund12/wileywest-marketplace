@@ -65,6 +65,53 @@
   margin: 0 auto;
 }
 
+/* Selling options */
+.selling-options {
+  margin-top: 24px;
+  text-align: center;
+}
+
+.options-intro {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 16px;
+}
+
+.sell-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.current-option {
+  background: var(--sell-primary);
+  color: white;
+  padding: 12px 24px;
+  border-radius: 10px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(85, 51, 255, 0.3);
+}
+
+.alt-option {
+  background: transparent;
+  color: var(--sell-accent);
+  padding: 12px 24px;
+  border: 2px solid var(--sell-accent);
+  border-radius: 10px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.3s ease;
+}
+
+.alt-option:hover {
+  background: var(--sell-accent);
+  color: #0f111a;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(51, 204, 255, 0.4);
+}
+
 /* Enhanced layout */
 .sell-layout {
   display: grid;

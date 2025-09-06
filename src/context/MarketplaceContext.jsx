@@ -178,25 +178,49 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const lastCachedSalesCount = useRef(0);
     useEffect(() => {
         if (salesHistory.length > 0) {
-            try {
-                // Always persist to localStorage for immediate access
-                localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
-                debugLog("Persisted sales history to localStorage:", salesHistory.length, "transactions");
-                
-                // Check if content has actually changed using signature
-                const currentSignature = createContentSignature({ salesHistory });
-                if (lastCacheSignature !== currentSignature) {
-                    setLastCacheSignature(currentSignature);
-                    debugLog("Sales history content changed, signature updated");
+            // Use async function inside useEffect
+            const cacheSales = async () => {
+                try {
+                    // Always persist to localStorage for immediate access
+                    localStorage.setItem('marketplace_sales_history', JSON.stringify(salesHistory));
+                    debugLog("Persisted sales history to localStorage:", salesHistory.length, "transactions");
+                    
+                    // Check if content has actually changed using signature
+                    const currentSignature = createContentSignature({ salesHistory });
+                    if (lastCacheSignature !== currentSignature) {
+                        setLastCacheSignature(currentSignature);
+                        debugLog("Sales history content changed, signature updated");
+                    }
+                    
+                    // Smart sales history caching with reasonable limits
+                    const MAX_SAFE_SALES_CACHE = 500; // Reasonable limit for sales history
+                    const shouldCacheSales = supabaseConnected && salesHistory.length > 0 && 
+                                           salesHistory.length <= MAX_SAFE_SALES_CACHE && 
+                                           lastCacheSignature !== currentSignature;
+                    
+                    if (shouldCacheSales && cacheSalesHistory) {
+                        try {
+                            debugLog(`💾 Smart caching ${salesHistory.length} sales (within safe limit)...`);
+                            await cacheSalesHistory(salesHistory);
+                            debugLog(`✅ Successfully cached sales history`);
+                        } catch (cacheError) {
+                            debugWarn("❌ Failed to cache sales history:", cacheError);
+                        }
+                    } else if (salesHistory.length > MAX_SAFE_SALES_CACHE) {
+                        debugLog(`📋 Skipping sales cache - count (${salesHistory.length}) exceeds safe limit (${MAX_SAFE_SALES_CACHE})`);
+                    } else if (lastCacheSignature === currentSignature) {
+                        debugLog("📋 No sales cache update needed - data unchanged");
+                    } else if (!supabaseConnected) {
+                        debugLog("📋 Skipping sales cache - Supabase not connected");
+                    }
+                    
+                } catch (error) {
+                    criticalError("Error persisting sales history:", error);
                 }
-                
-                // Supabase caching disabled to prevent mass data collection
-                debugLog("Auto-caching to Supabase DISABLED to prevent mass data collection");
-                debugLog(`${salesHistory.length} sales in memory - Supabase auto-cache disabled`);
-                
-            } catch (error) {
-                criticalError("Error persisting sales history:", error);
-            }
+            };
+            
+            // Call the async function
+            cacheSales();
         }
     }, [salesHistory]); // Removed supabaseConnected from dependencies as noted in original
 
@@ -207,7 +231,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const canceledArray = Array.from(canceledListings);
                 localStorage.setItem('marketplace_canceled_listings', JSON.stringify(canceledArray));
             } catch (error) {
-                console.error("Error persisting canceled listings:", error);
+                criticalError("Error persisting canceled listings:", error);
             }
         }
     }, [canceledListings]);
@@ -217,30 +241,44 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         const initializeMarketplace = async () => {
             if (marketplaceAddress && provider) {
                 try {
-                    console.log("Initializing marketplace contract...");
-                    const contract = new ethers.Contract(marketplaceAddress, abi, provider);
+                    console.log("[CONTRACT INIT] Starting marketplace contract initialization...");
+                    console.log("[CONTRACT INIT] Marketplace address:", marketplaceAddress);
+                    console.log("[CONTRACT INIT] Incoming ABI type:", typeof abi);
+                    console.log("[CONTRACT INIT] Incoming ABI is array:", Array.isArray(abi));
+                    
+                    const resolvedAbi = await resolveMarketplaceAbi(abi);
+                    console.log("[CONTRACT INIT] Resolved ABI type:", typeof resolvedAbi);
+                    console.log("[CONTRACT INIT] Resolved ABI is array:", Array.isArray(resolvedAbi));
+                    console.log("[CONTRACT INIT] Resolved ABI length:", resolvedAbi?.length);
+                    
+                    if (!hasAbiFn(resolvedAbi, 'buy')) {
+                        throw new Error('Resolved ABI still missing buy()');
+                    }
+                    console.log("[CONTRACT INIT] ABI validation passed - buy() function found");
+
+                    const contract = new ethers.Contract(marketplaceAddress, resolvedAbi, provider);
+                    console.log("[CONTRACT INIT] Contract created successfully");
+                    console.log("[CONTRACT INIT] Contract address:", contract.target);
+                    console.log("[CONTRACT INIT] Contract interface:", !!contract.interface);
+                    console.log("[CONTRACT INIT] Contract methods available:", Object.getOwnPropertyNames(contract).filter(name => 
+                        typeof contract[name] === 'function' && !name.startsWith('_')));
+
                     setMarketplace(contract);
                     setIsInitialized(true);
-                    console.log("Marketplace contract initialized successfully");
+                    console.log("[CONTRACT INIT] Marketplace initialization completed successfully");
                     
                     // Test network connectivity before setting up events
                     try {
                         await provider.getNetwork();
-                        // DISABLED: Automatic past events fetch to prevent mass data collection
-                        console.log("⚠️ Automatic blockchain scanning DISABLED to prevent mass data collection");
-                        console.log("💡 Users can manually refresh blockchain data if needed");
-                        
-                        // Don't automatically fetch past sales events - only set up event listeners
-                        // setupEventListeners(contract); - Also disabled to prevent any automatic data collection
-                        
-                        console.log("💡 Event listeners and blockchain scanning DISABLED - manual refresh only");
+                        // Event listeners and blockchain scanning disabled for production
                     } catch (networkError) {
-                        console.warn("Network connectivity issue - event listeners not set up:", networkError.message);
+                        debugWarn("Network connectivity issue - event listeners not set up:", networkError.message);
                         setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
                     }
                 } catch (error) {
-                    console.error("Error initializing marketplace contract:", error);
-                    setStatus("Failed to initialize marketplace contract");
+                    criticalError("[CONTRACT INIT] Error initializing marketplace contract:", error);
+                    console.error("[CONTRACT INIT] Full error details:", error);
+                    setStatus("Failed to initialize marketplace contract (ABI mismatch)");
                 }
             }
         };
@@ -248,14 +286,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         initializeMarketplace();
     }, [marketplaceAddress, abi, provider]);
 
-    // Disabled aggressive real-time subscriptions and background scanning to prevent mass data collection
-    // TODO: Re-implement with user-controlled refresh if needed
+    // Manual refresh functionality if needed
     useEffect(() => {
-        // Completely disable automatic periodic updates to prevent mass data collection
-        console.log("⚠️ Automatic background scanning DISABLED to prevent mass data collection");
-        console.log("💡 Users can manually refresh if needed");
-        
-        // No periodic updates - user must manually refresh
+        // No automatic periodic updates - user must manually refresh
         return () => {
             if (cacheUpdateInterval.current) {
                 clearInterval(cacheUpdateInterval.current);
@@ -284,13 +317,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         
         try {
             setStatus("🚀 Starting optimized blockchain scan with parallel processing...");
-            console.log("🚀 Starting optimized blockchain scan with parallel processing...");
+            debugLog("🚀 Starting optimized blockchain scan with parallel processing...");
             
             // Test network connectivity first
             try {
                 await provider.getNetwork();
             } catch (networkError) {
-                console.warn("Network connectivity issue - skipping past events fetch");
+                debugWarn("Network connectivity issue - skipping past events fetch");
                 setStatus("");
                 return;
             }
@@ -301,8 +334,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // CONSERVATIVE SCAN: Only scan recent blocks to avoid massive data collection
             const fromBlock = Math.max(currentBlock - 50000, lastScannedBlock); // Only last 50k blocks
             
-            console.log(`🔍 CONSERVATIVE BLOCKCHAIN SCAN: Recent blocks only from ${fromBlock} to ${currentBlock}`);
-            console.log(`⚡ Limiting scan to recent 50k blocks to prevent mass data collection`);
+            debugLog(`🔍 CONSERVATIVE BLOCKCHAIN SCAN: Recent blocks only from ${fromBlock} to ${currentBlock}`);
+            debugLog(`⚡ Limiting scan to recent 50k blocks to prevent mass data collection`);
             setStatus(`⚡ Conservative scan: recent blocks ${fromBlock} to ${currentBlock} only...`);
             
             let purchasedEvents = [];
@@ -319,7 +352,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 chunks.push({ start: chunkStart, end: chunkEnd });
             }
             
-            console.log(`📊 Processing ${chunks.length} chunks with ${MAX_CONCURRENT_CHUNKS} concurrent workers`);
+            debugLog(`📊 Processing ${chunks.length} chunks with ${MAX_CONCURRENT_CHUNKS} concurrent workers`);
             
             // Process chunks in parallel batches
             for (let i = 0; i < chunks.length; i += MAX_CONCURRENT_CHUNKS) {
@@ -331,14 +364,14 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 
                 // Process one chunk at a time to reduce load
                 const chunk = batch[0]; // Only process first chunk since MAX_CONCURRENT_CHUNKS = 1
-                console.log(`⚡ Processing chunk ${batchNumber}/${totalBatches}: ${chunk.start}-${chunk.end}`);
+                debugLog(`⚡ Processing chunk ${batchNumber}/${totalBatches}: ${chunk.start}-${chunk.end}`);
                 const chunkPromise = async () => {
                     const { start, end } = chunk;
                     
                     // Skip if we've already processed this chunk
                     const chunkKey = `${start}-${end}`;
                     if (processedBlocksCache.has(chunkKey)) {
-                        console.log(`⚡ Skipping cached chunk: ${chunkKey}`);
+                        debugLog(`⚡ Skipping cached chunk: ${chunkKey}`);
                         return { purchased: [], canceled: [] };
                     }
                     
@@ -359,11 +392,11 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         // Cache this chunk as processed
                         setProcessedBlocksCache(prev => new Set([...prev, chunkKey]));
                         
-                        console.log(`✅ Chunk ${chunkKey}: ${chunkPurchased.length} purchases, ${chunkCanceled.length} cancellations`);
+                        debugLog(`✅ Chunk ${chunkKey}: ${chunkPurchased.length} purchases, ${chunkCanceled.length} cancellations`);
                         return { purchased: chunkPurchased, canceled: chunkCanceled };
                         
                     } catch (chunkError) {
-                        console.warn(`⚠️ Error in chunk ${chunkKey}:`, chunkError);
+                        debugWarn(`⚠️ Error in chunk ${chunkKey}:`, chunkError);
                         return { purchased: [], canceled: [] };
                     }
                 };
@@ -392,16 +425,16 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             // Update last scanned block
             setLastScannedBlock(currentBlock);
             
-            console.log(`🎉 CONSERVATIVE SCAN COMPLETE:`);
-            console.log(`⚡ Found ${purchasedEvents.length} total purchase events using conservative scanning`);
-            console.log(`❌ Found ${canceledEvents.length} total canceled events`);
-            console.log(`🚀 Performance: Processed ${chunks.length} chunks conservatively to prevent data overload`);
+            debugLog(`🎉 CONSERVATIVE SCAN COMPLETE:`);
+            debugLog(`⚡ Found ${purchasedEvents.length} total purchase events using conservative scanning`);
+            debugLog(`❌ Found ${canceledEvents.length} total canceled events`);
+            debugLog(`🚀 Performance: Processed ${chunks.length} chunks conservatively to prevent data overload`);
             
             setStatus(`🎉 Conservative scan complete! Processing ${purchasedEvents.length} purchase events and ${canceledEvents.length} canceled events...`);
             
             // Process all events with enhanced performance
             const pastSales = [];
-            console.log(`🔄 Fast processing ${purchasedEvents.length} purchase events...`);
+            debugLog(`🔄 Fast processing ${purchasedEvents.length} purchase events...`);
             
             // Batch process events for better performance
             const BATCH_SIZE = 20;
@@ -425,7 +458,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             transactionHash: event.transactionHash
                         };
                     } catch (eventError) {
-                        console.warn(`⚠️ Error processing purchase event ${i + batchIndex + 1}:`, eventError);
+                        debugWarn(`⚠️ Error processing purchase event ${i + batchIndex + 1}:`, eventError);
                         // Fallback data
                         return {
                             listingId: event.args.listingId.toString(),
@@ -446,18 +479,18 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 
                 // Progress feedback
                 if ((i + BATCH_SIZE) % 100 === 0 || i + BATCH_SIZE >= purchasedEvents.length) {
-                    console.log(`📊 Processed ${Math.min(i + BATCH_SIZE, purchasedEvents.length)}/${purchasedEvents.length} transactions`);
+                    debugLog(`📊 Processed ${Math.min(i + BATCH_SIZE, purchasedEvents.length)}/${purchasedEvents.length} transactions`);
                 }
             }
             
             // Fast process canceled events
-            console.log(`🔄 Processing ${canceledEvents.length} canceled events...`);
+            debugLog(`🔄 Processing ${canceledEvents.length} canceled events...`);
             const pastCanceled = new Set();
             canceledEvents.forEach(event => {
                 try {
                     pastCanceled.add(event.args.listingId.toString());
                 } catch (eventError) {
-                    console.warn(`⚠️ Error processing canceled event:`, eventError);
+                    debugWarn(`⚠️ Error processing canceled event:`, eventError);
                 }
             });
             
@@ -467,39 +500,39 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 const newSales = pastSales.filter(sale => !existingHashes.has(sale.transactionHash));
                 const merged = [...prev, ...newSales].sort((a, b) => b.timestamp - a.timestamp);
                 
-                console.log(`📊 OPTIMIZED SCAN RESULTS:`);
-                console.log(`💾 Previous sales: ${prev.length}`);
-                console.log(`🆕 New sales from blockchain: ${newSales.length}`);
-                console.log(`📈 Total sales history: ${merged.length} transactions`);
-                console.log(`⚡ Performance: Used parallel processing and smart caching`);
+                debugLog(`📊 OPTIMIZED SCAN RESULTS:`);
+                debugLog(`💾 Previous sales: ${prev.length}`);
+                debugLog(`🆕 New sales from blockchain: ${newSales.length}`);
+                debugLog(`📈 Total sales history: ${merged.length} transactions`);
+                debugLog(`⚡ Performance: Used parallel processing and smart caching`);
                 
                 return merged;
             });
             
             setCanceledListings(prev => {
                 const merged = new Set([...prev, ...pastCanceled]);
-                console.log(`❌ Updated canceled listings: ${merged.size} total`);
+                debugLog(`❌ Updated canceled listings: ${merged.size} total`);
                 return merged;
             });
             
             // Enhanced success message with performance metrics
             const totalEventsFound = pastSales.length + pastCanceled.size;
             if (totalEventsFound > 0) {
-                console.log(`🎉 OPTIMIZED BLOCKCHAIN SCAN COMPLETE!`);
-                console.log(`📈 Total transactions found: ${pastSales.length}`);
-                console.log(`❌ Total cancellations found: ${pastCanceled.size}`);
-                console.log(`⚡ Performance improvement: Parallel chunk processing used`);
+                debugLog(`🎉 OPTIMIZED BLOCKCHAIN SCAN COMPLETE!`);
+                debugLog(`📈 Total transactions found: ${pastSales.length}`);
+                debugLog(`❌ Total cancellations found: ${pastCanceled.size}`);
+                debugLog(`⚡ Performance improvement: Parallel chunk processing used`);
                 
                 setStatus(`✅ Optimized scan complete! Found ${pastSales.length} transactions and ${pastCanceled.size} cancellations using parallel processing.`);
                 setTimeout(() => setStatus(""), 8000);
             } else {
-                console.log(`📋 Optimized scan complete - no transaction history found in smart contract`);
+                debugLog(`📋 Optimized scan complete - no transaction history found in smart contract`);
                 setStatus("✅ Optimized scan complete - no historical transactions found. This could mean the marketplace is new or transactions happened on a different contract.");
                 setTimeout(() => setStatus(""), 8000);
             }
             
         } catch (error) {
-            console.error("❌ Error in optimized blockchain scan:", error);
+            criticalError("❌ Error in optimized blockchain scan:", error);
             setStatus(`❌ Error in optimized scan: ${error.message}. Check console for details.`);
             setTimeout(() => setStatus(""), 10000);
         }
@@ -551,7 +584,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             });
             
         } catch (error) {
-            console.warn("Error processing partial sales data:", error);
+            debugWarn("Error processing partial sales data:", error);
         }
     };
 
@@ -560,7 +593,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         try {
             // Listen for purchases (sales)
             contract.on("NFTPurchased", async (listingId, buyer, quantity, totalPrice, paymentToken, event) => {
-                console.log("NFT Purchased event:", { listingId, buyer, quantity, totalPrice, paymentToken });
+                debugLog("NFT Purchased event:", { listingId, buyer, quantity, totalPrice, paymentToken });
                 
                 try {
                     // Get block information for timestamp
@@ -582,17 +615,17 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         // Check if this transaction already exists
                         const exists = prev.some(sale => sale.transactionHash === saleData.transactionHash);
                         if (exists) {
-                            console.log("Sale event already recorded, skipping duplicate");
+                            debugLog("Sale event already recorded, skipping duplicate");
                             return prev;
                         }
                         
                         const updated = [saleData, ...prev].sort((a, b) => b.timestamp - a.timestamp);
-                        console.log("Added new sale to history:", saleData);
-                        console.log("Total sales history now:", updated.length, "transactions");
+                        debugLog("Added new sale to history:", saleData);
+                        debugLog("Total sales history now:", updated.length, "transactions");
                         return updated;
                     });
                 } catch (error) {
-                    console.error("Error processing NFTPurchased event:", error);
+                    criticalError("Error processing NFTPurchased event:", error);
                     // Fallback without block info
                     const saleData = {
                         listingId: listingId.toString(),
@@ -610,20 +643,20 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
             // Listen for canceled listings
             contract.on("ListingCanceled", (listingId) => {
-                console.log("Listing Canceled event:", { listingId });
+                debugLog("Listing Canceled event:", { listingId });
                 setCanceledListings(prev => new Set([...prev, listingId.toString()]));
             });
 
             // Listen for new listings
             contract.on("ListingCreated", (listingId, seller, nftContract, tokenId, quantity, pricePerUnit, paymentToken, isERC1155) => {
-                console.log("New listing created:", { listingId, seller, nftContract });
+                debugLog("New listing created:", { listingId, seller, nftContract });
                 // Refresh listings when new ones are created
                 setTimeout(fetchListings, 2000);
             });
 
-            console.log("Event listeners set up successfully");
+            debugLog("Event listeners set up successfully");
         } catch (error) {
-            console.error("Error setting up event listeners:", error);
+            criticalError("Error setting up event listeners:", error);
         }
     };
 
@@ -637,7 +670,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             try {
                 await provider.getNetwork();
             } catch (networkError) {
-                console.warn("Network issue - calculating stats with fallback values");
+                debugWarn("Network issue - calculating stats with fallback values");
                 
                 // Enhanced fallback calculations with more timeframes and analytics
                 const now = Date.now();
@@ -724,7 +757,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             sales30d++;
                         }
                     } catch (error) {
-                        console.warn("Error parsing sale price:", error);
+                        debugWarn("Error parsing sale price:", error);
                     }
                 }
                 
@@ -739,7 +772,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         const nativeValue = parseFloat(ethers.formatEther(listing.pricePerUnit));
                         currentListingVolumeNative += nativeValue;
                     } catch (error) {
-                        console.warn("Error parsing listing price:", error);
+                        debugWarn("Error parsing listing price:", error);
                     }
                 }
 
@@ -884,7 +917,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     topTokensMap[tokenKey].volume += usdcValue;
                     topTokensMap[tokenKey].sales += 1;
                 } catch (error) {
-                    console.warn("Error calculating sale value:", error);
+                    debugWarn("Error calculating sale value:", error);
                 }
             }
 
@@ -906,7 +939,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     sellerStatsMap[listing.seller].listingsCount += 1;
                     sellerStatsMap[listing.seller].totalVolume += usdcValue;
                 } catch (error) {
-                    console.warn("Error calculating listing value:", error);
+                    debugWarn("Error calculating listing value:", error);
                 }
             }
 
@@ -1004,11 +1037,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const CACHE_UPDATE_COOLDOWN = 30000; // 30 seconds minimum between cache updates
     
     const fetchListings = async (forceRefresh = false) => {
-        if (!marketplace) {
-            debugWarn("Marketplace contract not initialized yet");
-            return;
-        }
-        
         // Prevent concurrent fetches to avoid race conditions
         if (isLoading) {
             debugLog("Fetch already in progress, skipping concurrent request");
@@ -1019,540 +1047,83 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         setStatus('Loading listings...');
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
-        let cachedListings = [];
-        let shouldCheckBlockchain = true; // Default to check blockchain
-        
         try {
-
-            // Step 1: Try to load from cache first (unless force refresh)
-            if (!forceRefresh && supabaseConnected && getCachedListings) {
-                debugLog("Checking cache for listings...");
-                cachedListings = await getCachedListings();
+            // Load from Supabase cache (updated by cron job)
+            if (supabaseConnected && getCachedListings) {
+                debugLog("🚀 Loading listings from cache...");
+                setStatus('Loading cached listings...');
+                
+                const cachedListings = await getCachedListings();
                 
                 if (cachedListings && cachedListings.length > 0) {
-                    // Validate cache using content signature if available
-                    const cacheValid = !lastCacheSignature || isCacheValid(
-                        { signature: lastCacheSignature }, 
-                        { listings: cachedListings }
-                    );
+                    debugLog(`✅ Loaded ${cachedListings.length} cached listings`);
+                    setListings(cachedListings);
+                    setHotListings(cachedListings.slice(0, 5));
+                    setStatus(`${cachedListings.length} listings loaded (updated by background sync)`);
                     
-                    if (cacheValid) {
-                        debugLog(`Loaded ${cachedListings.length} listings from cache`);
-                        setListings(cachedListings);
-                        setHotListings(cachedListings.slice(0, 5));
-                        
-                        // Check if cache is stale (older than 1 hour)
-                        const cacheAge = Date.now() - (cachedListings[0]?.timestamp || 0);
-                        if (cacheAge > 60 * 60 * 1000) {
-                            setStatusWithType('Loaded from cache (data may be stale)', 'warning', true);
-                            shouldCheckBlockchain = true; // Check blockchain if cache is stale
-                        } else {
-                            setStatusWithType('Loaded from cache', 'success');
-                            shouldCheckBlockchain = false; // Don't need to check blockchain if cache is fresh
-                        }
-                        
-                        // Clear non-persistent status after delay
-                        setTimeout(() => clearStatus(), 2000);
-                        
-                        // If cache is fresh, don't check blockchain unless forced
-                        if (!shouldCheckBlockchain && !forceRefresh) {
-                            return;
-                        }
-                    } else {
-                        debugLog("Cache signature mismatch, fetching fresh data");
-                    }
+                    // Clear status after 3 seconds
+                    setTimeout(() => setStatus(''), 3000);
                 } else {
-                    debugLog("No cached listings found, fetching from blockchain");
+                    debugLog("⚠️ No cached listings found");
+                    setListings([]);
+                    setHotListings([]);
+                    setStatus('No listings available - sync may be in progress');
                 }
+                
+                // If forceRefresh is requested, trigger manual sync
+                if (forceRefresh) {
+                    await triggerManualSync();
+                }
+                
             } else {
-                debugLog("Skipping cache check:", {
-                    forceRefresh,
-                    supabaseConnected,
-                    hasCachedListingsFunc: !!getCachedListings
-                });
-
-            }
-            
-            // Step 2: Check blockchain for updates if needed
-            if (shouldCheckBlockchain) {
-                console.log("🌐 Checking blockchain for latest listings...");
-                await fetchListingsFromBlockchain(cachedListings.length > 0, cachedListings);
-                lastCacheUpdateRef.current = Date.now();
-            } else {
-                // Just show cached data with appropriate status
-                setStatus('Showing cached listings');
-                setTimeout(() => setStatus(''), 2000);
+                debugWarn("Supabase not connected - cannot load listings");
+                setStatus('Cache unavailable - please check connection');
+                setListings([]);
+                setHotListings([]);
             }
             
         } catch (error) {
-            criticalError("Error in fetchListings:", error);
-            setStatus('Failed to fetch listings');
+            criticalError("Error loading cached listings:", error);
+            setStatus('Failed to load listings from cache');
+            setListings([]);
+            setHotListings([]);
         } finally {
             setIsLoading(false);
         }
     };
 
-    const fetchListingsFromBlockchain = async (isBackgroundUpdate = false, existingListings = []) => {
-        if (!isBackgroundUpdate) {
-            setStatus('Fetching latest listings from blockchain...');
-        } else {
-            setStatus('Checking for new listings...');
-        }
-        
+    // Trigger manual sync via API endpoint (optional - for manual refresh)
+    const triggerManualSync = async () => {
         try {
-            console.log(`🌐 Fetching marketplace listings from blockchain... (background: ${isBackgroundUpdate})`);
+            debugLog("🔄 Triggering manual listings sync...");
+            setStatus('Requesting fresh data sync...');
             
-            // Test network connectivity first
-            try {
-                await provider.getNetwork();
-                
-                // Check if we should use mock data for testing (environment flag)
-                const useMockData = import.meta.env.VITE_USE_MOCK_DATA === 'true';
-                if (useMockData) {
-                    console.log("🧪 Using mock data for testing collection names (VITE_USE_MOCK_DATA=true)");
-                    throw new Error("Using mock data for testing");
+            const response = await fetch('/api/sync-listings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
                 }
-            } catch (networkError) {
-                console.warn("Network connectivity issue:", networkError.message);
-                
-                if (existingListings.length > 0) {
-                    // We have cached data, use it
-                    setStatus("Network issue - showing cached listings");
-                    setTimeout(() => setStatus(''), 3000);
-                    return;
-                } else {
-                    // For testing: Add mock listings when network is not available
-                    console.log("Network issue - adding mock listings for testing collection names");
-                    
-                    const mockListings = [
-                        {
-                            id: 1,
-                            seller: "0x1234567890123456789012345678901234567890",
-                            nftContract: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
-                            tokenId: "1",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.1").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/1/300/300",
-                            imageUrl: "https://picsum.photos/seed/1/300/300",
-                            name: "Cosmic Dream #1",
-                            title: "Cosmic Dream #1",
-                            description: "A beautiful cosmic-themed digital artwork featuring swirling galaxies and stars",
-                            collectionName: "Cosmic Dreams Collection",
-                            metadata: {
-                                name: "Cosmic Dream #1",
-                                description: "A beautiful cosmic-themed digital artwork featuring swirling galaxies and stars",
-                                image: "https://picsum.photos/seed/1/300/300",
-                                collection: {
-                                    name: "Cosmic Dreams Collection",
-                                    description: "A collection of cosmic-themed digital artworks exploring the beauty of space",
-                                    external_link: "https://cosmicdreams.example.com",
-                                    image: "https://picsum.photos/seed/collection1/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 2,
-                            seller: "0x2345678901234567890123456789012345678901",
-                            nftContract: "0xbcdefabcdefabcdefabcdefabcdefabcdefabcde",
-                            tokenId: "5",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.25").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/2/300/300",
-                            imageUrl: "https://picsum.photos/seed/2/300/300",
-                            name: "Digital Warrior #5",
-                            title: "Digital Warrior #5",
-                            description: "A powerful warrior character from the digital realm",
-                            collectionName: "Digital Warriors",
-                            metadata: {
-                                name: "Digital Warrior #5",
-                                description: "A powerful warrior character from the digital realm",
-                                image: "https://picsum.photos/seed/2/300/300",
-                                collection: {
-                                    name: "Digital Warriors",
-                                    description: "Elite warrior characters ready for battle in the metaverse",
-                                    external_link: "https://digitalwarriors.example.com",
-                                    image: "https://picsum.photos/seed/collection2/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 3,
-                            seller: "0x3456789012345678901234567890123456789012",
-                            nftContract: "0xcdefabcdefabcdefabcdefabcdefabcdefabcdef",
-                            tokenId: "10",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.05").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/3/300/300",
-                            imageUrl: "https://picsum.photos/seed/3/300/300",
-                            name: "Abstract Expression #10",
-                            title: "Abstract Expression #10",
-                            description: "A vibrant abstract artwork exploring color and form",
-                            collectionName: "Abstract Expressions",
-                            metadata: {
-                                name: "Abstract Expression #10",
-                                description: "A vibrant abstract artwork exploring color and form",
-                                image: "https://picsum.photos/seed/3/300/300",
-                                collection: {
-                                    name: "Abstract Expressions",
-                                    description: "Bold abstract artworks that push the boundaries of digital creativity",
-                                    external_link: "https://abstractexpressions.example.com",
-                                    image: "https://picsum.photos/seed/collection3/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 4,
-                            seller: "0x4567890123456789012345678901234567890123",
-                            nftContract: "0xdefabcdefabcdefabcdefabcdefabcdefabcdefa",
-                            tokenId: "15",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.75").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/4/300/300",
-                            imageUrl: "https://picsum.photos/seed/4/300/300",
-                            name: "Cyber Punk Avatar #15",
-                            title: "Cyber Punk Avatar #15",
-                            description: "A futuristic cyberpunk character with neon aesthetics",
-                            collectionName: "Cyber Punk Avatars",
-                            metadata: {
-                                name: "Cyber Punk Avatar #15",
-                                description: "A futuristic cyberpunk character with neon aesthetics",
-                                image: "https://picsum.photos/seed/4/300/300",
-                                collection: {
-                                    name: "Cyber Punk Avatars",
-                                    description: "Futuristic avatars from the cyberpunk universe",
-                                    external_link: "https://cyberpunkavatars.example.com",
-                                    image: "https://picsum.photos/seed/collection4/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 5,
-                            seller: "0x5678901234567890123456789012345678901234",
-                            nftContract: "0xefabcdefabcdefabcdefabcdefabcdefabcdefab",
-                            tokenId: "3",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.15").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/5/300/300",
-                            imageUrl: "https://picsum.photos/seed/5/300/300",
-                            name: "Nature Spirit #3",
-                            title: "Nature Spirit #3",
-                            description: "A mystical nature spirit embodying the essence of the forest",
-                            collectionName: "Nature Spirits",
-                            metadata: {
-                                name: "Nature Spirit #3",
-                                description: "A mystical nature spirit embodying the essence of the forest",
-                                image: "https://picsum.photos/seed/5/300/300",
-                                collection: {
-                                    name: "Nature Spirits",
-                                    description: "Mystical beings that connect the digital and natural worlds",
-                                    external_link: "https://naturespirits.example.com",
-                                    image: "https://picsum.photos/seed/collection5/300/300"
-                                }
-                            }
-                        },
-                        {
-                            id: 6,
-                            seller: "0x6789012345678901234567890123456789012345",
-                            nftContract: "0xfabcdefabcdefabcdefabcdefabcdefabcdefabc",
-                            tokenId: "7",
-                            quantity: "1",
-                            pricePerUnit: ethers.parseEther("0.3").toString(),
-                            paymentToken: ethers.ZeroAddress,
-                            isERC1155: false,
-                            active: true,
-                            image: "https://picsum.photos/seed/6/300/300",
-                            imageUrl: "https://picsum.photos/seed/6/300/300",
-                            name: "Pixel Art Masterpiece #7",
-                            title: "Pixel Art Masterpiece #7",
-                            description: "A retro-style pixel art creation with modern appeal",
-                            collectionName: "Pixel Art Masterpieces",
-                            metadata: {
-                                name: "Pixel Art Masterpiece #7",
-                                description: "A retro-style pixel art creation with modern appeal",
-                                image: "https://picsum.photos/seed/6/300/300",
-                                collection: {
-                                    name: "Pixel Art Masterpieces",
-                                    description: "Nostalgic pixel art that brings back the golden age of gaming",
-                                    external_link: "https://pixelartmasterpieces.example.com",
-                                    image: "https://picsum.photos/seed/collection6/300/300"
-                                }
-                            }
-                        }
-                    ];
-                    
-                    setListings(mockListings);
-                    setHotListings(mockListings.slice(0, 2));
-                    setStatus("Showing mock listings for testing collection names");
-                    setTimeout(() => setStatus(''), 3000);
-                    return;
-                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Sync failed: ${response.status}`);
             }
             
-            // Track existing listing IDs to detect new ones
-            const existingIds = new Set(existingListings.map(listing => listing.id));
-            let newListingsFound = 0;
+            const result = await response.json();
+            debugLog("✅ Manual sync completed:", result);
             
-            const res = [];
-            const maxScanRange = MARKETPLACE_CONFIG.MAX_LISTING_SCAN;
+            setStatus(`Sync completed: ${result.stats?.found || 0} listings found, ${result.stats?.cached || 0} cached`);
             
-            for (let i = MARKETPLACE_CONFIG.MIN_LISTING_SCAN; i <= maxScanRange; i++) {
-                try {
-                    const listing = await marketplace.listings(i);
-
-                    // Skip inactive listings
-                    if (!listing || !listing.active) continue;
-
-                    // For background updates, prioritize new listings
-                    if (isBackgroundUpdate && existingIds.has(i)) {
-                        // Use existing listing data to avoid re-fetching metadata
-                        const existingListing = existingListings.find(l => l.id === i);
-                        if (existingListing) {
-                            res.push(existingListing);
-                            continue;
-                        }
-                    }
-
-                    // Create a proper deterministic fallback image URL for the NFT
-                    const deterministic_fallback = `https://picsum.photos/seed/${listing.nftContract}${listing.tokenId}/300/300`;
-                    let image = deterministic_fallback;
-                    let name = resolveCollectionName({ tokenId: listing.tokenId?.toString() || '0' });
-                    let metadata = null;
-                    let collectionName = null;
-
-                    try {
-                        // Enhanced contract instance for the NFT with collection name support
-                        const nftContract = new ethers.Contract(
-                            listing.nftContract,
-                            listing.isERC1155 ?
-                                ['function uri(uint256 id) view returns (string)', 'function name() view returns (string)'] :
-                                ['function tokenURI(uint256 tokenId) view returns (string)', 'function name() view returns (string)', 'function symbol() view returns (string)'],
-                            provider
-                        );
-
-                        // Try to get collection name from contract first with enhanced error handling
-                        try {
-                            const contractName = await nftContract.name();
-                            if (contractName && contractName.trim() !== '') {
-                                collectionName = contractName.trim();
-                                console.log(`✅ Collection name from contract for ${listing.nftContract}: ${collectionName}`);
-                            } else {
-                                console.warn(`⚠️ Contract ${listing.nftContract} returned empty name`);
-                            }
-                        } catch (nameError) {
-                            console.warn(`❌ Failed to get contract name for ${listing.nftContract}:`, nameError.message);
-                            // Continue with fallback resolution below
-                        }
-
-                        // Get token URI
-                        let tokenURI;
-                        if (listing.isERC1155) {
-                            tokenURI = await nftContract.uri(listing.tokenId);
-                            tokenURI = tokenURI.replace('{id}', listing.tokenId.toString().padStart(64, '0'));
-                        } else {
-                            tokenURI = await nftContract.tokenURI(listing.tokenId);
-                        }
-
-                        debugLog(`Token URI for listing ${i}: ${tokenURI}`);
-
-                        // Enhanced metadata fetching with multiple IPFS gateway fallbacks
-                        const ipfsGateways = [
-                            'https://ipfs.io/ipfs/',
-                            'https://cloudflare-ipfs.com/ipfs/',
-                            'https://gateway.pinata.cloud/ipfs/',
-                            'https://ipfs.fleek.co/ipfs/',
-                            'https://dweb.link/ipfs/'
-                        ];
-
-                        // Enhanced metadata fetching with CORS-safe requests and better error handling
-                        const { primaryUrl, fallbacks } = resolveIPFSWithFallbacks(tokenURI);
-                        
-                        debugLog(`Fetching metadata for listing ${i} from: ${primaryUrl}`);
-                        if (fallbacks.length > 0) {
-                            debugLog(`Available fallbacks: ${fallbacks.length} IPFS gateways`);
-                        }
-
-                        // Fetch metadata with CORS-safe requests and automatic fallbacks
-                        let metadata = null;
-                        let fetchSuccess = false;
-                        
-                        try {
-                            const metadataJson = await fetchJSON(primaryUrl, {
-                                timeout: 10000
-                            }, fallbacks);
-                            
-                            metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
-                            fetchSuccess = true;
-                            debugLog(`Successfully fetched metadata for listing ${i}`);
-                            
-                        } catch (fetchError) {
-                            debugWarn(`All metadata fetch attempts failed for listing ${i}:`, fetchError.message);
-                            
-                            // Provide specific error feedback for debugging
-                            if (isCORSError(fetchError)) {
-                                debugLog(`CORS issue detected - this is often due to restrictive server policies`);
-                            } else if (isNetworkError(fetchError)) {
-                                debugLog(`Network connectivity issue - may be temporary`);
-                            }
-                            
-                            // Use fallback metadata
-                            metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
-                        }
-
-                        debugLog(`Metadata for listing ${i}:`, metadata);
-
-                        if (metadata.name) name = metadata.name;
-
-                        // Enhanced image resolution with IPFS gateway support
-                        if (metadata.image) {
-                            image = metadata.image;
-                            
-                            // If metadata image is also IPFS, ensure it uses a working gateway
-                            if (image.startsWith('ipfs://')) {
-                                image = image.replace('ipfs://', ipfsGateways[0]);
-                            }
-                            
-                            debugLog(`Image URL for listing ${i}: ${image}`);
-                        }
-
-                        // Enhanced collection name resolution with multiple fallbacks
-                        if (!collectionName || collectionName.includes('Collection 0x')) {
-                            // Try metadata.collection.name first
-                            if (metadata?.collection?.name && metadata.collection.name.trim() !== '') {
-                                collectionName = metadata.collection.name.trim();
-                                console.log(`📋 Using collection name from metadata: ${collectionName}`);
-                            } 
-                            // Try metadata.name if it doesn't look like a token name
-                            else if (metadata?.name && 
-                                     !metadata.name.includes('#') && 
-                                     !metadata.name.toLowerCase().includes('token') &&
-                                     !metadata.name.toLowerCase().includes('nft') &&
-                                     metadata.name.trim() !== '') {
-                                collectionName = metadata.name.trim();
-                                console.log(`📝 Using NFT name as collection name: ${collectionName}`);
-                            }
-                            // Try to extract from description
-                            else if (metadata?.description && metadata.description.trim() !== '') {
-                                const description = metadata.description.trim();
-                                const words = description.split(' ');
-                                if (words.length >= 2 && words.length <= 4) {
-                                    // If description is short enough, it might be a collection name
-                                    collectionName = description;
-                                    console.log(`📖 Using description as collection name: ${collectionName}`);
-                                } else {
-                                    // Extract first few words
-                                    collectionName = words.slice(0, 3).join(' ');
-                                    console.log(`🔤 Using first words of description: ${collectionName}`);
-                                }
-                            }
-                        }
-                    } catch (error) {
-                        debugWarn(`Failed to fetch metadata for listing ${i}:`, error);
-                        // Use fallback metadata
-                        metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
-                        name = metadata.name;
-                        // Ensure we still use the deterministic fallback image even if metadata fails
-                        image = deterministic_fallback;
-                    }
-
-                    // Create the sanitized listing object with standardized BigInt handling
-                    const sanitizedListing = {
-                        id: i,
-                        seller: listing.seller || ethers.ZeroAddress,
-                        nftContract: listing.nftContract || ethers.ZeroAddress,
-                        tokenId: listing.tokenId?.toString() || '0',
-                        quantity: standardizeBigInt(listing.quantity || '0'),
-                        pricePerUnit: standardizeBigInt(listing.pricePerUnit || '0'),
-                        paymentToken: listing.paymentToken || ethers.ZeroAddress,
-                        isERC1155: !!listing.isERC1155,
-                        active: !!listing.active,
-
-                        // Enhanced metadata structure with proper fallbacks
-                        image,
-                        imageUrl: image,
-                        name,
-                        title: name,
-
-                        description: metadata?.description || `Token ID: ${listing.tokenId?.toString() || '0'}`,
-
-                        // Normalized metadata object
-                        metadata: {
-                            ...metadata,
-                            image: image // Ensure the resolved URL is in metadata too
-                        },
-                        
-                        // Add content signature for cache validation
-                        signature: createContentSignature({
-                            tokenId: listing.tokenId?.toString(),
-                            pricePerUnit: listing.pricePerUnit?.toString(),
-                            active: listing.active,
-                            metadata: metadata
-                        })
-                    };
-
-                    debugLog("Sanitized listing with enhanced metadata:", sanitizedListing.name);
-
-                    res.push(sanitizedListing);
-                    
-                    // Track new listings
-                    if (!existingIds.has(i)) {
-                        newListingsFound++;
-                    }
-                } catch (err) {
-                    debugWarn(`Skipping listing ${i}:`, err.message);
-                }
-            }
-
-            debugLog(`Successfully loaded ${res.length} listings from blockchain`);
-            setListings(res);
-            setHotListings(res.slice(0, 5));
-            
-            // Enhanced caching with content-based validation
-            debugLog(`Auto-caching DISABLED to prevent mass data collection to Supabase`);
-            debugLog(`Found ${res.length} listings - caching disabled to prevent database overload`);
-
-            // Auto-caching disabled to prevent mass data collection
-            const shouldCache = false;
-            
-            if (shouldCache && supabaseConnected && res.length > 0 && cacheListings) {
-                try {
-                    console.log(`💾 Caching ${res.length} listings (${newListingsFound} new)...`);
-                    await cacheListings(res);
-                    console.log(`✅ Successfully cached ${res.length} listings`);
-                } catch (cacheError) {
-                    console.warn("❌ Failed to cache listings:", cacheError);
-                }
-            } else if (!shouldCache) {
-                console.log("📋 No cache update needed - data unchanged");
-            }
-            
-            // Clear status after delay
-            setTimeout(() => setStatus(''), isBackgroundUpdate ? 2000 : 3000);
+            // Refresh the listings after sync
+            setTimeout(async () => {
+                await fetchListings(false); // Reload from cache
+                setStatus('');
+            }, 2000);
             
         } catch (error) {
-            console.error("Error in fetchListingsFromBlockchain:", error);
-            
-            // If we have existing data and this was a background update, keep showing it
-            if (isBackgroundUpdate && existingListings.length > 0) {
-                setStatus('Update failed - showing cached listings');
-                setTimeout(() => setStatus(''), 3000);
-            } else {
-                setStatus('Failed to fetch listings - network connectivity issue');
-            }
+            debugWarn("Manual sync failed:", error.message);
+            setStatus(`Sync failed: ${error.message}`);
+            setTimeout(() => setStatus(''), 5000);
         }
     };
 
@@ -1578,113 +1149,365 @@ const ERC1155_APPROVAL_ABI = [
     'function setApprovalForAll(address operator, bool approved)'
 ];
 
-    // Replace the current buyListing function with this version
-    const buyListing = async (id, pricePerUnit, paymentToken) => {
-        if (!signer) {
-            setStatus('Error: Wallet not connected. Please connect your wallet first');
-            return;
-        }
+    // Replace the current buyListing with this version
+// ===== Buffer-aware ERC20 allowance helper (handles USDT-style 0->new) =====
+async function ensureAllowanceWithBuffer({
+  tokenAddress,
+  owner,
+  spender,
+  needed,             // BigInt in token units
+  signer,
+  setStatus,
+  bufferBps = 1000n,  // 10% buffer; e.g. 500n = 5%
+}) {
+  const erc20 = new ethers.Contract(tokenAddress, [
+    'function symbol() view returns (string)',
+    'function decimals() view returns (uint8)',
+    'function allowance(address,address) view returns (uint256)',
+    'function approve(address,uint256) returns (bool)'
+  ], signer);
 
-        if (!marketplace) {
-            setStatus('Error: Marketplace contract not initialized');
-            return;
-        }
+  const [symbol, allowanceRaw] = await Promise.all([
+    erc20.symbol().catch(() => 'TOKEN'),
+    erc20.allowance(owner, spender),
+  ]);
 
+  const allowance = BigInt(allowanceRaw.toString());
+  const extra = (needed * bufferBps) / 10_000n;
+  const neededWithBuffer = needed + extra;
+
+  if (allowance >= neededWithBuffer) {
+    return { symbol, approved: true, allowance, neededWithBuffer };
+  }
+
+  const ask = async (amount, label) => {
+    setStatus?.(`Approving ${symbol}${label ? ` (${label})` : ''}...`);
+    const tx = await erc20.approve(spender, amount);
+    setStatus?.(`Confirming ${symbol} approval...`);
+    await tx.wait();
+  };
+
+  // Prefer Max approval for smoother future buys
+  try {
+    await ask(ethers.MaxUint256, 'max');
+    return { symbol, approved: true, allowance: ethers.MaxUint256, neededWithBuffer };
+  } catch (e1) {
+    const m = (e1?.reason || e1?.message || '').toLowerCase();
+
+    // USDT-style tokens require 0 -> new
+    if (m.includes('allowance') || m.includes('must be zero') || m.includes('non-zero')) {
+      try {
+        await ask(0, 'reset to 0');
+        await ask(ethers.MaxUint256, 'max');
+        return { symbol, approved: true, allowance: ethers.MaxUint256, neededWithBuffer };
+      } catch (e2) {
+        // Fallback: exact buffered amount
         try {
-            // Connect with signer
-            const marketplaceWithSigner = marketplace.connect(signer);
-            
-            // If using ERC20 token (not native VTRU), check approval first
-            if (paymentToken !== ethers.ZeroAddress) {
-                setStatus('Checking token approval...');
-                
-                // Create token contract instance
-                const tokenContract = new ethers.Contract(paymentToken, ERC20_ABI, signer);
-                
-                try {
-                    // Get token symbol and decimals for better messages
-                    const tokenSymbol = await tokenContract.symbol();
-                    
-                    // Check current allowance
-                    const currentAllowance = await tokenContract.allowance(wallet, marketplaceAddress);
-                    
-                    // If allowance is insufficient, request approval
-                    if (currentAllowance < pricePerUnit) {
-                        setStatus(`Requesting approval to spend ${tokenSymbol}...`);
-                        
-                        // Request approval for a large amount to avoid future approvals
-                        const approvalTx = await tokenContract.approve(
-                            marketplaceAddress,
-                            ethers.MaxUint256 // Infinite approval
-                        );
-                        
-                        setStatus(`Approving ${tokenSymbol} spending. Please confirm in your wallet...`);
-                        await approvalTx.wait();
-                        setStatus(`${tokenSymbol} approved! Processing purchase...`);
-                    }
-                } catch (error) {
-                    if (error.message.includes('user rejected')) {
-                        setStatus('Token approval was rejected');
-                        return;
-                    }
-                    console.error('Error in token approval:', error);
-                    throw new Error(`Failed to approve token: ${error.message}`);
-                }
-            }
-
-            // Now proceed with the purchase
-            setStatus('Buying...');
-            
-            console.log(`Buying listing ${id} for ${ethers.formatEther(pricePerUnit)} ${
-                paymentToken === ethers.ZeroAddress ? 'VTRU' : 'tokens'}`);
-            
-            const tx = await marketplaceWithSigner.buy(id, 1, {
-                value: paymentToken === ethers.ZeroAddress ? pricePerUnit : undefined
-            });
-            
-            setStatus('Transaction submitted. Waiting for confirmation...');
-            await tx.wait();
-            setStatus('Purchase successful! Updating marketplace data...');
-            
-            // Invalidate cache and refresh listings
-            if (supabaseConnected && cacheListings) {
-                console.log("💾 Invalidating cache due to purchase...");
-                // Force refresh from blockchain to get latest state
-                await fetchListings(true);
-            } else {
-                // Refresh listings normally
-                fetchListings();
-            }
-            
-            // Wait a moment for events to be mined and then fetch recent events
-            setTimeout(async () => {
-                try {
-                    await fetchPastSalesEvents(marketplace);
-                    setStatus('Purchase successful! Marketplace updated.');
-                    
-                    // Clear status after a few seconds
-                    setTimeout(() => setStatus(''), 3000);
-                } catch (eventError) {
-                    console.warn("Error fetching updated events after purchase:", eventError);
-                    setStatus('Purchase successful!');
-                    setTimeout(() => setStatus(''), 3000);
-                }
-            }, 2000);
-            
-        } catch (e) {
-            console.error('Error in buyListing:', e);
-            
-            if (e.message.includes('user rejected transaction')) {
-                setStatus('Transaction was rejected in your wallet');
-            } else if (e.message.includes('insufficient funds')) {
-                setStatus('Error: Insufficient funds for this purchase');
-            } else if (e.message.includes('caller is not token owner or approved')) {
-                setStatus('Error: Seller needs to approve the marketplace to transfer their NFT');
-            } else {
-                setStatus('Buy failed: ' + (e.message || e));
-            }
+          await ask(neededWithBuffer, `exact ${symbol}`);
+          return { symbol, approved: true, allowance: neededWithBuffer, neededWithBuffer };
+        } catch (e3) {
+          throw new Error(`Failed to approve ${symbol}: ${e3?.message || e3}`);
         }
-    };
+      }
+    }
+
+    // Different failure → exact buffered amount
+    try {
+      await ask(neededWithBuffer, `exact ${symbol}`);
+      return { symbol, approved: true, allowance: neededWithBuffer, neededWithBuffer };
+    } catch (e4) {
+      throw new Error(`Failed to approve ${symbol}: ${e4?.message || e4}`);
+    }
+  }
+}
+
+
+// ===== buyListing with enhanced error handling and gas estimation =====
+const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) => {
+  if (!signer) { setStatus('Error: Wallet not connected. Please connect your wallet first'); return; }
+  if (!marketplace) { setStatus('Error: Marketplace contract not initialized'); return; }
+
+  try {
+    console.log("[BUY DEBUG] Starting buy process...");
+    console.log("[BUY DEBUG] Marketplace contract address:", marketplaceAddress);
+    console.log("Marketplace contract:", marketplaceAddress);
+    console.log("Contract instance:", marketplace);
+    console.log("Available methods:", Object.getOwnPropertyNames(marketplace).filter(name => 
+        typeof marketplace[name] === 'function' && !name.startsWith('_')));
+
+    setStatus('Checking listing details...');
+
+    // Get listing details
+    console.log("[BUY DEBUG] Fetching listing details...");
+    const l = await marketplace.listings(id);
+    console.log("Listing details:", l);
+    
+    if (!l || !l.active) { 
+      setStatus('Error: Listing is inactive or does not exist'); 
+      return; 
+    }
+
+    // Validate quantity and pricing
+    const is1155 = !!l.isERC1155;
+    const listed = BigInt(l.quantity?.toString?.() ?? String(l.quantity ?? '0'));
+    const qty = BigInt(String(quantity || 1));
+
+    if (!is1155 && qty !== 1n) { setStatus('Error: ERC-721 quantity must be 1'); return; }
+    if (is1155 && (qty <= 0n || qty > listed)) { setStatus('Error: Requested quantity exceeds available'); return; }
+
+    const unit = BigInt(l.pricePerUnit?.toString?.() ?? String(l.pricePerUnit ?? '0'));
+    const listingTotal = unit * qty;
+    
+    // Fetch platform fee from contract - simplified for new contract structure
+    console.log("[BUY DEBUG] Fetching platform fee...");
+    let platformFeeBps = 0n;
+    try {
+      const feeResult = await marketplace.platformFeeBps();
+      platformFeeBps = BigInt(feeResult.toString());
+      console.log("Platform fee (basis points):", platformFeeBps.toString());
+    } catch (feeError) {
+      console.warn("Could not fetch platform fee, using 0:", feeError.message);
+    }
+
+    // Calculate platform fee - new contract handles vibe distribution internally
+    const platformFeeTotal = (listingTotal * platformFeeBps) / 10000n;
+    
+    // Check if there are creator royalties by querying the NFT contract
+    let royaltyAmount = 0n;
+    try {
+      // Try to get royalty info from the NFT contract (ERC2981)
+      const nftContract = new ethers.Contract(
+        l.nftContract, 
+        ['function royaltyInfo(uint256 tokenId, uint256 salePrice) view returns (address, uint256)'], 
+        provider
+      );
+      const [royaltyReceiver, royaltyFee] = await nftContract.royaltyInfo(l.tokenId, listingTotal);
+      if (royaltyReceiver !== ethers.ZeroAddress && royaltyFee > 0) {
+        royaltyAmount = BigInt(royaltyFee.toString());
+        console.log("Creator royalty:", ethers.formatEther(royaltyAmount), "VTRU to", royaltyReceiver);
+      }
+    } catch (royaltyError) {
+      console.log("No royalty info available or NFT doesn't support ERC2981:", royaltyError.message);
+    }
+    
+    // Total transaction value includes listing price + platform fees + royalties
+    // New contract handles vibe conversion internally - no separate fee processor
+    let totalWithFees = listingTotal + platformFeeTotal + royaltyAmount;
+    
+    console.log("[SIMPLIFIED FEE BREAKDOWN]");
+    console.log("Listing price:", ethers.formatEther(listingTotal), "VTRU");
+    console.log("Platform fee:", ethers.formatEther(platformFeeTotal), "VTRU (contract handles vibe distribution)");
+    console.log("Creator royalty:", ethers.formatEther(royaltyAmount), "VTRU");
+    console.log("Total transaction value:", ethers.formatEther(totalWithFees), "VTRU");
+    
+    const token = l.paymentToken;
+    const isNative = !token || String(token).toLowerCase() === ethers.ZeroAddress.toLowerCase();
+    
+    console.log('Buy Details:', {
+      listingId: id,
+      pricePerUnit: ethers.formatEther(unit),
+      totalPrice: ethers.formatEther(totalWithFees),
+      paymentToken: token,
+      isNative,
+      quantity: qty.toString()
+    });
+
+    // Check wallet balance
+    const walletBal = await provider.getBalance(wallet);
+    console.log(`Wallet Native Balance: ${ethers.formatEther(walletBal)} VTRU`);
+    
+    if (isNative && walletBal < totalWithFees) {
+      setStatus(`Error: Insufficient balance. Need ${ethers.formatEther(totalWithFees)} VTRU, have ${ethers.formatEther(walletBal)} VTRU`);
+      return;
+    }
+
+    setStatus(`Preparing transaction for ${ethers.formatEther(totalWithFees)} VTRU...`);
+    
+    // Ensure connected contract
+    const connectedContract = marketplace.connect(signer);
+    
+    if (isNative) {
+      // For native token purchases, estimate gas first
+      console.log("Estimating gas for native token purchase...");
+      let gasEstimate;
+      try {
+        gasEstimate = await connectedContract.buy.estimateGas(id, qty, { value: totalWithFees });
+        console.log("Gas estimate:", gasEstimate.toString());
+      } catch (gasError) {
+        console.warn("Gas estimation failed with full amount:", gasError.message);
+        
+        // Try with just the listing price (maybe contract calculates fees internally)
+        try {
+          gasEstimate = await connectedContract.buy.estimateGas(id, qty, { value: listingTotal });
+          console.log("Gas estimate with listing price only:", gasEstimate.toString());
+          console.log("Using listing price only - contract may calculate fees internally");
+          totalWithFees = listingTotal; // Update the total to use
+        } catch (gasError2) {
+          console.warn("Gas estimation failed with listing price only:", gasError2.message);
+          gasEstimate = 500000n; // Fallback gas limit
+        }
+      }
+      
+      // Add 20% buffer to gas estimate
+      const gasLimit = (gasEstimate * 120n) / 100n;
+      console.log(`Sending buy tx with ${ethers.formatEther(totalWithFees)} VTRU as value, gas limit ${gasLimit}`);
+      
+      try {
+        const tx = await connectedContract.buy(id, qty, { 
+          value: totalWithFees,
+          gasLimit
+        });
+        setStatus('Transaction submitted. Waiting for confirmation...');
+        console.log("Transaction hash:", tx.hash);
+        
+        const receipt = await tx.wait();
+        console.log("Transaction confirmed:", receipt);
+        
+        if (receipt.status === 0) {
+          throw new Error("Transaction failed during execution");
+        }
+        
+        // Mark the listing as inactive
+        markListingInactive(id);
+
+        setStatus('Purchase successful! Refreshing listings...');
+        
+        // Refresh listings after successful purchase
+        setTimeout(() => {
+          if (supabaseConnected && cacheListings) {
+            fetchListings(true);
+          } else {
+            fetchListings();
+          }
+        }, 1000);
+
+        setTimeout(() => {
+          setStatus('Purchase completed successfully!');
+          setTimeout(() => setStatus(''), 3000);
+        }, 1500);
+        
+      } catch (callError) {
+        console.error("Buy transaction failed:", callError);
+        
+        // Enhanced error handling for new contract
+        if (callError.reason) {
+          setStatus(`Transaction failed: ${callError.reason}`);
+        } else if (callError.message?.includes('amount unused')) {
+          setStatus('Error: Amount unused - the contract calculated fees differently than expected');
+        } else if (callError.message?.includes('insufficient funds')) {
+          setStatus('Error: Insufficient funds for transaction + gas');
+        } else if (callError.message?.includes('user rejected')) {
+          setStatus('Transaction was rejected in your wallet');
+        } else {
+          setStatus(`Transaction failed: ${callError.message || 'Unknown error'}`);
+        }
+        return;
+      }
+    } else {
+      // ERC20 token path
+      console.log("Processing ERC20 token purchase...");
+      
+      // Check ERC20 token balance
+      const erc20Contract = new ethers.Contract(token, ERC20_ABI, provider);
+      const tokenBalance = await erc20Contract.balanceOf(wallet);
+      console.log(`ERC20 Token Balance: ${ethers.formatUnits(tokenBalance, await erc20Contract.decimals())} ${await erc20Contract.symbol()}`);
+      
+      if (BigInt(tokenBalance.toString()) < totalWithFees) {
+        const tokenSymbol = await erc20Contract.symbol();
+        const tokenDecimals = await erc20Contract.decimals();
+        setStatus(`Error: Insufficient ${tokenSymbol} balance. Need ${ethers.formatUnits(totalWithFees, tokenDecimals)} ${tokenSymbol}, have ${ethers.formatUnits(tokenBalance, tokenDecimals)} ${tokenSymbol}`);
+        return;
+      }
+      
+      // Ensure marketplace contract has approval to spend user's ERC20 tokens
+      console.log("Checking/ensuring ERC20 approval...");
+      setStatus('Checking token approval...');
+      
+      try {
+        await ensureAllowanceWithBuffer({
+          tokenAddress: token,
+          owner: wallet,
+          spender: marketplaceAddress,
+          needed: totalWithFees,
+          signer,
+          setStatus,
+          bufferBps: 1000n // 10% buffer for future transactions
+        });
+        console.log("ERC20 approval confirmed");
+      } catch (approvalError) {
+        console.error("ERC20 approval failed:", approvalError);
+        setStatus(`Error: Failed to approve token spending: ${approvalError.message}`);
+        return;
+      }
+      
+      // Estimate gas for ERC20 purchase
+      console.log("Estimating gas for ERC20 token purchase...");
+      let gasEstimate;
+      try {
+        gasEstimate = await connectedContract.buy.estimateGas(id, qty);
+        console.log("Gas estimate:", gasEstimate.toString());
+      } catch (gasError) {
+        console.warn("Gas estimation failed:", gasError.message);
+        gasEstimate = 500000n; // Fallback gas limit
+      }
+      
+      // Add 20% buffer to gas estimate
+      const gasLimit = (gasEstimate * 120n) / 100n;
+      console.log(`Executing ERC20 buy transaction with gas limit ${gasLimit}`);
+      
+      setStatus('Submitting ERC20 purchase transaction...');
+      const tx = await connectedContract.buy(id, qty, { gasLimit });
+      setStatus('Transaction submitted. Waiting for confirmation...');
+      console.log("Transaction hash:", tx.hash);
+      
+      const receipt = await tx.wait();
+      console.log("Transaction confirmed:", receipt);
+      
+      if (receipt.status === 0) {
+        throw new Error("Transaction failed during execution");
+      }
+      
+      // Mark the listing as inactive
+      markListingInactive(id);
+
+      setStatus('Purchase successful! Refreshing listings...');
+      
+      // Refresh listings after successful purchase
+      setTimeout(() => {
+        if (supabaseConnected && cacheListings) {
+          fetchListings(true);
+        } else {
+          fetchListings();
+        }
+      }, 1000);
+
+      setTimeout(() => {
+        setStatus('Purchase completed successfully!');
+        setTimeout(() => setStatus(''), 3000);
+      }, 1500);
+    }
+
+  } catch (e) {
+    criticalError('[BUY] Error in buyListing:', e);
+    console.error('[BUY] Full error details:', e);
+    
+    const errorMessage = e?.message || e?.reason || String(e);
+    console.error("Error message:", errorMessage);
+    
+    if (errorMessage.includes('user rejected')) {
+      setStatus('Transaction was rejected in your wallet');
+    } else if (errorMessage.includes('insufficient funds')) {
+      setStatus('Error: Insufficient funds for gas + payment');
+    } else if (errorMessage.includes('amount unused')) {
+      setStatus('Error: New marketplace contract fee calculation - trying different amount');
+    } else if (errorMessage.includes('execution reverted')) {
+      setStatus('Error: Transaction reverted - new contract validation failed');
+    } else {
+      setStatus(`Purchase failed: ${errorMessage.substring(0, 100)}...`);
+    }
+  }
+};
+
 
     const createListing = async (nftContract, tokenId, quantity, price, paymentToken) => {
         try {
@@ -1698,7 +1521,7 @@ const ERC1155_APPROVAL_ABI = [
             }
 
             setStatus("Preparing listing...");
-            console.log("Creating listing with parameters:", {
+            debugLog("Creating listing with parameters:", {
                 nftContract,
                 tokenId,
                 quantity,
@@ -1717,10 +1540,10 @@ const ERC1155_APPROVAL_ABI = [
                 );
                 await testContract.balanceOf(wallet, tokenId);
                 isERC1155 = true;
-                console.log(`Detected ${nftContract} as ERC1155`);
+                debugLog(`Detected ${nftContract} as ERC1155`);
             } catch (e) {
                 // If that fails, assume it's ERC721
-                console.log(`Detected ${nftContract} as ERC721`);
+                debugLog(`Detected ${nftContract} as ERC721`);
                 isERC1155 = false;
             }
 
@@ -1734,7 +1557,7 @@ const ERC1155_APPROVAL_ABI = [
 
                 if (!isApproved) {
                     setStatus("Requesting approval to sell your NFTs...");
-                    console.log("Requesting ERC1155 approval for marketplace");
+                    debugLog("Requesting ERC1155 approval for marketplace");
 
                     const approvalTx = await nftContract1155.setApprovalForAll(marketplaceAddress, true);
 
@@ -1756,7 +1579,7 @@ const ERC1155_APPROVAL_ABI = [
 
                     if (!isTokenApproved) {
                         setStatus("Requesting approval to sell your NFT...");
-                        console.log("Requesting ERC721 approval for marketplace");
+                        debugLog("Requesting ERC721 approval for marketplace");
 
                         // Use setApprovalForAll for convenience (approves all tokens)
                         const approvalTx = await nftContract721.setApprovalForAll(marketplaceAddress, true);
@@ -1774,7 +1597,7 @@ const ERC1155_APPROVAL_ABI = [
             // Make sure we're using the contract with the signer
             const marketplaceWithSigner = marketplace.connect(signer);
 
-            console.log("Sending create listing transaction...");
+            debugLog("Sending create listing transaction...");
             const tx = await marketplaceWithSigner.createListing(
                 nftContract,
                 tokenId,
@@ -1789,7 +1612,7 @@ const ERC1155_APPROVAL_ABI = [
 
             // Invalidate cache and refresh listings
             if (supabaseConnected && cacheListings) {
-                console.log("💾 Invalidating cache due to new listing...");
+                debugLog("💾 Invalidating cache due to new listing...");
                 // Force refresh from blockchain to get latest state
                 await fetchListings(true);
             } else {
@@ -1798,7 +1621,7 @@ const ERC1155_APPROVAL_ABI = [
             }
 
         } catch (error) {
-            console.error("Error in createListing:", error);
+            criticalError("Error in createListing:", error);
 
             // Better error handling
             if (error.message.includes("user rejected")) {
@@ -1814,23 +1637,58 @@ const ERC1155_APPROVAL_ABI = [
         }
     };
 
-    // DISABLED: Load listings on initial load only - no automatic refresh to prevent mass data
+    // Load listings on initial load only - no automatic refresh 
     useEffect(() => {
         if (marketplace) {
-            // Only load once on initial mount - no automatic refresh intervals
-            console.log("📋 Loading listings once on initialization - auto-refresh DISABLED");
             fetchListings();
-            
-            // DISABLED: Automatic refresh interval to prevent mass data collection
-            console.log("⚠️ Automatic listing refresh DISABLED to prevent mass data collection");
-            console.log("💡 Users can manually refresh listings if needed");
-            
-            // No automatic refresh interval
-            return () => {
-                // No interval to cleanup
-            };
         }
     }, [marketplace]);
+
+    // Add helper near the top (below imports)
+function hasAbiFn(abi, name) {
+    try { return Array.isArray(abi) && abi.some(e => e?.type === 'function' && e?.name === name); }
+    catch { return false; }
+}
+
+// Load a working ABI that contains `buy` if the incoming one does not
+async function resolveMarketplaceAbi(incomingAbi) {
+    if (hasAbiFn(incomingAbi, 'buy')) return incomingAbi;
+
+    try {
+        const A = await import('../abi/VTRUNFTMarketplace.json');
+        const abiA = A.default?.abi || A.abi;
+        if (hasAbiFn(abiA, 'buy')) return abiA;
+    } catch {}
+
+    try {
+        const B = await import('../abi/Marketplace.json');
+        const abiB = B.default?.abi || B.abi;
+        if (hasAbiFn(abiB, 'buy')) return abiB;
+    } catch {}
+
+    throw new Error('No ABI with buy() found. Ensure VTRUNFTMarketplace ABI is provided.');
+}
+
+    // Add this function to MarketplaceContext.jsx after the buyListing function
+const markListingInactive = useCallback((listingId) => {
+  if (!listingId) return;
+  
+  debugLog(`Marking listing ${listingId} as inactive after purchase`);
+  
+  // Update listing in the listings array
+  setListings(prevListings => 
+    prevListings.map(listing => 
+      listing.id === listingId ? { ...listing, active: false } : listing
+    )
+  );
+  
+  // Add to canceledListings set
+  setCanceledListings(prevCanceled => {
+    const newCanceled = new Set(prevCanceled);
+    newCanceled.add(String(listingId));
+    return newCanceled;
+  });
+}, []);
 
     return (
         <MarketplaceContext.Provider value={{
@@ -1849,13 +1707,14 @@ const ERC1155_APPROVAL_ABI = [
             createListing,
             isInitialized,
             isLoading,
+            markListingInactive, // Add this new function
             // New marketplace statistics and data
             salesHistory,
             canceledListings,
             marketplaceStats,
             calculateMarketplaceStats,
-            // Add function to manually refresh blockchain data
-            refreshBlockchainData: () => marketplace && fetchPastSalesEvents(marketplace)
+            // Add function to manually trigger sync via API
+            triggerManualSync
         }}>
             {children}
         </MarketplaceContext.Provider>
@@ -1865,3 +1724,36 @@ const ERC1155_APPROVAL_ABI = [
 export function useMarketplace() {
     return useContext(MarketplaceContext);
 }
+
+// Add this function to reset allowances
+async function resetTokenAllowance(tokenAddress, spender, setStatus) {
+  if (!signer) return false;
+  
+  try {
+    const token = new ethers.Contract(tokenAddress, [
+      'function symbol() view returns (string)',
+      'function approve(address,uint256) returns (bool)'
+    ], signer);
+    
+    const symbol = await token.symbol().catch(() => 'TOKEN');
+    setStatus(`Resetting ${symbol} allowance to zero...`);
+    
+    // First set to zero
+    const tx1 = await token.approve(spender, 0);
+    await tx1.wait();
+    
+    // Then approve max
+    setStatus(`Approving ${symbol} for trading...`);
+    const tx2 = await token.approve(spender, ethers.MaxUint256);
+    await tx2.wait();
+    
+    setStatus(`${symbol} approved successfully!`);
+    return true;
+  } catch (error) {
+    setStatus(`Failed to reset token allowance: ${error.message}`);
+    return false;
+  }
+}
+
+// Add this reset button to the UI for marketplace page
+// And modify buyListing to use this reset function when allowance errors occur

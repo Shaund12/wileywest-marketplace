@@ -81,8 +81,23 @@ export default function Navigation() {
                         <NavLink to="/hot-listings" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
                             Hot Listings
                         </NavLink>
+                        <NavLink to="/blockshare" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            BlockShare
+                        </NavLink>
+                        <NavLink to="/mint" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            Mint
+                        </NavLink>
+                        <NavLink to="/my-auctions" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            My Auctions
+                        </NavLink>
                         <NavLink to="/sell" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
                             Sell NFT
+                        </NavLink>
+                        <NavLink to="/auctions/create" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            Create Auction
+                        </NavLink>
+                        <NavLink to="/vibe-dashboard" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            VIBE
                         </NavLink>
                     </nav>
                 </div>

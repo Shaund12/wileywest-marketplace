@@ -10,6 +10,13 @@
     --hp-danger: #ff5c93;
     --hp-focus: 0 0 0 3px rgba(0,255,136,0.35);
     --hp-focus-2: 0 0 0 3px rgba(122,92,255,0.35);
+    --hp-radius: 12px;
+    --hp-radius-lg: 16px;
+    --hp-shadow-sm: 0 2px 8px rgba(0,0,0,.25);
+    --hp-shadow-md: 0 8px 24px rgba(0,0,0,.28);
+    --hp-shadow-lg: 0 14px 40px rgba(0,0,0,.35);
+    --hp-card-bg: rgba(255,255,255,0.03);
+    --hp-card-bg-hover: rgba(255,255,255,0.06);
     color: var(--hp-text);
 }
 
@@ -55,6 +62,32 @@
     background-size: 28px 28px;
     transform: perspective(700px) rotateX(60deg) translateY(-30%);
     pointer-events: none;
+    animation: hp-grid-pan 32s linear infinite;
+    opacity: .9;
+}
+
+@keyframes hp-grid-pan {
+    from { background-position: 0 0, 0 0; }
+    to { background-position: -220px 0, 0 -220px; }
+}
+
+.hp-hero::before,
+.hp-hero::after {
+    content: "";
+    position: absolute;
+    inset: -10% -10% auto -10%;
+    height: 60%;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    filter: blur(18px);
+}
+
+.hp-hero::before {
+    background: radial-gradient(500px 200px at 20% 10%, rgba(122,92,255,.14), transparent 60%);
+}
+
+.hp-hero::after {
+    background: radial-gradient(600px 240px at 85% 20%, rgba(0,255,136,.12), transparent 60%);
 }
 
 .hp-hero__content {
@@ -75,6 +108,34 @@
     color: var(--hp-muted);
     max-width: 760px;
     font-size: 1.05rem;
+    position: relative;
+    overflow: visible;
+}
+
+.hp-subtitle:hover::after {
+    content: "";
+    position: absolute;
+    inset: -30%;
+    background: radial-gradient(4px 4px at 20% 30%, #ff3366 95%, transparent) 0 0/16% 16%, radial-gradient(4px 4px at 60% 20%, #33ccff 95%, transparent) 0 0/18% 18%, radial-gradient(4px 4px at 40% 70%, #22cc88 95%, transparent) 0 0/20% 20%, radial-gradient(4px 4px at 80% 50%, #ffaa33 95%, transparent) 0 0/22% 22%;
+    animation: hp-sparkle 1s ease forwards;
+    pointer-events: none;
+    filter: drop-shadow(0 2px 8px rgba(0,0,0,.3));
+}
+
+@keyframes hp-sparkle {
+    from {
+        transform: translateY(-10%);
+        opacity: 0;
+    }
+
+    50% {
+        opacity: 1;
+    }
+
+    to {
+        transform: translateY(10%);
+        opacity: 0;
+    }
 }
 
 .hp-glow {
@@ -130,6 +191,17 @@
     background: linear-gradient(90deg, var(--hp-accent), var(--hp-accent-2));
     color: #0a0f14;
     border: none;
+    background-size: 200% 100%;
+    animation: hp-gradient-flow 10s linear infinite;
+}
+
+.hp-btn--primary:hover {
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08) inset, 0 8px 24px rgba(0,255,136,.18);
+}
+
+@keyframes hp-gradient-flow {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
 }
 
 .hp-btn--ghost {
@@ -161,6 +233,22 @@
     background: rgba(255,255,255,0.03);
     border-radius: 12px;
     padding: .8rem .9rem;
+    position: relative;
+    overflow: hidden;
+}
+
+.hp-mini__card::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    background: linear-gradient(120deg, transparent 20%, rgba(255,255,255,.06) 35%, transparent 50%);
+    transform: translateX(-120%);
+    transition: transform .5s ease;
+    pointer-events: none;
+}
+
+.hp-mini__card:hover::before {
+    transform: translateX(120%);
 }
 
 .hp-mini__label {
@@ -434,6 +522,7 @@
     background-size: cover;
     background-position: center;
     border-bottom: 1px solid var(--hp-border);
+    transition: transform .35s ease;
 }
 
     .hp-trend__img::after {
@@ -840,5 +929,192 @@
     to {
         transform: translateY(10%);
         opacity: 0;
+    }
+}
+
+/* === Next-level polish v2 (append) ====================================== */
+
+/* Design tokens */
+.hp {
+    --hp-radius: 12px;
+    --hp-radius-lg: 16px;
+    --hp-shadow-sm: 0 2px 8px rgba(0,0,0,.25);
+    --hp-shadow-md: 0 8px 24px rgba(0,0,0,.28);
+    --hp-shadow-lg: 0 14px 40px rgba(0,0,0,.35);
+    --hp-card-bg: rgba(255,255,255,0.03);
+    --hp-card-bg-hover: rgba(255,255,255,0.06);
+}
+
+/* Animated hero grid: subtle drift for depth */
+.hp-hero__bg {
+    animation: hp-grid-pan 32s linear infinite;
+    opacity: .9;
+}
+
+@keyframes hp-grid-pan {
+    from { background-position: 0 0, 0 0; }
+    to { background-position: -220px 0, 0 -220px; }
+}
+
+/* Ambient orbs for hero (soft, cyber glow) */
+.hp-hero::before,
+.hp-hero::after {
+    content: "";
+    position: absolute;
+    inset: -10% -10% auto -10%;
+    height: 60%;
+    pointer-events: none;
+    mix-blend-mode: screen;
+    filter: blur(18px);
+}
+
+.hp-hero::before {
+    background: radial-gradient(500px 200px at 20% 10%, rgba(122,92,255,.14), transparent 60%);
+}
+
+.hp-hero::after {
+    background: radial-gradient(600px 240px at 85% 20%, rgba(0,255,136,.12), transparent 60%);
+}
+
+/* Primary button: animated gradient flow */
+.hp-btn--primary {
+    background-size: 200% 100%;
+    animation: hp-gradient-flow 10s linear infinite;
+}
+
+.hp-btn--primary:hover {
+    box-shadow: 0 0 0 1px rgba(255,255,255,.08) inset, 0 8px 24px rgba(0,255,136,.18);
+}
+
+@keyframes hp-gradient-flow {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 100% 50%; }
+}
+
+/* Optional: icon-only button variant */
+.hp-btn--icon {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    justify-content: center;
+}
+
+/* Card sheen pass on hover (cat, mini, step, trend, insight, cta) */
+.hp-cat,
+.hp-mini__card,
+.hp-step,
+.hp-trend,
+.hp-insight,
+.hp-cta__card {
+    position: relative;
+    overflow: hidden;
+}
+
+.hp-cat::before,
+.hp-mini__card::before,
+.hp-step::before,
+.hp-trend::before,
+.hp-insight::before,
+.hp-cta__card::before {
+    content: "";
+    position: absolute;
+    inset: -1px;
+    background: linear-gradient(120deg, transparent 20%, rgba(255,255,255,.06) 35%, transparent 50%);
+    transform: translateX(-120%);
+    transition: transform .5s ease;
+    pointer-events: none;
+}
+
+.hp-cat:hover::before,
+.hp-mini__card:hover::before,
+.hp-step:hover::before,
+.hp-trend:hover::before,
+.hp-insight:hover::before,
+.hp-cta__card:hover::before {
+    transform: translateX(120%);
+}
+
+/* Elevation polish on hover */
+.hp-cat:hover,
+.hp-mini__card:hover,
+.hp-step:hover,
+.hp-insight:hover,
+.hp-cta__card:hover {
+    box-shadow: var(--hp-shadow-md), 0 0 0 1px rgba(255,255,255,.06) inset;
+}
+
+/* Trend image: gentle zoom on hover */
+.hp-trend__img {
+    transition: transform .35s ease;
+}
+
+.hp-trend:hover .hp-trend__img {
+    transform: scale(1.03);
+}
+
+/* Unified focus ring across interactive elements */
+.hp-btn:focus-visible,
+.hp-cat:focus-visible,
+.hp-trend:focus-visible,
+.hp-mini__refresh:focus-visible,
+.hp-link:focus-visible {
+    outline: none;
+    box-shadow: var(--hp-focus), 0 0 0 1px rgba(255,255,255,.18) inset;
+}
+
+/* Reusable skeleton loader (apply .hp-skeleton to any block while loading) */
+.hp-skeleton {
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px;
+    background: linear-gradient(90deg,
+        rgba(255,255,255,.06),
+        rgba(255,255,255,.12),
+        rgba(255,255,255,.06)
+    );
+    background-size: 600% 100%;
+    animation: hp-skeleton 1.2s ease-in-out infinite;
+}
+
+@keyframes hp-skeleton {
+    0% { background-position: 100% 0; }
+    100% { background-position: 0 0; }
+}
+
+/* Light theme tweaks for new effects */
+:root[data-theme="light"] .hp-hero::before {
+    background: radial-gradient(500px 200px at 20% 10%, rgba(122,92,255,.18), transparent 60%);
+}
+
+:root[data-theme="light"] .hp-hero::after {
+    background: radial-gradient(600px 240px at 85% 20%, rgba(0,255,136,.16), transparent 60%);
+}
+
+/* Forced-colors (Windows High Contrast) – keep borders visible and remove glows */
+@media (forced-colors: active) {
+    .hp * { outline-color: Highlight; }
+
+    .hp-btn, .hp-cat, .hp-mini__card, .hp-step, .hp-trend, .hp-insight, .hp-cta__card {
+        box-shadow: none !important;
+        border-color: ButtonText !important;
+        background: Canvas !important;
+        color: ButtonText !important;
+    }
+}
+
+/* Reduced Motion – fix conflict: slow marquee instead of stopping, soften other animations */
+@media (prefers-reduced-motion: reduce) {
+    .hp .hp-ticker__track {
+        /* Override earlier "animation: none !important" with a slow, steady marquee */
+        animation: hp-marquee var(--hp-speed, 40s) linear infinite !important;
+        --hp-speed: 40s;
+    }
+
+    .hp-hero__bg {
+        animation-duration: 60s;
+    }
+
+    .hp-btn--primary {
+        animation-duration: 20s;
     }
 }
