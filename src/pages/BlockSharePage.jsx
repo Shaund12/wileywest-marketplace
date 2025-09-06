@@ -217,8 +217,10 @@ const BlockSharePage = () => {
                     }
                 }
                 
-                setTotalClaimed(ethers.formatEther(totalClaimedAmount));
-                debugLog('Total claimed calculated:', ethers.formatEther(totalClaimedAmount));
+                // Convert from X18 precision to ether (divide by 1e18)
+                const totalClaimedEther = (Number(totalClaimedAmount) / 1e18).toString();
+                setTotalClaimed(totalClaimedEther);
+                debugLog('Total claimed calculated:', totalClaimedEther);
             } catch (error) {
                 debugWarn('Failed to calculate total claimed:', error);
                 setTotalClaimed('0');
@@ -319,9 +321,11 @@ const BlockSharePage = () => {
                 }
             }
             
-            // Convert from X18 precision to ether
-            const claimableEther = ethers.formatEther(totalClaimable);
+            // Convert from X18 precision to ether (divide by 1e18)
+            // Note: The contract uses X18 precision, so we need to divide by 1e18, not use formatEther which expects wei
+            const claimableEther = (Number(totalClaimable) / 1e18).toString();
             debugLog('Total claimable amount calculated:', claimableEther, 'VTRU');
+            debugLog('Raw totalClaimable:', totalClaimable.toString());
             
             setMethodsWorking(prev => ({ ...prev, actualContract: true }));
             return claimableEther;
@@ -378,7 +382,8 @@ const BlockSharePage = () => {
             try {
                 if (treasuryActualContract) {
                     const cumulativePerTokenX18 = await treasuryActualContract.cumulativePerTokenX18();
-                    const cumulativePerToken = ethers.formatEther(cumulativePerTokenX18);
+                    // Convert from X18 precision to ether (divide by 1e18)
+                    const cumulativePerToken = (Number(cumulativePerTokenX18) / 1e18).toString();
                     debugLog('Cumulative per token distribution:', cumulativePerToken);
                     
                     // If there's cumulative distribution, use it as revenue per share
@@ -419,36 +424,52 @@ const BlockSharePage = () => {
             
             let tx;
             if (userTokenIds.length === 1) {
-                // Single token claim
+                // Single token claim with enhanced gas handling
                 debugLog('Claiming for single token:', userTokenIds[0]);
-                try {
-                    await treasuryWithSigner.claim.estimateGas(userTokenIds[0]);
-                    tx = await treasuryWithSigner.claim(userTokenIds[0]);
-                } catch (estimateError) {
-                    debugWarn('Gas estimation failed for single claim:', estimateError);
-                    throw estimateError;
-                }
+                tx = await claimWithRetry(treasuryWithSigner, 'claim', [userTokenIds[0]]);
             } else {
-                // Multiple token claim
+                // Multiple token claim with fallback to individual claims
                 debugLog('Claiming for multiple tokens:', userTokenIds);
                 try {
-                    await treasuryWithSigner.claimMany.estimateGas(userTokenIds);
-                    tx = await treasuryWithSigner.claimMany(userTokenIds);
+                    tx = await claimWithRetry(treasuryWithSigner, 'claimMany', [userTokenIds]);
                 } catch (estimateError) {
-                    debugWarn('Gas estimation failed for claimMany, trying single claims:', estimateError);
+                    debugWarn('ClaimMany failed, trying individual claims:', estimateError);
                     
                     // Fallback: claim each token individually
+                    let successCount = 0;
                     for (const tokenId of userTokenIds) {
                         try {
-                            await treasuryWithSigner.claim.estimateGas(tokenId);
-                            const singleTx = await treasuryWithSigner.claim(tokenId);
-                            await singleTx.wait();
-                            debugLog(`Successfully claimed for token ${tokenId}`);
+                            const singleTx = await claimWithRetry(treasuryWithSigner, 'claim', [tokenId]);
+                            if (singleTx) {
+                                await singleTx.wait();
+                                successCount++;
+                                debugLog(`Successfully claimed for token ${tokenId}`);
+                            }
                         } catch (singleError) {
                             debugWarn(`Failed to claim for token ${tokenId}:`, singleError);
                         }
                     }
                     
+                    if (successCount > 0) {
+                        setStatus(`Revenue claimed successfully for ${successCount}/${userTokenIds.length} tokens!`);
+                        // Refresh user data
+                        setDataLoaded(false);
+                        await loadUserData();
+                        await loadTreasuryStats();
+                        
+                        setTimeout(() => setStatus(''), 5000);
+                        return;
+                    } else {
+                        throw new Error('Failed to claim for any tokens');
+                    }
+                }
+            }
+            
+            if (tx) {
+                setStatus('Transaction submitted, waiting for confirmation...');
+                const receipt = await tx.wait();
+                
+                if (receipt.status === 1) {
                     setStatus('Revenue claimed successfully!');
                     // Refresh user data
                     setDataLoaded(false);
@@ -456,36 +477,82 @@ const BlockSharePage = () => {
                     await loadTreasuryStats();
                     
                     setTimeout(() => setStatus(''), 5000);
-                    return;
+                } else {
+                    setStatus('Transaction failed');
                 }
-            }
-            
-            setStatus('Transaction submitted, waiting for confirmation...');
-            const receipt = await tx.wait();
-            
-            if (receipt.status === 1) {
-                setStatus('Revenue claimed successfully!');
-                // Refresh user data
-                setDataLoaded(false);
-                await loadUserData();
-                await loadTreasuryStats();
-                
-                setTimeout(() => setStatus(''), 5000);
-            } else {
-                setStatus('Transaction failed');
             }
             
         } catch (error) {
             criticalError('Error claiming revenue:', error);
-            if (error.message.includes('insufficient funds')) {
-                setStatus('Transaction failed: Insufficient gas fees');
+            
+            // Enhanced error handling for specific claim failures
+            if (error.message.includes('native send fail')) {
+                setStatus('Claim failed: Treasury cannot send native tokens. This may be a contract configuration issue. Please contact support.');
+            } else if (error.message.includes('insufficient funds')) {
+                setStatus('Transaction failed: Insufficient gas fees. Try increasing gas limit or add more VTRU to your wallet.');
             } else if (error.message.includes('user rejected')) {
                 setStatus('Transaction cancelled by user');
+            } else if (error.message.includes('gas')) {
+                setStatus('Claim failed: Gas estimation failed. The treasury contract may have an issue with native token transfers.');
             } else {
-                setStatus(`Claim failed: ${error.message}`);
+                setStatus(`Claim failed: ${error.reason || error.message}`);
             }
         } finally {
             setClaiming(false);
+        }
+    };
+
+    // Enhanced claim function with retry logic and gas handling
+    const claimWithRetry = async (contract, method, args) => {
+        const gasStrategies = [
+            { name: 'Standard', gasLimit: null },
+            { name: 'High', gasLimit: 400000 },
+            { name: 'Very High', gasLimit: 600000 },
+            { name: 'Emergency', gasLimit: 800000 }
+        ];
+
+        for (let i = 0; i < gasStrategies.length; i++) {
+            const strategy = gasStrategies[i];
+            
+            try {
+                debugLog(`Trying ${method} with ${strategy.name} gas strategy...`);
+                
+                let gasLimit;
+                if (strategy.gasLimit) {
+                    gasLimit = strategy.gasLimit;
+                } else {
+                    // Try to estimate gas
+                    try {
+                        const estimated = await contract[method].estimateGas(...args);
+                        gasLimit = Math.floor(Number(estimated) * 1.2); // 20% buffer
+                        debugLog(`Gas estimated: ${estimated}, using: ${gasLimit}`);
+                    } catch (estimateError) {
+                        debugWarn(`Gas estimation failed for ${strategy.name}:`, estimateError);
+                        if (i === gasStrategies.length - 1) throw estimateError;
+                        continue;
+                    }
+                }
+                
+                const tx = await contract[method](...args, { gasLimit });
+                debugLog(`${method} transaction successful with ${strategy.name} strategy`);
+                return tx;
+                
+            } catch (strategyError) {
+                debugWarn(`${strategy.name} strategy failed:`, strategyError);
+                
+                if (strategyError.message.includes('native send fail')) {
+                    // This is a contract-level issue, no point in retrying with different gas
+                    throw strategyError;
+                }
+                
+                if (i === gasStrategies.length - 1) {
+                    // Last strategy failed, throw the error
+                    throw strategyError;
+                }
+                
+                // Continue to next strategy
+                continue;
+            }
         }
     };
 
