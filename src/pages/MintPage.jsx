@@ -15,6 +15,7 @@ const MintPage = () => {
     const [mintPrice, setMintPrice] = useState('0');
     const [totalSupply, setTotalSupply] = useState(0);
     const [maxSupply, setMaxSupply] = useState(0);
+    const [saleActive, setSaleActive] = useState(false);
     const [userBalance, setUserBalance] = useState(0);
     const [userTokens, setUserTokens] = useState([]);
 
@@ -54,15 +55,17 @@ const MintPage = () => {
             setLoading(true);
             debugLog('Loading contract data...');
             
-            const [price, total, max] = await Promise.all([
+            const [price, total, max, active] = await Promise.all([
                 nftContract.mintPrice(),
                 nftContract.totalSupply(),
-                nftContract.maxSupply()
+                nftContract.MAX_SUPPLY(),
+                nftContract.saleActive()
             ]);
             
             setMintPrice(ethers.formatEther(price));
             setTotalSupply(parseInt(total.toString()));
             setMaxSupply(parseInt(max.toString()));
+            setSaleActive(active);
             
             debugLog('Contract data loaded successfully');
         } catch (error) {
@@ -108,6 +111,11 @@ const MintPage = () => {
             return;
         }
 
+        if (!saleActive) {
+            setStatus('Minting is not currently active');
+            return;
+        }
+
         if (totalSupply >= maxSupply) {
             setStatus('All RevShare NFTs have been minted');
             return;
@@ -121,12 +129,12 @@ const MintPage = () => {
             const contractWithSigner = nftContract.connect(signer);
             const mintPriceWei = ethers.parseEther(mintPrice);
             
-            // Estimate gas for the mint function
-            const gasEstimate = await contractWithSigner.mint.estimateGas({ value: mintPriceWei });
+            // Estimate gas for the mint function (minting 1 NFT)
+            const gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
             const gasLimit = gasEstimate * 120n / 100n; // 20% buffer
             
             setStatus('Sending mint transaction...');
-            const tx = await contractWithSigner.mint({
+            const tx = await contractWithSigner.mint(1, {
                 value: mintPriceWei,
                 gasLimit: gasLimit
             });
@@ -243,6 +251,12 @@ const MintPage = () => {
                         <div className="hp-mini__value">{formatVTRU(mintPrice)} VTRU</div>
                     </div>
                     <div className="hp-mini__card">
+                        <div className="hp-mini__label">Sale Status</div>
+                        <div className="hp-mini__value" style={{ color: saleActive ? '#00ff88' : '#ff4444' }}>
+                            {saleActive ? '🟢 Active' : '🔴 Inactive'}
+                        </div>
+                    </div>
+                    <div className="hp-mini__card">
                         <div className="hp-mini__label">Total Supply</div>
                         <div className="hp-mini__value">{totalSupply.toLocaleString()} / {maxSupply.toLocaleString()}</div>
                     </div>
@@ -284,7 +298,7 @@ const MintPage = () => {
                 </div>
 
                 {/* Mint Button */}
-                {wallet && totalSupply < maxSupply && (
+                {wallet && saleActive && totalSupply < maxSupply && (
                     <div style={{ marginTop: '2rem', textAlign: 'center' }}>
                         <button 
                             className="hp-btn hp-btn--primary"
@@ -301,6 +315,18 @@ const MintPage = () => {
                         >
                             {minting ? 'Minting...' : `Mint for ${formatVTRU(mintPrice)} VTRU`}
                         </button>
+                    </div>
+                )}
+
+                {wallet && !saleActive && (
+                    <div style={{ 
+                        marginTop: '2rem', 
+                        textAlign: 'center',
+                        color: 'var(--hp-muted)',
+                        fontSize: '1.1rem',
+                        fontWeight: 'bold'
+                    }}>
+                        🚫 Minting is currently inactive
                     </div>
                 )}
 
