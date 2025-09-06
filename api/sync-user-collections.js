@@ -481,20 +481,6 @@ async function scanERC1155(contractAddress, walletAddress) {
         return [];
     }
 }
-                        collection: contractInfo
-                    });
-                }
-            } catch (e) {
-                console.warn(`Failed to check ERC1155 balance for ${contractAddress}:${tokenId}:`, e.message);
-            }
-        }
-        
-        return nfts;
-    } catch (e) {
-        console.warn(`Failed to scan ERC1155 contract ${contractAddress}:`, e.message);
-        return [];
-    }
-}
 
 // Find NFT contracts from Transfer events and comprehensive scanning
 async function findNFTContracts(walletAddress) {
