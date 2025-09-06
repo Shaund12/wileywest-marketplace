@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/sync-listings",
+      "schedule": "*/5 * * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",

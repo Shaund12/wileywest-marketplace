@@ -1037,11 +1037,6 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const CACHE_UPDATE_COOLDOWN = 30000; // 30 seconds minimum between cache updates
     
     const fetchListings = async (forceRefresh = false) => {
-        if (!marketplace) {
-            debugWarn("Marketplace contract not initialized yet");
-            return;
-        }
-        
         // Prevent concurrent fetches to avoid race conditions
         if (isLoading) {
             debugLog("Fetch already in progress, skipping concurrent request");
@@ -1052,392 +1047,83 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         setStatus('Loading listings...');
         debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
         
-        let cachedListings = [];
-        
         try {
-            // Step 1: IMMEDIATELY show cached data if available
-            if (!forceRefresh && supabaseConnected && getCachedListings) {
-                try {
-                    debugLog("🚀 Loading cached listings immediately...");
-                    setStatus('Loading cached listings...');
-                    cachedListings = await getCachedListings();
+            // Load from Supabase cache (updated by cron job)
+            if (supabaseConnected && getCachedListings) {
+                debugLog("🚀 Loading listings from cache...");
+                setStatus('Loading cached listings...');
+                
+                const cachedListings = await getCachedListings();
+                
+                if (cachedListings && cachedListings.length > 0) {
+                    debugLog(`✅ Loaded ${cachedListings.length} cached listings`);
+                    setListings(cachedListings);
+                    setHotListings(cachedListings.slice(0, 5));
+                    setStatus(`${cachedListings.length} listings loaded (updated by background sync)`);
                     
-                    if (cachedListings && cachedListings.length > 0) {
-                        debugLog(`✅ Showing ${cachedListings.length} cached listings immediately`);
-                        setListings(cachedListings);
-                        setHotListings(cachedListings.slice(0, 5));
-                        setStatus(`Showing ${cachedListings.length} cached listings, scanning for updates...`);
-                        setIsLoading(false); // Show cached data immediately, scanning continues in background
-                    }
-                } catch (cacheError) {
-                    debugWarn("Cache loading failed, proceeding with blockchain scan:", cacheError.message);
+                    // Clear status after 3 seconds
+                    setTimeout(() => setStatus(''), 3000);
+                } else {
+                    debugLog("⚠️ No cached listings found");
+                    setListings([]);
+                    setHotListings([]);
+                    setStatus('No listings available - sync may be in progress');
                 }
+                
+                // If forceRefresh is requested, trigger manual sync
+                if (forceRefresh) {
+                    await triggerManualSync();
+                }
+                
+            } else {
+                debugWarn("Supabase not connected - cannot load listings");
+                setStatus('Cache unavailable - please check connection');
+                setListings([]);
+                setHotListings([]);
             }
-            
-            // Step 2: Fetch from blockchain with progressive updates
-            debugLog("🌐 Starting blockchain scan for latest data...");
-            await fetchListingsFromBlockchain(false, cachedListings);
-            lastCacheUpdateRef.current = Date.now();
             
         } catch (error) {
-            criticalError("Error in fetchListings:", error);
-            
-            // Fallback: try to use cached data if blockchain fails
-            if (supabaseConnected && getCachedListings && !forceRefresh && cachedListings.length === 0) {
-                try {
-                    debugLog("🔄 Blockchain failed, trying cache as fallback...");
-                    cachedListings = await getCachedListings();
-                    
-                    if (cachedListings && cachedListings.length > 0) {
-                        setListings(cachedListings);
-                        setHotListings(cachedListings.slice(0, 5));
-                        setStatus('Network error - showing cached listings');
-                        setTimeout(() => setStatus(''), 5000);
-                        debugLog(`Fallback: Loaded ${cachedListings.length} listings from cache due to blockchain error`);
-                    } else {
-                        setStatus('Failed to fetch listings - no cache available');
-                    }
-                } catch (fallbackError) {
-                    criticalError("Both blockchain and cache failed:", fallbackError);
-                    setStatus('Failed to fetch listings from all sources');
-                }
-            } else if (cachedListings.length === 0) {
-                setStatus('Failed to fetch listings');
-            }
+            criticalError("Error loading cached listings:", error);
+            setStatus('Failed to load listings from cache');
+            setListings([]);
+            setHotListings([]);
         } finally {
-            if (cachedListings.length === 0) {
-                setIsLoading(false); // Only set loading false if we haven't already shown cached data
-            }
+            setIsLoading(false);
         }
     };
 
-    const fetchListingsFromBlockchain = async (isBackgroundUpdate = false, existingListings = []) => {
-        if (!isBackgroundUpdate) {
-            setStatus('Fetching latest listings from blockchain...');
-        } else {
-            setStatus('Checking for new listings...');
-        }
-        
+    // Trigger manual sync via API endpoint (optional - for manual refresh)
+    const triggerManualSync = async () => {
         try {
-            // Test network connectivity first
-            try {
-                await provider.getNetwork();
-            } catch (networkError) {
-                debugWarn("Network connectivity issue:", networkError.message);
-                
-                if (existingListings.length > 0) {
-                    // We have cached data, use it
-                    setStatus("Network issue - showing cached listings");
-                    setTimeout(() => setStatus(''), 3000);
-                    return;
-                } else {
-                    // No listings available 
-                    setListings([]);
-                    setHotListings([]);
-                    setStatus("Network connectivity issue - please try again later");
-                    setTimeout(() => setStatus(''), 5000);
-                    return;
+            debugLog("🔄 Triggering manual listings sync...");
+            setStatus('Requesting fresh data sync...');
+            
+            const response = await fetch('/api/sync-listings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
                 }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Sync failed: ${response.status}`);
             }
             
-            // Track existing listing IDs to detect new ones
-            const existingIds = new Set(existingListings.map(listing => listing.id));
-            let newListingsFound = 0;
+            const result = await response.json();
+            debugLog("✅ Manual sync completed:", result);
             
-            const res = [...existingListings]; // Start with existing cached listings
-            const maxScanRange = MARKETPLACE_CONFIG.MAX_LISTING_SCAN;
+            setStatus(`Sync completed: ${result.stats?.found || 0} listings found, ${result.stats?.cached || 0} cached`);
             
-            debugLog(`🔍 Scanning listings from ${MARKETPLACE_CONFIG.MIN_LISTING_SCAN} to ${maxScanRange} (progressive discovery)`);
-            setStatus(`Starting progressive scan of ${maxScanRange} listings...`);
-            
-            let activeListingsFound = existingListings.length;
-            let scannedCount = 0;
-            const PROGRESSIVE_UPDATE_BATCH = 10; // Show listings every 10 found
-            let foundInBatch = 0;
-            
-            for (let i = MARKETPLACE_CONFIG.MIN_LISTING_SCAN; i <= maxScanRange; i++) {
-                scannedCount++;
-                
-                // Update progress more frequently for better UX
-                if (scannedCount % 10 === 0 || scannedCount <= 20) {
-                    setStatus(`🔍 Scanning... Found ${activeListingsFound} active listings out of ${scannedCount} scanned (${Math.round(scannedCount/maxScanRange*100)}% complete)`);
-                }
-                
-                try {
-                    const listing = await marketplace.listings(i);
-
-                    // Skip inactive listings
-                    if (!listing || !listing.active) {
-                        continue;
-                    }
-                    
-                    activeListingsFound++;
-                    foundInBatch++;
-                    debugLog(`✅ Found active listing ${i}: ${listing.nftContract}:${listing.tokenId}`);
-
-                    // For background updates, prioritize new listings
-                    if (isBackgroundUpdate && existingIds.has(i)) {
-                        // Use existing listing data to avoid re-fetching metadata
-                        const existingListing = existingListings.find(l => l.id === i);
-                        if (existingListing) {
-                            continue; // Already have this listing, skip processing
-                        }
-                    }
-
-                    // Skip if we already have this listing from cache
-                    if (existingIds.has(i)) {
-                        continue;
-                    }
-
-                    // Create a proper deterministic fallback image URL for the NFT
-                    const deterministic_fallback = `https://picsum.photos/seed/${listing.nftContract}${listing.tokenId}/300/300`;
-                    let image = deterministic_fallback;
-                    let name = resolveCollectionName({ tokenId: listing.tokenId?.toString() || '0' });
-                    let metadata = null;
-                    let collectionName = null;
-
-                    try {
-                        // Enhanced contract instance for the NFT with collection name support
-                        const nftContract = new ethers.Contract(
-                            listing.nftContract,
-                            listing.isERC1155 ?
-                                ['function uri(uint256 id) view returns (string)', 'function name() view returns (string)'] :
-                                ['function tokenURI(uint256 tokenId) view returns (string)', 'function name() view returns (string)', 'function symbol() view returns (string)'],
-                            provider
-                        );
-
-                        // Try to get collection name from contract first with enhanced error handling
-                        try {
-                            const contractName = await nftContract.name();
-                            if (contractName && contractName.trim() !== '') {
-                                collectionName = contractName.trim();
-                                debugLog(`✅ Collection name from contract for ${listing.nftContract}: ${collectionName}`);
-                            } else {
-                                debugWarn(`⚠️ Contract ${listing.nftContract} returned empty name`);
-                            }
-                        } catch (nameError) {
-                            debugWarn(`❌ Failed to get contract name for ${listing.nftContract}:`, nameError.message);
-                            // Continue with fallback resolution below
-                        }
-
-                        // Get token URI
-                        let tokenURI;
-                        if (listing.isERC1155) {
-                            tokenURI = await nftContract.uri(listing.tokenId);
-                            tokenURI = tokenURI.replace('{id}', listing.tokenId.toString().padStart(64, '0'));
-                        } else {
-                            tokenURI = await nftContract.tokenURI(listing.tokenId);
-                        }
-
-                        debugLog(`Token URI for listing ${i}: ${tokenURI}`);
-
-                        // Enhanced metadata fetching with multiple IPFS gateway fallbacks
-                        const ipfsGateways = [
-                            'https://ipfs.io/ipfs/',
-                            'https://cloudflare-ipfs.com/ipfs/',
-                            'https://gateway.pinata.cloud/ipfs/',
-                            'https://ipfs.fleek.co/ipfs/',
-                            'https://dweb.link/ipfs/'
-                        ];
-
-                        // Enhanced metadata fetching with CORS-safe requests and better error handling
-                        const { primaryUrl, fallbacks } = resolveIPFSWithFallbacks(tokenURI);
-                        
-                        debugLog(`Fetching metadata for listing ${i} from: ${primaryUrl}`);
-                        if (fallbacks.length > 0) {
-                            debugLog(`Available fallbacks: ${fallbacks.length} IPFS gateways`);
-                        }
-
-                        // Fetch metadata with CORS-safe requests and automatic fallbacks
-                        let metadata = null;
-                        let fetchSuccess = false;
-                        
-                        try {
-                            const metadataJson = await fetchJSON(primaryUrl, {
-                                timeout: 10000
-                            }, fallbacks);
-                            
-                            metadata = normalizeNFTMetadata(metadataJson, listing.nftContract, listing.tokenId?.toString());
-                            fetchSuccess = true;
-                            debugLog(`Successfully fetched metadata for listing ${i}`);
-                            
-                        } catch (fetchError) {
-                            debugWarn(`All metadata fetch attempts failed for listing ${i}:`, fetchError.message);
-                            
-                            // Provide specific error feedback for debugging
-                            if (isCORSError(fetchError)) {
-                                debugLog(`CORS issue detected - this is often due to restrictive server policies`);
-                            } else if (isNetworkError(fetchError)) {
-                                debugLog(`Network connectivity issue - may be temporary`);
-                            }
-                            
-                            // Use fallback metadata
-                            metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
-                        }
-
-                        debugLog(`Metadata for listing ${i}:`, metadata);
-
-                        if (metadata.name) name = metadata.name;
-
-                        // Enhanced image resolution with IPFS gateway support
-                        if (metadata.image) {
-                            image = metadata.image;
-                            
-                            // If metadata image is also IPFS, ensure it uses a working gateway
-                            if (image.startsWith('ipfs://')) {
-                                image = image.replace('ipfs://', ipfsGateways[0]);
-                            }
-                            
-                            debugLog(`Image URL for listing ${i}: ${image}`);
-                        }
-
-                        // Enhanced collection name resolution with multiple fallbacks
-                        if (!collectionName || collectionName.includes('Collection 0x')) {
-                            // Try metadata.collection.name first
-                            if (metadata?.collection?.name && metadata.collection.name.trim() !== '') {
-                                collectionName = metadata.collection.name.trim();
-                                debugLog(`📋 Using collection name from metadata: ${collectionName}`);
-                            } 
-                            // Try metadata.name if it doesn't look like a token name
-                            else if (metadata?.name && 
-                                     !metadata.name.includes('#') && 
-                                     !metadata.name.toLowerCase().includes('token') &&
-                                     !metadata.name.toLowerCase().includes('nft') &&
-                                     metadata.name.trim() !== '') {
-                                collectionName = metadata.name.trim();
-                                debugLog(`📝 Using NFT name as collection name: ${collectionName}`);
-                            }
-                            // Try to extract from description
-                            else if (metadata?.description && metadata.description.trim() !== '') {
-                                const description = metadata.description.trim();
-                                const words = description.split(' ');
-                                if (words.length >= 2 && words.length <= 4) {
-                                    // If description is short enough, it might be a collection name
-                                    collectionName = description;
-                                    debugLog(`📖 Using description as collection name: ${collectionName}`);
-                                } else {
-                                    // Extract first few words
-                                    collectionName = words.slice(0, 3).join(' ');
-                                    debugLog(`🔤 Using first words of description: ${collectionName}`);
-                                }
-                            }
-                        }
-                    } catch (error) {
-                        debugWarn(`Failed to fetch metadata for listing ${i}:`, error);
-                        // Use fallback metadata
-                        metadata = normalizeNFTMetadata(null, listing.nftContract, listing.tokenId?.toString());
-                        name = metadata.name;
-                        // Ensure we still use the deterministic fallback image even if metadata fails
-                        image = deterministic_fallback;
-                    }
-
-                    // Create the sanitized listing object with standardized BigInt handling
-                    const sanitizedListing = {
-                        id: i,
-                        seller: listing.seller || ethers.ZeroAddress,
-                        nftContract: listing.nftContract || ethers.ZeroAddress,
-                        tokenId: listing.tokenId?.toString() || '0',
-                        quantity: standardizeBigInt(listing.quantity || '0'),
-                        pricePerUnit: standardizeBigInt(listing.pricePerUnit || '0'),
-                        paymentToken: listing.paymentToken || ethers.ZeroAddress,
-                        isERC1155: !!listing.isERC1155,
-                        active: !!listing.active,
-
-                        // Enhanced metadata structure with proper fallbacks
-                        image,
-                        imageUrl: image,
-                        name,
-                        title: name,
-
-                        description: metadata?.description || `Token ID: ${listing.tokenId?.toString() || '0'}`,
-
-                        // Normalized metadata object
-                        metadata: {
-                            ...metadata,
-                            image: image // Ensure the resolved URL is in metadata too
-                        },
-                        
-                        // Add content signature for cache validation
-                        signature: createContentSignature({
-                            tokenId: listing.tokenId?.toString(),
-                            pricePerUnit: listing.pricePerUnit?.toString(),
-                            active: listing.active,
-                            metadata: metadata
-                        }),
-                        
-                        // Add collection name if resolved
-                        collectionName
-                    };
-
-                    debugLog("Sanitized listing with enhanced metadata:", sanitizedListing.name);
-
-                    res.push(sanitizedListing);
-                    
-                    // Track new listings
-                    if (!existingIds.has(i)) {
-                        newListingsFound++;
-                    }
-                    
-                    // PROGRESSIVE UPDATE: Show listings as they are found
-                    if (foundInBatch >= PROGRESSIVE_UPDATE_BATCH || activeListingsFound <= 20) {
-                        debugLog(`🔄 Progressive update: Showing ${res.length} listings so far...`);
-                        setListings([...res]); // Show current progress
-                        setHotListings(res.slice(0, 5));
-                        setStatus(`🔍 Found ${activeListingsFound} listings so far... (${Math.round(scannedCount/maxScanRange*100)}% scanned)`);
-                        foundInBatch = 0; // Reset batch counter
-                        
-                        // Brief pause to allow UI update
-                        await new Promise(resolve => setTimeout(resolve, 100));
-                    }
-                    
-                } catch (err) {
-                    debugWarn(`Skipping listing ${i}:`, err.message);
-                }
-            }
-
-            debugLog(`✅ Listing scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
-            setStatus(`✅ Scan complete: Found ${activeListingsFound} active listings out of ${scannedCount} scanned`);
-
-            debugLog(`Successfully loaded ${res.length} listings from blockchain`);
-            setListings(res);
-            setHotListings(res.slice(0, 5));
-            
-            // Smart caching with intelligent limits for production use
-            const MAX_SAFE_CACHE_SIZE = 200; // Reasonable limit for production
-            const shouldCache = supabaseConnected && res.length > 0 && res.length <= MAX_SAFE_CACHE_SIZE && newListingsFound > 0;
-            
-            if (shouldCache && cacheListings) {
-                try {
-                    debugLog(`💾 Smart caching ${res.length} listings (${newListingsFound} new, within safe limit)...`);
-                    await cacheListings(res);
-                    debugLog(`✅ Successfully cached ${res.length} listings`);
-                } catch (cacheError) {
-                    debugWarn("❌ Failed to cache listings:", cacheError);
-                }
-            } else if (res.length > MAX_SAFE_CACHE_SIZE) {
-                debugLog(`📋 Skipping cache - listing count (${res.length}) exceeds safe limit (${MAX_SAFE_CACHE_SIZE})`);
-            } else if (!shouldCache && newListingsFound === 0) {
-                debugLog("📋 No cache update needed - no new listings found");
-            } else if (!supabaseConnected) {
-                debugLog("📋 Skipping cache - Supabase not connected");
-            }
-            
-            // Clear status after delay
-            setTimeout(() => setStatus(''), isBackgroundUpdate ? 2000 : 3000);
+            // Refresh the listings after sync
+            setTimeout(async () => {
+                await fetchListings(false); // Reload from cache
+                setStatus('');
+            }, 2000);
             
         } catch (error) {
-            criticalError("Error in fetchListingsFromBlockchain:", error);
-            
-            // If we have existing data and this was a background update, keep showing it
-            if (isBackgroundUpdate && existingListings.length > 0) {
-                setStatus('Update failed - showing cached listings');
-                setTimeout(() => setStatus(''), 3000);
-            } else {
-                setStatus('Failed to fetch listings - network connectivity issue');
-                setTimeout(() => setStatus(''), 5000);
-            }
-        } finally {
-            setIsLoading(false);
+            debugWarn("Manual sync failed:", error.message);
+            setStatus(`Sync failed: ${error.message}`);
+            setTimeout(() => setStatus(''), 5000);
         }
     };
 
@@ -2027,8 +1713,8 @@ const markListingInactive = useCallback((listingId) => {
             canceledListings,
             marketplaceStats,
             calculateMarketplaceStats,
-            // Add function to manually refresh blockchain data
-            refreshBlockchainData: () => marketplace && fetchPastSalesEvents(marketplace)
+            // Add function to manually trigger sync via API
+            triggerManualSync
         }}>
             {children}
         </MarketplaceContext.Provider>

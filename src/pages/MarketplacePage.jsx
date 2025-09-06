@@ -378,6 +378,7 @@ function MarketplacePage() {
         listings,
         hotListings,
         fetchListings,
+        triggerManualSync,
         status,
         setStatus,
         isInitialized,
@@ -542,21 +543,23 @@ function MarketplacePage() {
     const deepRescan = useCallback(async () => {
         try {
             setIsLoading(true);
-            setStatus && setStatus('Force refreshing listings (deep rescan)...');
+            setStatus && setStatus('Triggering fresh data sync...');
             clearLocalCaches();
-            const maybeOptions = { force: true, deep: true, fullRescan: true, fromBlock: 0, clearCache: true };
-            try {
-                await fetchListings(maybeOptions);
-            } catch {
+            
+            // Use the new API-based sync instead of blockchain scanning
+            if (triggerManualSync) {
+                await triggerManualSync();
+            } else {
+                // Fallback to cache refresh
                 await fetchListings(true);
             }
         } catch (error) {
             criticalError('[Marketplace] Deep rescan error:', error);
-            setStatus && setStatus('Error force refreshing listings');
+            setStatus && setStatus('Error refreshing listings');
         } finally {
             setIsLoading(false);
         }
-    }, [fetchListings, clearLocalCaches, setStatus]);
+    }, [triggerManualSync, fetchListings, clearLocalCaches, setStatus]);
 
     /* ----------------------------
        Auto-refresh + keyboard shortcuts
@@ -1812,10 +1815,10 @@ function MarketplacePage() {
                             className="refresh-button deep"
                             onClick={deepRescan}
                             disabled={isLoading}
-                            title="Force deep rescan (clears caches, scans from genesis) (D)"
+                            title="Trigger fresh data sync from blockchain (S)"
                         >
                             <DeepIcon />
-                            {isLoading ? 'Scanning...' : 'Deep Rescan'}
+                            {isLoading ? 'Syncing...' : 'Sync Data'}
                         </button>
                         <label className="filter-button" title="Auto refresh every interval">
                             <input
@@ -2067,9 +2070,9 @@ function MarketplacePage() {
                                 description={
                                     anyActiveFilter
                                         ? "Try adjusting your filters or search criteria to find what you're looking for."
-                                        : 'There are currently no active listings in the marketplace. Try a deep rescan if you expect items to appear.'
+                                        : 'There are currently no active listings in the marketplace. Try syncing fresh data if you expect items to appear.'
                                 }
-                                actionText={anyActiveFilter ? 'Clear Filters' : 'Deep Rescan'}
+                                actionText={anyActiveFilter ? 'Clear Filters' : 'Sync Data'}
                                 onAction={() => {
                                     if (anyActiveFilter) {
                                         clearAllFilters();
@@ -2077,7 +2080,7 @@ function MarketplacePage() {
                                         deepRescan();
                                     }
                                 }}
-                                secondaryActionText={anyActiveFilter ? 'Deep Rescan' : 'Create Auction'}
+                                secondaryActionText={anyActiveFilter ? 'Sync Data' : 'Create Auction'}
                                 onSecondaryAction={() => {
                                     if (anyActiveFilter) {
                                         deepRescan();
