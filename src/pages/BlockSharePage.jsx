@@ -217,8 +217,8 @@ const BlockSharePage = () => {
                     }
                 }
                 
-                // Convert from X18 precision to ether (divide by 1e18)
-                const totalClaimedEther = (Number(totalClaimedAmount) / 1e18).toString();
+                // Convert from X18 precision to ether using ethers.formatUnits
+                const totalClaimedEther = ethers.formatUnits(totalClaimedAmount, 18);
                 setTotalClaimed(totalClaimedEther);
                 debugLog('Total claimed calculated:', totalClaimedEther);
             } catch (error) {
@@ -321,9 +321,9 @@ const BlockSharePage = () => {
                 }
             }
             
-            // Convert from X18 precision to ether (divide by 1e18)
-            // Note: The contract uses X18 precision, so we need to divide by 1e18, not use formatEther which expects wei
-            const claimableEther = (Number(totalClaimable) / 1e18).toString();
+            // Convert from X18 precision to ether using ethers.formatUnits
+            // Note: The contract uses X18 precision (18 decimals), so we use formatUnits with 18 decimals
+            const claimableEther = ethers.formatUnits(totalClaimable, 18);
             debugLog('Total claimable amount calculated:', claimableEther, 'VTRU');
             debugLog('Raw totalClaimable:', totalClaimable.toString());
             
@@ -382,8 +382,8 @@ const BlockSharePage = () => {
             try {
                 if (treasuryActualContract) {
                     const cumulativePerTokenX18 = await treasuryActualContract.cumulativePerTokenX18();
-                    // Convert from X18 precision to ether (divide by 1e18)
-                    const cumulativePerToken = (Number(cumulativePerTokenX18) / 1e18).toString();
+                    // Convert from X18 precision to ether using ethers.formatUnits
+                    const cumulativePerToken = ethers.formatUnits(cumulativePerTokenX18, 18);
                     debugLog('Cumulative per token distribution:', cumulativePerToken);
                     
                     // If there's cumulative distribution, use it as revenue per share
