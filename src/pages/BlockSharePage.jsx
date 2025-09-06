@@ -40,6 +40,8 @@ const BlockSharePage = () => {
         claimable: false,                 // treasury.claimable(uint256)
         claim: false,                     // treasury.claim(uint256)
         claimMany: false,                 // treasury.claimMany(uint256[])
+        allocatePending: false,           // treasury.allocatePending()
+        pendingBeforeMint: false,         // treasury.pendingBeforeMint()
         nft_totalSupply: false,           // nft.totalSupply()
         nft_balanceOf: false,             // nft.balanceOf()
         nft_tokenOfOwnerByIndex: false,   // nft.tokenOfOwnerByIndex()
@@ -58,7 +60,8 @@ const BlockSharePage = () => {
         totalRevenue: '0',     // balance (native)
         totalShares: 0,        // NFT supply
         revenuePerShare: '0',  // cumulative per token (X18) or fallback
-        totalHolders: 0        // optional scan
+        totalHolders: 0,       // optional scan
+        pendingRevenue: '0'    // pending before mint
     });
 
     // ---- helpers ----
@@ -135,8 +138,10 @@ const BlockSharePage = () => {
         try { await t.cumulativePerTokenX18(); m.cumulativePerTokenX18 = true; } catch { }
         try { await t.claimedPerTokenX18(1); m.claimedPerTokenX18 = true; } catch { }
         try { await t.claimable(1); m.claimable = true; } catch { }
+        try { await t.pendingBeforeMint(); m.pendingBeforeMint = true; } catch { }
         try { t.interface.getFunction('claim'); m.claim = true; } catch { }
         try { t.interface.getFunction('claimMany'); m.claimMany = true; } catch { }
+        try { t.interface.getFunction('allocatePending'); m.allocatePending = true; } catch { }
         // NFT
         try { await n.totalSupply(); m.nft_totalSupply = true; } catch { }
         try { await n.balanceOf(ethers.ZeroAddress); m.nft_balanceOf = true; } catch { }
@@ -223,6 +228,16 @@ const BlockSharePage = () => {
                 debugWarn('totalSupply failed', e);
             }
 
+            // Check pending revenue
+            let pendingRevenue = '0';
+            try {
+                const pending = await treasury.pendingBeforeMint();
+                pendingRevenue = ethers.formatUnits(pending, 18);
+                setMethodsWorking((m) => ({ ...m, pendingBeforeMint: true }));
+            } catch (e) {
+                setMethodsWorking((m) => ({ ...m, pendingBeforeMint: false }));
+            }
+
             // revenuePerShare -> cumulativePerTokenX18 (if present), else fallback
             let revenuePerShare = '0';
             try {
@@ -253,7 +268,8 @@ const BlockSharePage = () => {
                 totalRevenue,
                 totalShares,
                 revenuePerShare,
-                totalHolders
+                totalHolders,
+                pendingRevenue
             });
         } catch (e) {
             debugWarn('loadTreasuryStats error', e);
@@ -335,22 +351,31 @@ const BlockSharePage = () => {
             let totalX18 = big(0);
 
             // Try using the contract's built-in claimable function first
+            let builtInWorked = false;
             try {
                 for (const id of tokenIds) {
                     try {
                         const claimableAmount = await treasury.claimable(id);
                         totalX18 += big(claimableAmount);
-                        debugLog(`Token ${id} claimable: ${ethers.formatUnits(claimableAmount, 18)} VTRU`);
+                        debugLog(`Token ${id} claimable (built-in): ${ethers.formatUnits(claimableAmount, 18)} VTRU`);
+                        builtInWorked = true;
                     } catch (e) {
                         debugWarn(`claimable(${id}) failed`, e);
                     }
                 }
                 if (totalX18 > 0) {
                     const out = ethers.formatUnits(totalX18, 18);
+                    setMethodsWorking((m) => ({ ...m, claimable: true }));
                     return Number(out).toFixed(8).replace(/\.?0+$/, '');
                 }
             } catch (e) {
                 debugWarn('Direct claimable method failed, falling back to manual calculation', e);
+            }
+
+            if (builtInWorked) {
+                setMethodsWorking((m) => ({ ...m, claimable: true }));
+            } else {
+                setMethodsWorking((m) => ({ ...m, claimable: false }));
             }
 
             // Fallback: manual calculation using cumulative system
@@ -363,16 +388,52 @@ const BlockSharePage = () => {
                         const last = await treasury.claimedPerTokenX18(id);
                         const delta = c - last;
                         if (delta > 0) totalX18 += delta;
+                        debugLog(`Token ${id} manual calc: cumulative=${ethers.formatUnits(c, 18)}, claimed=${ethers.formatUnits(last, 18)}, delta=${ethers.formatUnits(delta, 18)}`);
                     } catch {
                         // ignore
                     }
                 }
-                const out = ethers.formatUnits(totalX18, 18);
-                return Number(out).toFixed(8).replace(/\.?0+$/, '');
+                if (totalX18 > 0) {
+                    const out = ethers.formatUnits(totalX18, 18);
+                    return Number(out).toFixed(8).replace(/\.?0+$/, '');
+                }
             } catch (e) {
                 debugWarn('Manual calculation also failed', e);
-                return '0';
             }
+
+            // Final fallback: check if there's pending revenue that needs to be allocated
+            try {
+                const pending = await treasury.pendingBeforeMint();
+                if (pending > 0) {
+                    debugLog(`Found pending revenue: ${ethers.formatUnits(pending, 18)} VTRU`);
+                    // If there's pending revenue, calculate what user would get
+                    const supply = treasuryStats.totalShares || 1;
+                    const userShare = tokenIds.length;
+                    const pendingPerUser = (big(pending) * big(userShare)) / big(supply);
+                    const out = ethers.formatUnits(pendingPerUser, 18);
+                    return Number(out).toFixed(8).replace(/\.?0+$/, '');
+                }
+            } catch (e) {
+                debugWarn('Pending revenue check failed', e);
+            }
+
+            // Ultimate fallback: If treasury has balance but no distributions, estimate claimable
+            try {
+                const balance = await provider.getBalance(treasuryAddress);
+                const claimed = await calcTotalClaimed(tokenIds);
+                if (balance > 0 && parseFloat(claimed) === 0) {
+                    const supply = treasuryStats.totalShares || 1;
+                    const userShare = tokenIds.length;
+                    const estimatedClaimable = (big(balance) * big(userShare)) / big(supply);
+                    const out = ethers.formatUnits(estimatedClaimable, 18);
+                    debugLog(`Fallback calculation: balance=${ethers.formatUnits(balance, 18)}, userShare=${userShare}/${supply}, estimated=${out}`);
+                    return Number(out).toFixed(8).replace(/\.?0+$/, '');
+                }
+            } catch (e) {
+                debugWarn('Ultimate fallback calculation failed', e);
+            }
+
+            return '0';
         } catch (e) {
             debugWarn('calcClaimable error', e);
             return '0';
@@ -399,7 +460,39 @@ const BlockSharePage = () => {
         }
     }
 
-    // ---- claim ----
+    // ---- allocate pending revenue ----
+    async function handleAllocatePending() {
+        if (!signer || !treasury) {
+            setStatus('No wallet connection');
+            return;
+        }
+
+        try {
+            setStatus('Allocating pending revenue…');
+            const t = treasury.connect(signer);
+            const tx = await t.allocatePending();
+            setStatus('Transaction submitted, awaiting confirmation…');
+            const rc = await tx.wait();
+            if (rc.status === 1) {
+                setStatus('Pending revenue allocated successfully!');
+                // Refresh data
+                setDataLoaded(false);
+                await loadUserData();
+                await loadTreasuryStats();
+                setTimeout(() => setStatus(''), 4000);
+            } else {
+                setStatus('Transaction failed');
+            }
+        } catch (error) {
+            criticalError('Error allocating pending revenue:', error);
+            const msg = (error && (error.reason || error.message)) || 'Allocation failed';
+            if (msg.includes('user rejected')) {
+                setStatus('Transaction cancelled.');
+            } else {
+                setStatus(`Allocation failed: ${msg}`);
+            }
+        }
+    }
     async function handleClaim() {
         if (!signer || !treasury || calculating || parseFloat(claimableAmount) <= 0 || userTokenIds.length === 0) {
             setStatus('No claimable amount available or no tokens owned');
@@ -567,6 +660,7 @@ const BlockSharePage = () => {
                     <div>Calculating: {calculating ? '🔄' : '✅'}</div>
                     <div>Token IDs: [{userTokenIds.join(', ')}]</div>
                     <div>Claimable: {claimableAmount} VTRU</div>
+                    <div>Pending: {treasuryStats.pendingRevenue} VTRU</div>
                     <div style={{ marginTop: '0.5rem', color: '#ffeb3b' }}>Methods:</div>
                     <div>• totalRevenue(balance): {methodsWorking.totalRevenue ? '✅' : '❌'}</div>
                     <div>• cumulativePerTokenX18: {methodsWorking.cumulativePerTokenX18 ? '✅' : '❌'}</div>
@@ -574,6 +668,8 @@ const BlockSharePage = () => {
                     <div>• claimable: {methodsWorking.claimable ? '✅' : '❌'}</div>
                     <div>• claim: {methodsWorking.claim ? '✅' : '❌'}</div>
                     <div>• claimMany: {methodsWorking.claimMany ? '✅' : '❌'}</div>
+                    <div>• pendingBeforeMint: {methodsWorking.pendingBeforeMint ? '✅' : '❌'}</div>
+                    <div>• allocatePending: {methodsWorking.allocatePending ? '✅' : '❌'}</div>
                     <div>• NFT totalSupply: {methodsWorking.nft_totalSupply ? '✅' : '❌'}</div>
                     <div>• NFT balanceOf: {methodsWorking.nft_balanceOf ? '✅' : '❌'}</div>
                     <div>• NFT tokenOfOwnerByIndex: {methodsWorking.nft_tokenOfOwnerByIndex ? '✅' : '❌'}</div>
@@ -610,10 +706,20 @@ const BlockSharePage = () => {
                             setStatus('');
                         }}
                         disabled={loading}
-                        style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', opacity: loading ? 0.6 : 1 }}
+                        style={{ fontSize: '0.9rem', padding: '0.5rem 1rem', opacity: loading ? 0.6 : 1, marginRight: '1rem' }}
                     >
                         {loading ? 'Refreshing…' : '🔄 Refresh Data'}
                     </button>
+
+                    {methodsWorking.allocatePending && parseFloat(treasuryStats.pendingRevenue) > 0 && (
+                        <button
+                            className="hp-btn hp-btn--primary"
+                            onClick={handleAllocatePending}
+                            style={{ fontSize: '0.9rem', padding: '0.5rem 1rem' }}
+                        >
+                            🏦 Allocate {formatVTRU(treasuryStats.pendingRevenue)} VTRU Pending Revenue
+                        </button>
+                    )}
                 </div>
             )}
 
@@ -691,6 +797,14 @@ const BlockSharePage = () => {
                         <div className="hp-mini__label">Total Holders</div>
                         <div className="hp-mini__value">{treasuryStats.totalHolders.toLocaleString()}</div>
                     </div>
+                    {parseFloat(treasuryStats.pendingRevenue) > 0 && (
+                        <div className="hp-mini__card">
+                            <div className="hp-mini__label">Pending Revenue</div>
+                            <div className="hp-mini__value" style={{ color: '#ffeb3b' }}>
+                                {formatVTRU(treasuryStats.pendingRevenue)} VTRU
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
