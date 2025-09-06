@@ -1680,6 +1680,26 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         if (receipt.status === 0) {
           throw new Error("Transaction failed during execution");
         }
+        
+        // Mark the listing as inactive
+        markListingInactive(id);
+
+        setStatus('Purchase successful! Refreshing listings...');
+        
+        // Refresh listings after successful purchase
+        setTimeout(() => {
+          if (supabaseConnected && cacheListings) {
+            fetchListings(true);
+          } else {
+            fetchListings();
+          }
+        }, 1000);
+
+        setTimeout(() => {
+          setStatus('Purchase completed successfully!');
+          setTimeout(() => setStatus(''), 3000);
+        }, 1500);
+        
       } catch (callError) {
         console.error("Buy transaction failed:", callError);
         
@@ -1760,24 +1780,27 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
       if (receipt.status === 0) {
         throw new Error("Transaction failed during execution");
       }
+      
+      // Mark the listing as inactive
+      markListingInactive(id);
+
+      setStatus('Purchase successful! Refreshing listings...');
+      
+      // Refresh listings after successful purchase
+      setTimeout(() => {
+        if (supabaseConnected && cacheListings) {
+          fetchListings(true);
+        } else {
+          fetchListings();
+        }
+      }, 1000);
+
+      setTimeout(() => {
+        setStatus('Purchase completed successfully!');
+        setTimeout(() => setStatus(''), 3000);
+      }, 1500);
     }
 
-    setStatus('Purchase successful! Refreshing listings...');
-    
-    // Refresh listings after successful purchase
-    setTimeout(() => {
-      if (supabaseConnected && cacheListings) {
-        fetchListings(true);
-      } else {
-        fetchListings();
-      }
-    }, 1000);
-
-    setTimeout(() => {
-      setStatus('Purchase completed successfully!');
-      setTimeout(() => setStatus(''), 3000);
-    }, 1500);
-    
   } catch (e) {
     criticalError('[BUY] Error in buyListing:', e);
     console.error('[BUY] Full error details:', e);
@@ -1960,6 +1983,27 @@ async function resolveMarketplaceAbi(incomingAbi) {
     throw new Error('No ABI with buy() found. Ensure VTRUNFTMarketplace ABI is provided.');
 }
 
+    // Add this function to MarketplaceContext.jsx after the buyListing function
+const markListingInactive = useCallback((listingId) => {
+  if (!listingId) return;
+  
+  debugLog(`Marking listing ${listingId} as inactive after purchase`);
+  
+  // Update listing in the listings array
+  setListings(prevListings => 
+    prevListings.map(listing => 
+      listing.id === listingId ? { ...listing, active: false } : listing
+    )
+  );
+  
+  // Add to canceledListings set
+  setCanceledListings(prevCanceled => {
+    const newCanceled = new Set(prevCanceled);
+    newCanceled.add(String(listingId));
+    return newCanceled;
+  });
+}, []);
+
     return (
         <MarketplaceContext.Provider value={{
             marketplace,
@@ -1977,6 +2021,7 @@ async function resolveMarketplaceAbi(incomingAbi) {
             createListing,
             isInitialized,
             isLoading,
+            markListingInactive, // Add this new function
             // New marketplace statistics and data
             salesHistory,
             canceledListings,
