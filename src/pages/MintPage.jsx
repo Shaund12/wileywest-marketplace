@@ -98,6 +98,9 @@ const MintPage = () => {
             gasEstimationWorks: false,
             contractCallable: true,
             payoutAddressBalance: '0',
+            payoutAddressType: 'unknown',
+            payoutCanReceiveETH: false,
+            contractHasETH: false,
             recommendations: []
         };
 
@@ -110,14 +113,70 @@ const MintPage = () => {
                 diagnostics.recommendations.push('Contract payout address is set to zero address');
             }
 
-            // Check if payout address can receive ETH (if not zero address)
+            // Enhanced payout address analysis
             if (!isZeroAddress && provider) {
                 try {
+                    // Check balance
                     const balance = await provider.getBalance(payout);
                     diagnostics.payoutAddressBalance = ethers.formatEther(balance);
-                    debugLog(`Payout address ${payout} balance: ${diagnostics.payoutAddressBalance} VTRU`);
+                    
+                    // Check if it's a contract or EOA
+                    const code = await provider.getCode(payout);
+                    const isContract = code !== '0x';
+                    diagnostics.payoutAddressType = isContract ? 'contract' : 'EOA';
+                    
+                    debugLog(`Payout address ${payout}:`);
+                    debugLog(`- Type: ${diagnostics.payoutAddressType}`);
+                    debugLog(`- Balance: ${diagnostics.payoutAddressBalance} VTRU`);
+                    debugLog(`- Code length: ${code.length > 2 ? (code.length - 2) / 2 : 0} bytes`);
+                    
+                    // Test if payout address can receive ETH by simulating a transfer
+                    if (signer) {
+                        try {
+                            const userAddress = await signer.getAddress();
+                            const userBalance = await provider.getBalance(userAddress);
+                            
+                            // Only test if user has some ETH
+                            if (userBalance > ethers.parseEther('0.001')) {
+                                // Simulate sending 1 wei to the payout address
+                                const simulationTx = {
+                                    to: payout,
+                                    value: '0x1', // 1 wei
+                                    from: userAddress
+                                };
+                                
+                                // Use call to simulate without actually sending
+                                await provider.call(simulationTx);
+                                diagnostics.payoutCanReceiveETH = true;
+                                debugLog('✅ Payout address can receive ETH');
+                            } else {
+                                diagnostics.recommendations.push('Cannot test ETH transfer - insufficient user balance');
+                            }
+                        } catch (simulationError) {
+                            diagnostics.payoutCanReceiveETH = false;
+                            debugWarn('❌ Payout address cannot receive ETH:', simulationError);
+                            
+                            if (isContract) {
+                                diagnostics.recommendations.push('Payout address is a contract that cannot receive ETH (no receive/fallback function or they revert)');
+                            } else {
+                                diagnostics.recommendations.push(`Payout address cannot receive ETH: ${simulationError.message}`);
+                            }
+                        }
+                    }
                 } catch (error) {
-                    debugWarn('Could not check payout address balance:', error);
+                    debugWarn('Could not analyze payout address:', error);
+                    diagnostics.recommendations.push(`Cannot analyze payout address: ${error.message}`);
+                }
+            }
+
+            // Check if the NFT contract itself has ETH (needed for gas when sending to payout)
+            if (nftAddress && provider) {
+                try {
+                    const contractBalance = await provider.getBalance(nftAddress);
+                    diagnostics.contractHasETH = contractBalance > 0;
+                    debugLog(`NFT contract balance: ${ethers.formatEther(contractBalance)} VTRU`);
+                } catch (error) {
+                    debugWarn('Could not check NFT contract balance:', error);
                 }
             }
 
@@ -134,23 +193,48 @@ const MintPage = () => {
                     const contractWithSigner = nftContract.connect(signer);
                     const mintPriceWei = ethers.parseEther(ethers.formatEther(price));
                     
+                    debugLog('Testing gas estimation with:');
+                    debugLog(`- Mint price: ${ethers.formatEther(mintPriceWei)} VTRU`);
+                    debugLog(`- Payout address: ${payout}`);
+                    debugLog(`- Payout type: ${diagnostics.payoutAddressType}`);
+                    debugLog(`- Can receive ETH: ${diagnostics.payoutCanReceiveETH}`);
+                    
                     // Try to estimate gas - this will fail if payout mechanism has issues
-                    await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
+                    const gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
                     diagnostics.gasEstimationWorks = true;
-                    debugLog('Gas estimation test passed - contract appears healthy');
+                    debugLog(`✅ Gas estimation successful: ${gasEstimate.toString()} gas`);
                 } catch (error) {
                     diagnostics.gasEstimationWorks = false;
-                    debugWarn('Gas estimation test failed:', error);
+                    debugWarn('❌ Gas estimation failed:', error);
                     
                     if (error.message.includes('payout fail')) {
-                        diagnostics.recommendations.push('Contract payout mechanism is failing - this may be a contract bug or configuration issue');
+                        if (diagnostics.payoutAddressType === 'contract' && !diagnostics.payoutCanReceiveETH) {
+                            diagnostics.recommendations.push('IDENTIFIED: Payout address is a contract that cannot receive ETH. The contract needs a receive() or fallback() function, or the payout address should be changed to an EOA.');
+                        } else if (diagnostics.payoutAddressType === 'contract') {
+                            diagnostics.recommendations.push('IDENTIFIED: Payout address is a contract. Even though it appears to accept ETH, the mint transaction might be running out of gas when transferring to it.');
+                        } else {
+                            diagnostics.recommendations.push('IDENTIFIED: Payout mechanism is failing for unknown reasons. This may be a contract bug or gas limit issue.');
+                        }
                     } else if (error.message.includes('insufficient funds')) {
                         // This is actually good - it means gas estimation worked but user doesn't have enough ETH
                         diagnostics.gasEstimationWorks = true;
                         diagnostics.recommendations.push('Gas estimation works, but you need more VTRU for minting');
+                    } else if (error.message.includes('execution reverted')) {
+                        diagnostics.recommendations.push(`Contract execution reverted: ${error.reason || error.message}`);
                     } else {
-                        diagnostics.recommendations.push(`Contract error during gas estimation: ${error.message}`);
+                        diagnostics.recommendations.push(`Gas estimation failed: ${error.message}`);
                     }
+                }
+            }
+
+            // Advanced recommendations based on findings
+            if (!diagnostics.gasEstimationWorks && diagnostics.payoutAddressValid) {
+                if (diagnostics.payoutAddressType === 'contract' && !diagnostics.payoutCanReceiveETH) {
+                    diagnostics.recommendations.push('SOLUTION: Change the payout address to an EOA (externally owned account) or fix the contract to accept ETH transfers');
+                } else if (diagnostics.payoutAddressType === 'contract') {
+                    diagnostics.recommendations.push('SOLUTION: Consider increasing gas limit for the mint transaction or changing payout to an EOA');
+                } else {
+                    diagnostics.recommendations.push('SOLUTION: Contact the contract administrator to investigate the payout mechanism');
                 }
             }
 
@@ -165,6 +249,8 @@ const MintPage = () => {
             
             if (!isHealthy) {
                 debugWarn('Contract health check failed:', diagnostics);
+            } else {
+                debugLog('✅ All contract health checks passed');
             }
             
         } catch (error) {
@@ -441,12 +527,23 @@ const MintPage = () => {
                             {contractDiagnostics.payoutAddressBalance && (
                                 <div>Payout Address Balance: {contractDiagnostics.payoutAddressBalance} VTRU</div>
                             )}
+                            {contractDiagnostics.payoutAddressType && (
+                                <div>Payout Address Type: {contractDiagnostics.payoutAddressType}</div>
+                            )}
+                            {contractDiagnostics.payoutCanReceiveETH !== undefined && (
+                                <div>Payout Can Receive ETH: {contractDiagnostics.payoutCanReceiveETH ? '✅' : '❌'}</div>
+                            )}
                             
                             {contractDiagnostics.recommendations && contractDiagnostics.recommendations.length > 0 && (
                                 <div style={{ marginTop: '0.5rem' }}>
-                                    <div style={{ fontWeight: 'bold' }}>📝 Issues Found:</div>
+                                    <div style={{ fontWeight: 'bold' }}>📝 Analysis:</div>
                                     {contractDiagnostics.recommendations.map((rec, index) => (
-                                        <div key={index} style={{ color: '#ffcc00', marginLeft: '1rem' }}>
+                                        <div key={index} style={{ 
+                                            color: rec.startsWith('IDENTIFIED:') ? '#ff6b6b' : 
+                                                   rec.startsWith('SOLUTION:') ? '#4ecdc4' : '#ffcc00', 
+                                            marginLeft: '1rem',
+                                            fontWeight: rec.startsWith('IDENTIFIED:') || rec.startsWith('SOLUTION:') ? 'bold' : 'normal'
+                                        }}>
                                             • {rec}
                                         </div>
                                     ))}
@@ -474,6 +571,8 @@ const MintPage = () => {
                     <div style={{ fontFamily: 'monospace' }}>
                         <div>Contract Address: {nftAddress}</div>
                         <div>Payout Address: {payoutAddress}</div>
+                        <div>Payout Address Type: {contractDiagnostics?.payoutAddressType || 'Unknown'}</div>
+                        <div>Payout Can Receive ETH: {contractDiagnostics?.payoutCanReceiveETH ? 'Yes' : 'No'}</div>
                         <div>Mint Price: {mintPrice} VTRU</div>
                         <div>Sale Active: {saleActive ? 'true' : 'false'}</div>
                         <div>Total Supply: {totalSupply} / {maxSupply}</div>
