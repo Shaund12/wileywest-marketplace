@@ -118,6 +118,11 @@ const BlockSharePage = () => {
         }
     }, [treasuryContract, nftContract, wallet, dataLoaded]);
 
+    // Trigger manual calculation when we have all necessary data
+    useEffect(() => {
+        calculateClaimableAmountManually();
+    }, [claimableAmount, userShares, treasuryStats.revenuePerShare, totalClaimed]);
+
     const initializeContracts = async () => {
         try {
             debugLog('Initializing RevShare contracts...');
@@ -212,8 +217,9 @@ const BlockSharePage = () => {
                     debugLog('Claimable amount loaded with minimal ABI:', ethers.formatEther(claimable));
                     setMethodsWorking(prev => ({ ...prev, getClaimableAmount: true }));
                 } catch (minimalError) {
-                    debugWarn('Failed to get claimable amount with minimal ABI:', minimalError);
-                    setClaimableAmount('0');
+                    debugWarn('Failed to get claimable amount with minimal ABI, calculating manually:', minimalError);
+                    // Manual calculation fallback: we'll calculate after getting treasury stats
+                    setClaimableAmount('calculating');
                     setMethodsWorking(prev => ({ ...prev, getClaimableAmount: false }));
                 }
             }
@@ -235,6 +241,23 @@ const BlockSharePage = () => {
             setStatus('Failed to load your RevShare data');
         } finally {
             setLoading(false);
+        }
+    };
+
+    // Manual calculation for claimable amount when contract method fails
+    const calculateClaimableAmountManually = () => {
+        // Only calculate if the contract method failed and we have the necessary data
+        if (claimableAmount === 'calculating' && 
+            userShares > 0 && 
+            treasuryStats.revenuePerShare && 
+            parseFloat(treasuryStats.revenuePerShare) > 0) {
+            
+            const manualClaimable = userShares * parseFloat(treasuryStats.revenuePerShare) - parseFloat(totalClaimed);
+            const calculatedAmount = Math.max(0, manualClaimable).toString();
+            
+            setClaimableAmount(calculatedAmount);
+            debugLog('Manually calculated claimable amount:', calculatedAmount, 'VTRU');
+            debugLog('Calculation: ', userShares, ' shares × ', treasuryStats.revenuePerShare, ' VTRU/share - ', totalClaimed, ' claimed = ', calculatedAmount);
         }
     };
 
@@ -334,7 +357,7 @@ const BlockSharePage = () => {
     };
 
     const handleClaim = async () => {
-        if (!signer || !treasuryContract || parseFloat(claimableAmount) <= 0) {
+        if (!signer || !treasuryContract || claimableAmount === 'calculating' || parseFloat(claimableAmount) <= 0) {
             setStatus('No claimable amount available');
             return;
         }
@@ -489,8 +512,13 @@ const BlockSharePage = () => {
                     <div>Loading: {loading ? '🔄' : '✅'}</div>
                     <div style={{ marginTop: '0.5rem', color: '#ffeb3b' }}>Contract Methods Status:</div>
                     <div>• totalRevenue(): {methodsWorking.totalRevenue === true ? '✅' : methodsWorking.totalRevenue === 'fallback' ? '⚠️ (using balance)' : '❌'}</div>
-                    <div>• getClaimableAmount(): {methodsWorking.getClaimableAmount ? '✅' : '❌'}</div>
+                    <div>• getClaimableAmount(): {methodsWorking.getClaimableAmount ? '✅' : '❌ (using manual calc)'}</div>
                     <div>• getUserShares(): {methodsWorking.getUserShares ? '✅' : '❌ (using NFT count)'}</div>
+                    {!methodsWorking.getClaimableAmount && claimableAmount !== 'calculating' && claimableAmount !== '0' && (
+                        <div style={{ marginTop: '0.5rem', color: '#00d4ff' }}>
+                            Manual Calculation: {userShares} shares × {treasuryStats.revenuePerShare} VTRU/share - {totalClaimed} claimed = {claimableAmount} VTRU
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -537,7 +565,14 @@ const BlockSharePage = () => {
                     </div>
                     <div className="hp-mini__card">
                         <div className="hp-mini__label">Claimable Amount</div>
-                        <div className="hp-mini__value">{formatVTRU(claimableAmount)} VTRU</div>
+                        <div className="hp-mini__value">
+                            {claimableAmount === 'calculating' ? 'Calculating...' : `${formatVTRU(claimableAmount)} VTRU`}
+                            {!methodsWorking.getClaimableAmount && claimableAmount !== 'calculating' && claimableAmount !== '0' && (
+                                <div style={{ fontSize: '0.7rem', color: '#ffeb3b', marginTop: '0.2rem' }}>
+                                    ⚠️ Manually calculated
+                                </div>
+                            )}
+                        </div>
                     </div>
                     <div className="hp-mini__card">
                         <div className="hp-mini__label">Total Claimed</div>
@@ -546,7 +581,7 @@ const BlockSharePage = () => {
                 </div>
 
                 {/* Claim Button */}
-                {wallet && parseFloat(claimableAmount) > 0 && (
+                {wallet && claimableAmount !== 'calculating' && parseFloat(claimableAmount) > 0 && (
                     <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
                         <button 
                             className="hp-btn hp-btn--primary"
@@ -556,10 +591,19 @@ const BlockSharePage = () => {
                         >
                             {claiming ? 'Claiming...' : `Claim ${formatVTRU(claimableAmount)} VTRU`}
                         </button>
+                        {!methodsWorking.getClaimableAmount && (
+                            <div style={{ 
+                                marginTop: '0.5rem', 
+                                fontSize: '0.8rem', 
+                                color: '#ffeb3b' 
+                            }}>
+                                ⚠️ Using manual calculation - verify amount before claiming
+                            </div>
+                        )}
                     </div>
                 )}
 
-                {wallet && parseFloat(claimableAmount) === 0 && (
+                {wallet && claimableAmount !== 'calculating' && parseFloat(claimableAmount) === 0 && (
                     <div style={{ 
                         marginTop: '1.5rem', 
                         textAlign: 'center',
