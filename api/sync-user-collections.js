@@ -1,5 +1,5 @@
-import { ethers } from 'ethers';
-import { createClient } from '@supabase/supabase-js';
+const { ethers } = require('ethers');
+const { createClient } = require('@supabase/supabase-js');
 
 // ERC721 and ERC1155 ABIs for NFT scanning
 const ERC721_ABI = [
@@ -700,7 +700,7 @@ async function syncUserCollections() {
 }
 
 // Main handler
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
     // Set CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
