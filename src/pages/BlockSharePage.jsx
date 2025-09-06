@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import RevShareTreasuryAbi from '../abi/RevShareTreasury.json';
+import RevShareTreasuryActualAbi from '../abi/RevShareTreasuryActual.json';
 import RevShareTreasuryMinimalAbi from '../abi/RevShareTreasuryMinimal.json';
 import RevShareNFTAbi from '../abi/RevShareNFT.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
@@ -10,10 +11,12 @@ import { convertToUSDCValue } from '../utils/tokenUtils';
 const BlockSharePage = () => {
     const { wallet, signer, provider } = useWallet();
     const [treasuryContract, setTreasuryContract] = useState(null);
+    const [treasuryActualContract, setTreasuryActualContract] = useState(null);
     const [treasuryMinimalContract, setTreasuryMinimalContract] = useState(null);
     const [nftContract, setNftContract] = useState(null);
     const [loading, setLoading] = useState(false);
     const [claiming, setClaiming] = useState(false);
+    const [calculating, setCalculating] = useState(false);
     const [status, setStatus] = useState('');
     const [contractError, setContractError] = useState('');
     const [dataLoaded, setDataLoaded] = useState(false);
@@ -21,7 +24,8 @@ const BlockSharePage = () => {
         totalRevenue: false,
         getClaimableAmount: false,
         getUserShares: false,
-        claim: false
+        claim: false,
+        actualContract: false
     });
     
     // User-specific data
@@ -29,6 +33,7 @@ const BlockSharePage = () => {
     const [claimableAmount, setClaimableAmount] = useState('0');
     const [totalClaimed, setTotalClaimed] = useState('0');
     const [userNFTBalance, setUserNFTBalance] = useState(0);
+    const [userTokenIds, setUserTokenIds] = useState([]);
     
     // Global statistics
     const [treasuryStats, setTreasuryStats] = useState({
@@ -106,22 +111,17 @@ const BlockSharePage = () => {
     };
 
     useEffect(() => {
-        if (treasuryContract && import.meta.env.VITE_DEBUG_MODE === 'true') {
+        if (treasuryActualContract && import.meta.env.VITE_DEBUG_MODE === 'true') {
             testContractMethods();
         }
-    }, [treasuryContract]);
+    }, [treasuryActualContract]);
 
     useEffect(() => {
-        if (treasuryContract && nftContract && wallet && !dataLoaded) {
+        if (treasuryActualContract && nftContract && wallet && !dataLoaded) {
             loadUserData();
             loadTreasuryStats();
         }
-    }, [treasuryContract, nftContract, wallet, dataLoaded]);
-
-    // Trigger manual calculation when we have all necessary data
-    useEffect(() => {
-        calculateClaimableAmountManually();
-    }, [claimableAmount, userShares, treasuryStats.revenuePerShare, totalClaimed]);
+    }, [treasuryActualContract, nftContract, wallet, dataLoaded]);
 
     const initializeContracts = async () => {
         try {
@@ -136,6 +136,7 @@ const BlockSharePage = () => {
             }
             
             const treasury = new ethers.Contract(treasuryAddress, RevShareTreasuryAbi.abi, provider);
+            const treasuryActual = new ethers.Contract(treasuryAddress, RevShareTreasuryActualAbi.abi, provider);
             const treasuryMinimal = new ethers.Contract(treasuryAddress, RevShareTreasuryMinimalAbi.abi, provider);
             const nft = new ethers.Contract(nftAddress, RevShareNFTAbi.abi, provider);
             
@@ -160,6 +161,7 @@ const BlockSharePage = () => {
             }
             
             setTreasuryContract(treasury);
+            setTreasuryActualContract(treasuryActual);
             setTreasuryMinimalContract(treasuryMinimal);
             setNftContract(nft);
             setDataLoaded(false);
@@ -173,7 +175,7 @@ const BlockSharePage = () => {
     };
 
     const loadUserData = async () => {
-        if (!wallet || !treasuryContract || !nftContract) return;
+        if (!wallet || !treasuryActualContract || !nftContract) return;
         
         try {
             setLoading(true);
@@ -182,55 +184,43 @@ const BlockSharePage = () => {
             // Get user's NFT balance (determines shares)
             try {
                 const nftBalance = await nftContract.balanceOf(wallet);
-                setUserNFTBalance(parseInt(nftBalance.toString()));
-                debugLog('NFT balance loaded:', nftBalance.toString());
+                const balanceNum = parseInt(nftBalance.toString());
+                setUserNFTBalance(balanceNum);
+                setUserShares(balanceNum); // Each NFT = 1 share
+                debugLog('NFT balance loaded:', balanceNum);
             } catch (error) {
                 debugWarn('Failed to get NFT balance:', error);
                 setUserNFTBalance(0);
+                setUserShares(0);
             }
             
-            // Try to get user's shares in the treasury
-            try {
-                const shares = await treasuryContract.getUserShares(wallet);
-                setUserShares(parseInt(shares.toString()));
-                debugLog('User shares loaded:', shares.toString());
-                setMethodsWorking(prev => ({ ...prev, getUserShares: true }));
-            } catch (error) {
-                debugWarn('Failed to get user shares (method may not exist):', error);
-                // Fallback: if user has NFTs, assume 1 share per NFT
-                setUserShares(userNFTBalance);
-                setMethodsWorking(prev => ({ ...prev, getUserShares: false }));
-            }
+            // Get user's token IDs
+            const tokenIds = await getUserTokenIds(wallet);
+            setUserTokenIds(tokenIds);
+            debugLog('User token IDs:', tokenIds);
             
-            // Try to get claimable amount
+            // Calculate claimable amount using actual contract interface
+            const claimable = await calculateActualClaimableAmount(wallet, tokenIds);
+            setClaimableAmount(claimable);
+            
+            // Try to get total claimed (this might not exist in actual contract)
             try {
-                const claimable = await treasuryContract.getClaimableAmount(wallet);
-                setClaimableAmount(ethers.formatEther(claimable));
-                debugLog('Claimable amount loaded:', ethers.formatEther(claimable));
-                setMethodsWorking(prev => ({ ...prev, getClaimableAmount: true }));
-            } catch (error) {
-                debugWarn('Failed to get claimable amount (trying minimal ABI):', error);
-                // Fallback to minimal contract
-                try {
-                    const claimable = await treasuryMinimalContract.getClaimableAmount(wallet);
-                    setClaimableAmount(ethers.formatEther(claimable));
-                    debugLog('Claimable amount loaded with minimal ABI:', ethers.formatEther(claimable));
-                    setMethodsWorking(prev => ({ ...prev, getClaimableAmount: true }));
-                } catch (minimalError) {
-                    debugWarn('Failed to get claimable amount with minimal ABI, calculating manually:', minimalError);
-                    // Manual calculation fallback: we'll calculate after getting treasury stats
-                    setClaimableAmount('calculating');
-                    setMethodsWorking(prev => ({ ...prev, getClaimableAmount: false }));
+                let totalClaimedAmount = ethers.getBigInt(0);
+                
+                // Sum up claimed amounts for all user tokens
+                for (const tokenId of tokenIds) {
+                    try {
+                        const claimedForToken = await treasuryActualContract.claimedPerTokenX18(tokenId);
+                        totalClaimedAmount += claimedForToken;
+                    } catch (tokenError) {
+                        debugWarn(`Error getting claimed amount for token ${tokenId}:`, tokenError);
+                    }
                 }
-            }
-            
-            // Get total claimed by user
-            try {
-                const claimed = await treasuryContract.getTotalClaimed(wallet);
-                setTotalClaimed(ethers.formatEther(claimed));
-                debugLog('Total claimed loaded:', ethers.formatEther(claimed));
+                
+                setTotalClaimed(ethers.formatEther(totalClaimedAmount));
+                debugLog('Total claimed calculated:', ethers.formatEther(totalClaimedAmount));
             } catch (error) {
-                debugWarn('Failed to get total claimed (method may not exist):', error);
+                debugWarn('Failed to calculate total claimed:', error);
                 setTotalClaimed('0');
             }
             
@@ -244,25 +234,109 @@ const BlockSharePage = () => {
         }
     };
 
-    // Manual calculation for claimable amount when contract method fails
-    const calculateClaimableAmountManually = () => {
-        // Only calculate if the contract method failed and we have the necessary data
-        if (claimableAmount === 'calculating' && 
-            userShares > 0 && 
-            treasuryStats.revenuePerShare && 
-            parseFloat(treasuryStats.revenuePerShare) > 0) {
+    // Get user's token IDs 
+    const getUserTokenIds = async (userAddress) => {
+        if (!nftContract) return [];
+        
+        try {
+            const balance = await nftContract.balanceOf(userAddress);
+            const balanceNum = parseInt(balance.toString());
             
-            const manualClaimable = userShares * parseFloat(treasuryStats.revenuePerShare) - parseFloat(totalClaimed);
-            const calculatedAmount = Math.max(0, manualClaimable).toString();
+            if (balanceNum === 0) return [];
             
-            setClaimableAmount(calculatedAmount);
-            debugLog('Manually calculated claimable amount:', calculatedAmount, 'VTRU');
-            debugLog('Calculation: ', userShares, ' shares × ', treasuryStats.revenuePerShare, ' VTRU/share - ', totalClaimed, ' claimed = ', calculatedAmount);
+            const tokenIds = [];
+            
+            // Get token IDs by checking tokenOfOwnerByIndex if available
+            try {
+                for (let i = 0; i < balanceNum; i++) {
+                    const tokenId = await nftContract.tokenOfOwnerByIndex(userAddress, i);
+                    tokenIds.push(parseInt(tokenId.toString()));
+                }
+                debugLog('Token IDs loaded via tokenOfOwnerByIndex:', tokenIds);
+                return tokenIds;
+            } catch (error) {
+                debugWarn('tokenOfOwnerByIndex not available, trying alternative method:', error);
+            }
+            
+            // Fallback: try to find tokens by checking ownership of sequential IDs
+            try {
+                const totalSupply = await nftContract.totalSupply();
+                const totalSupplyNum = parseInt(totalSupply.toString());
+                
+                for (let tokenId = 1; tokenId <= totalSupplyNum && tokenIds.length < balanceNum; tokenId++) {
+                    try {
+                        const owner = await nftContract.ownerOf(tokenId);
+                        if (owner.toLowerCase() === userAddress.toLowerCase()) {
+                            tokenIds.push(tokenId);
+                        }
+                    } catch (ownerError) {
+                        // Token might not exist or be burned, continue
+                    }
+                }
+                
+                debugLog('Token IDs found via ownership check:', tokenIds);
+                return tokenIds;
+            } catch (supplyError) {
+                debugWarn('Could not get total supply for token enumeration:', supplyError);
+                return [];
+            }
+            
+        } catch (error) {
+            debugWarn('Error getting user token IDs:', error);
+            return [];
+        }
+    };
+
+    // Calculate claimable amount using actual contract interface
+    const calculateActualClaimableAmount = async (userAddress, tokenIds) => {
+        if (!treasuryActualContract || !tokenIds || tokenIds.length === 0) {
+            return '0';
+        }
+        
+        try {
+            setCalculating(true);
+            debugLog('Calculating claimable amount for tokens:', tokenIds);
+            
+            // Get cumulative per token distribution
+            const cumulativePerTokenX18 = await treasuryActualContract.cumulativePerTokenX18();
+            debugLog('Cumulative per token X18:', cumulativePerTokenX18.toString());
+            
+            let totalClaimable = ethers.getBigInt(0);
+            
+            // Calculate claimable amount for each token
+            for (const tokenId of tokenIds) {
+                try {
+                    const claimedForToken = await treasuryActualContract.claimedPerTokenX18(tokenId);
+                    const unclaimedForToken = cumulativePerTokenX18 - claimedForToken;
+                    
+                    if (unclaimedForToken > 0) {
+                        totalClaimable += unclaimedForToken;
+                    }
+                    
+                    debugLog(`Token ${tokenId}: cumulative=${cumulativePerTokenX18.toString()}, claimed=${claimedForToken.toString()}, unclaimed=${unclaimedForToken.toString()}`);
+                } catch (tokenError) {
+                    debugWarn(`Error getting data for token ${tokenId}:`, tokenError);
+                }
+            }
+            
+            // Convert from X18 precision to ether
+            const claimableEther = ethers.formatEther(totalClaimable);
+            debugLog('Total claimable amount calculated:', claimableEther, 'VTRU');
+            
+            setMethodsWorking(prev => ({ ...prev, actualContract: true }));
+            return claimableEther;
+            
+        } catch (error) {
+            debugWarn('Error calculating claimable amount with actual contract:', error);
+            setMethodsWorking(prev => ({ ...prev, actualContract: false }));
+            return '0';
+        } finally {
+            setCalculating(false);
         }
     };
 
     const loadTreasuryStats = async () => {
-        if (!treasuryContract) return;
+        if (!treasuryActualContract && !treasuryContract) return;
         
         try {
             debugLog('Loading treasury statistics...');
@@ -272,75 +346,49 @@ const BlockSharePage = () => {
             let revenuePerShare = '0';
             let totalHolders = 0;
             
-            // Try to get total revenue (most important stat)
+            // Get total revenue from contract balance (actual revenue deposited)
             try {
-                const revenue = await treasuryContract.totalRevenue();
-                totalRevenue = ethers.formatEther(revenue);
-                debugLog('Total revenue loaded:', totalRevenue);
+                const balance = await provider.getBalance(treasuryAddress);
+                totalRevenue = ethers.formatEther(balance);
+                debugLog('Treasury balance (total revenue):', totalRevenue);
                 setMethodsWorking(prev => ({ ...prev, totalRevenue: true }));
             } catch (error) {
-                debugWarn('Failed to get total revenue (trying minimal ABI):', error);
-                // Fallback to minimal contract
-                try {
-                    const revenue = await treasuryMinimalContract.totalRevenue();
-                    totalRevenue = ethers.formatEther(revenue);
-                    debugLog('Total revenue loaded with minimal ABI:', totalRevenue);
-                    setMethodsWorking(prev => ({ ...prev, totalRevenue: true }));
-                } catch (minimalError) {
-                    debugWarn('Failed to get total revenue with minimal ABI:', minimalError);
-                    // Fallback: try to get contract balance directly
-                    try {
-                        const balance = await provider.getBalance(treasuryAddress);
-                        totalRevenue = ethers.formatEther(balance);
-                        debugLog('Using contract balance as revenue:', totalRevenue);
-                        setMethodsWorking(prev => ({ ...prev, totalRevenue: 'fallback' }));
-                    } catch (balanceError) {
-                        debugWarn('Failed to get contract balance:', balanceError);
-                        setMethodsWorking(prev => ({ ...prev, totalRevenue: false }));
+                debugWarn('Failed to get treasury balance:', error);
+                setMethodsWorking(prev => ({ ...prev, totalRevenue: false }));
+            }
+            
+            // Get total shares from NFT total supply
+            try {
+                if (nftContract) {
+                    const totalSupply = await nftContract.totalSupply();
+                    totalShares = parseInt(totalSupply.toString());
+                    debugLog('Total shares (NFT supply):', totalShares);
+                }
+            } catch (error) {
+                debugWarn('Failed to get NFT total supply:', error);
+            }
+            
+            // Calculate revenue per share
+            if (totalShares > 0 && parseFloat(totalRevenue) > 0) {
+                revenuePerShare = (parseFloat(totalRevenue) / totalShares).toString();
+                debugLog('Calculated revenue per share:', revenuePerShare);
+            }
+            
+            // Try to get cumulative distribution info from actual contract
+            try {
+                if (treasuryActualContract) {
+                    const cumulativePerTokenX18 = await treasuryActualContract.cumulativePerTokenX18();
+                    const cumulativePerToken = ethers.formatEther(cumulativePerTokenX18);
+                    debugLog('Cumulative per token distribution:', cumulativePerToken);
+                    
+                    // If there's cumulative distribution, use it as revenue per share
+                    if (parseFloat(cumulativePerToken) > 0) {
+                        revenuePerShare = cumulativePerToken;
+                        debugLog('Using cumulative distribution as revenue per share:', revenuePerShare);
                     }
                 }
-            }
-            
-            // Try to get total shares
-            try {
-                const shares = await treasuryContract.totalShares();
-                totalShares = parseInt(shares.toString());
-                debugLog('Total shares loaded:', totalShares);
             } catch (error) {
-                debugWarn('Failed to get total shares (method may not exist):', error);
-                // Fallback: try to get total supply from NFT contract if available
-                try {
-                    if (nftContract) {
-                        const totalSupply = await nftContract.totalSupply();
-                        totalShares = parseInt(totalSupply.toString());
-                        debugLog('Using NFT total supply as shares:', totalShares);
-                    }
-                } catch (nftError) {
-                    debugWarn('Failed to get NFT total supply:', nftError);
-                }
-            }
-            
-            // Try to get revenue per share
-            try {
-                const perShare = await treasuryContract.getRevenuePerShare();
-                revenuePerShare = ethers.formatEther(perShare);
-                debugLog('Revenue per share loaded:', revenuePerShare);
-            } catch (error) {
-                debugWarn('Failed to get revenue per share (method may not exist):', error);
-                // Calculate manually if we have both values
-                if (totalShares > 0 && parseFloat(totalRevenue) > 0) {
-                    revenuePerShare = (parseFloat(totalRevenue) / totalShares).toString();
-                    debugLog('Calculated revenue per share:', revenuePerShare);
-                }
-            }
-            
-            // Try to get total holders
-            try {
-                const holders = await treasuryContract.getTotalHolders();
-                totalHolders = parseInt(holders.toString());
-                debugLog('Total holders loaded:', totalHolders);
-            } catch (error) {
-                debugWarn('Failed to get total holders (method may not exist):', error);
+                debugWarn('Failed to get cumulative distribution:', error);
             }
             
             setTreasuryStats({
@@ -357,29 +405,50 @@ const BlockSharePage = () => {
     };
 
     const handleClaim = async () => {
-        if (!signer || !treasuryContract || claimableAmount === 'calculating' || parseFloat(claimableAmount) <= 0) {
-            setStatus('No claimable amount available');
+        if (!signer || !treasuryActualContract || calculating || parseFloat(claimableAmount) <= 0 || userTokenIds.length === 0) {
+            setStatus('No claimable amount available or no tokens owned');
             return;
         }
 
         try {
             setClaiming(true);
             setStatus('Claiming revenue...');
-            debugLog('Claiming revenue from treasury...');
+            debugLog('Claiming revenue from treasury for tokens:', userTokenIds);
             
-            // Check if claim method exists
-            try {
-                const treasuryWithSigner = treasuryContract.connect(signer);
-                
-                // First try to estimate gas to see if the method works
-                await treasuryWithSigner.claim.estimateGas();
-                
-                const tx = await treasuryWithSigner.claim();
-                
-                setStatus('Transaction submitted, waiting for confirmation...');
-                const receipt = await tx.wait();
-                
-                if (receipt.status === 1) {
+            const treasuryWithSigner = treasuryActualContract.connect(signer);
+            
+            let tx;
+            if (userTokenIds.length === 1) {
+                // Single token claim
+                debugLog('Claiming for single token:', userTokenIds[0]);
+                try {
+                    await treasuryWithSigner.claim.estimateGas(userTokenIds[0]);
+                    tx = await treasuryWithSigner.claim(userTokenIds[0]);
+                } catch (estimateError) {
+                    debugWarn('Gas estimation failed for single claim:', estimateError);
+                    throw estimateError;
+                }
+            } else {
+                // Multiple token claim
+                debugLog('Claiming for multiple tokens:', userTokenIds);
+                try {
+                    await treasuryWithSigner.claimMany.estimateGas(userTokenIds);
+                    tx = await treasuryWithSigner.claimMany(userTokenIds);
+                } catch (estimateError) {
+                    debugWarn('Gas estimation failed for claimMany, trying single claims:', estimateError);
+                    
+                    // Fallback: claim each token individually
+                    for (const tokenId of userTokenIds) {
+                        try {
+                            await treasuryWithSigner.claim.estimateGas(tokenId);
+                            const singleTx = await treasuryWithSigner.claim(tokenId);
+                            await singleTx.wait();
+                            debugLog(`Successfully claimed for token ${tokenId}`);
+                        } catch (singleError) {
+                            debugWarn(`Failed to claim for token ${tokenId}:`, singleError);
+                        }
+                    }
+                    
                     setStatus('Revenue claimed successfully!');
                     // Refresh user data
                     setDataLoaded(false);
@@ -387,42 +456,23 @@ const BlockSharePage = () => {
                     await loadTreasuryStats();
                     
                     setTimeout(() => setStatus(''), 5000);
-                } else {
-                    setStatus('Transaction failed');
+                    return;
                 }
+            }
+            
+            setStatus('Transaction submitted, waiting for confirmation...');
+            const receipt = await tx.wait();
+            
+            if (receipt.status === 1) {
+                setStatus('Revenue claimed successfully!');
+                // Refresh user data
+                setDataLoaded(false);
+                await loadUserData();
+                await loadTreasuryStats();
                 
-            } catch (estimateError) {
-                debugWarn('Claim with full ABI failed, trying minimal ABI:', estimateError);
-                
-                // Try with minimal contract
-                try {
-                    const treasuryMinimalWithSigner = treasuryMinimalContract.connect(signer);
-                    
-                    await treasuryMinimalWithSigner.claim.estimateGas();
-                    const tx = await treasuryMinimalWithSigner.claim();
-                    
-                    setStatus('Transaction submitted, waiting for confirmation...');
-                    const receipt = await tx.wait();
-                    
-                    if (receipt.status === 1) {
-                        setStatus('Revenue claimed successfully!');
-                        // Refresh user data
-                        setDataLoaded(false);
-                        await loadUserData();
-                        await loadTreasuryStats();
-                        
-                        setTimeout(() => setStatus(''), 5000);
-                    } else {
-                        setStatus('Transaction failed');
-                    }
-                    
-                } catch (minimalError) {
-                    if (minimalError.message.includes('function does not exist')) {
-                        setStatus('Claim function is not available on this contract');
-                    } else {
-                        throw minimalError;
-                    }
-                }
+                setTimeout(() => setStatus(''), 5000);
+            } else {
+                setStatus('Transaction failed');
             }
             
         } catch (error) {
@@ -495,7 +545,7 @@ const BlockSharePage = () => {
             )}
 
             {/* Debug Information Panel */}
-            {import.meta.env.VITE_DEBUG_MODE === 'true' && treasuryContract && (
+            {import.meta.env.VITE_DEBUG_MODE === 'true' && treasuryActualContract && (
                 <div style={{
                     padding: '1rem',
                     marginBottom: '1.5rem',
@@ -510,20 +560,22 @@ const BlockSharePage = () => {
                     <div>NFT Address: {nftAddress}</div>
                     <div>Data Loaded: {dataLoaded ? '✅' : '❌'}</div>
                     <div>Loading: {loading ? '🔄' : '✅'}</div>
+                    <div>Calculating: {calculating ? '🔄' : '✅'}</div>
+                    <div>User Token IDs: [{userTokenIds.join(', ')}]</div>
                     <div style={{ marginTop: '0.5rem', color: '#ffeb3b' }}>Contract Methods Status:</div>
-                    <div>• totalRevenue(): {methodsWorking.totalRevenue === true ? '✅' : methodsWorking.totalRevenue === 'fallback' ? '⚠️ (using balance)' : '❌'}</div>
-                    <div>• getClaimableAmount(): {methodsWorking.getClaimableAmount ? '✅' : '❌ (using manual calc)'}</div>
-                    <div>• getUserShares(): {methodsWorking.getUserShares ? '✅' : '❌ (using NFT count)'}</div>
-                    {!methodsWorking.getClaimableAmount && claimableAmount !== 'calculating' && claimableAmount !== '0' && (
+                    <div>• Treasury Balance: {methodsWorking.totalRevenue ? '✅' : '❌'}</div>
+                    <div>• Actual Contract: {methodsWorking.actualContract ? '✅' : '❌'}</div>
+                    <div>• NFT Balance: {userNFTBalance > 0 ? '✅' : '❌'}</div>
+                    {methodsWorking.actualContract && parseFloat(claimableAmount) > 0 && (
                         <div style={{ marginTop: '0.5rem', color: '#00d4ff' }}>
-                            Manual Calculation: {userShares} shares × {treasuryStats.revenuePerShare} VTRU/share - {totalClaimed} claimed = {claimableAmount} VTRU
+                            ✅ Claimable calculation working with actual contract interface
                         </div>
                     )}
                 </div>
             )}
 
             {/* Manual Refresh Button */}
-            {wallet && treasuryContract && (
+            {wallet && treasuryActualContract && (
                 <div style={{ 
                     marginBottom: '1.5rem', 
                     textAlign: 'center' 
@@ -566,10 +618,10 @@ const BlockSharePage = () => {
                     <div className="hp-mini__card">
                         <div className="hp-mini__label">Claimable Amount</div>
                         <div className="hp-mini__value">
-                            {claimableAmount === 'calculating' ? 'Calculating...' : `${formatVTRU(claimableAmount)} VTRU`}
-                            {!methodsWorking.getClaimableAmount && claimableAmount !== 'calculating' && claimableAmount !== '0' && (
-                                <div style={{ fontSize: '0.7rem', color: '#ffeb3b', marginTop: '0.2rem' }}>
-                                    ⚠️ Manually calculated
+                            {calculating ? 'Calculating...' : `${formatVTRU(claimableAmount)} VTRU`}
+                            {methodsWorking.actualContract && parseFloat(claimableAmount) > 0 && (
+                                <div style={{ fontSize: '0.7rem', color: '#4ade80', marginTop: '0.2rem' }}>
+                                    ✅ Calculated from contract
                                 </div>
                             )}
                         </div>
@@ -581,7 +633,7 @@ const BlockSharePage = () => {
                 </div>
 
                 {/* Claim Button */}
-                {wallet && claimableAmount !== 'calculating' && parseFloat(claimableAmount) > 0 && (
+                {wallet && !calculating && parseFloat(claimableAmount) > 0 && userTokenIds.length > 0 && (
                     <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
                         <button 
                             className="hp-btn hp-btn--primary"
@@ -591,19 +643,10 @@ const BlockSharePage = () => {
                         >
                             {claiming ? 'Claiming...' : `Claim ${formatVTRU(claimableAmount)} VTRU`}
                         </button>
-                        {!methodsWorking.getClaimableAmount && (
-                            <div style={{ 
-                                marginTop: '0.5rem', 
-                                fontSize: '0.8rem', 
-                                color: '#ffeb3b' 
-                            }}>
-                                ⚠️ Using manual calculation - verify amount before claiming
-                            </div>
-                        )}
                     </div>
                 )}
 
-                {wallet && claimableAmount !== 'calculating' && parseFloat(claimableAmount) === 0 && (
+                {wallet && !calculating && parseFloat(claimableAmount) === 0 && (
                     <div style={{ 
                         marginTop: '1.5rem', 
                         textAlign: 'center',
