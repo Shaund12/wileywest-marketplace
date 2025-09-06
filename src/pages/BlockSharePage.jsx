@@ -219,8 +219,8 @@ const BlockSharePage = () => {
                 
                 // Convert from X18 precision to ether using ethers.formatUnits
                 const totalClaimedEther = ethers.formatUnits(totalClaimedAmount, 18);
-                // Ensure we store a clean decimal string
-                const cleanTotalClaimed = parseFloat(totalClaimedEther).toString();
+                // Ensure we store a clean decimal string 
+                const cleanTotalClaimed = Number(totalClaimedEther).toFixed(8).replace(/\.?0+$/, '');
                 setTotalClaimed(cleanTotalClaimed);
                 debugLog('Total claimed calculated:', cleanTotalClaimed);
             } catch (error) {
@@ -330,7 +330,8 @@ const BlockSharePage = () => {
             debugLog('Raw totalClaimable:', totalClaimable.toString());
             
             // Ensure we return a properly formatted decimal string, not the raw BigInt
-            const cleanAmount = parseFloat(claimableEther).toString();
+            // Use Number() instead of parseFloat() to handle edge cases better
+            const cleanAmount = Number(claimableEther).toFixed(8).replace(/\.?0+$/, '');
             debugLog('Cleaned claimable amount:', cleanAmount);
             
             setMethodsWorking(prev => ({ ...prev, actualContract: true }));
@@ -395,7 +396,7 @@ const BlockSharePage = () => {
                     // If there's cumulative distribution, use it as revenue per share
                     if (parseFloat(cumulativePerToken) > 0) {
                         // Ensure we store a clean decimal string, not the raw formatUnits result
-                        revenuePerShare = parseFloat(cumulativePerToken).toString();
+                        revenuePerShare = Number(cumulativePerToken).toFixed(8).replace(/\.?0+$/, '');
                         debugLog('Using cumulative distribution as revenue per share:', revenuePerShare);
                     }
                 }
@@ -494,7 +495,30 @@ const BlockSharePage = () => {
             
             // Enhanced error handling for specific claim failures
             if (error.message.includes('native send fail')) {
-                setStatus('Claim failed: Treasury cannot send native tokens. This may be a contract configuration issue. Please contact support.');
+                setStatus(`
+🚨 Critical Treasury Issue: "Native Send Fail" Error
+
+The treasury contract is unable to send VTRU tokens to your wallet. This is typically caused by:
+
+• Treasury contract bug: The contract's native token transfer mechanism is failing
+• Insufficient treasury balance: Contract may not have enough VTRU to send
+• Gas limit issues: Transfer requires more gas than estimated
+• Recipient address issue: Your wallet cannot receive native tokens
+
+📋 Transaction Details from Trace:
+• Function called: claim(${userTokenIds[0] || 'unknown'})
+• Owner verification: ✅ Passed (you own the token)
+• Transfer attempt: ❌ Failed with "native send fail"
+• Contract balance: ${formatVTRU(treasuryStats.totalRevenue)} VTRU
+
+💡 Recommended Actions:
+1. Verify treasury contract has sufficient VTRU balance
+2. Check if contract has a bug in native token sending logic
+3. Try with higher gas limits (current strategies: Standard → High → Very High → Emergency)
+4. Contact contract deployer about treasury transfer mechanism
+
+This appears to be a contract-level issue that may require developer intervention.
+                `.trim());
             } else if (error.message.includes('insufficient funds')) {
                 setStatus('Transaction failed: Insufficient gas fees. Try increasing gas limit or add more VTRU to your wallet.');
             } else if (error.message.includes('user rejected')) {
@@ -565,8 +589,8 @@ const BlockSharePage = () => {
 
     const formatVTRU = (amount) => {
         // Handle BigInt or very large string numbers that might be in wei
-        if (typeof amount === 'string' && amount.length > 10 && !amount.includes('.')) {
-            // This looks like a wei value, convert it using ethers.formatUnits
+        if (typeof amount === 'string' && amount.length > 15 && !amount.includes('.') && !amount.includes('e')) {
+            // This looks like a wei value (very long string without decimal or scientific notation)
             try {
                 const formatted = ethers.formatUnits(amount, 18);
                 const num = parseFloat(formatted);
@@ -651,6 +675,8 @@ const BlockSharePage = () => {
                     <div>Loading: {loading ? '🔄' : '✅'}</div>
                     <div>Calculating: {calculating ? '🔄' : '✅'}</div>
                     <div>User Token IDs: [{userTokenIds.join(', ')}]</div>
+                    <div>Raw Claimable Amount: {claimableAmount}</div>
+                    <div>Formatted Claimable: {formatVTRU(claimableAmount)} VTRU</div>
                     <div style={{ marginTop: '0.5rem', color: '#ffeb3b' }}>Contract Methods Status:</div>
                     <div>• Treasury Balance: {methodsWorking.totalRevenue ? '✅' : '❌'}</div>
                     <div>• Actual Contract: {methodsWorking.actualContract ? '✅' : '❌'}</div>
@@ -660,6 +686,10 @@ const BlockSharePage = () => {
                             ✅ Claimable calculation working with actual contract interface
                         </div>
                     )}
+                    <div style={{ marginTop: '0.5rem', color: '#ff6b6b' }}>Treasury Health Check:</div>
+                    <div>• Balance {`>`} 0: {parseFloat(treasuryStats.totalRevenue) > 0 ? '✅' : '❌'}</div>
+                    <div>• Revenue per Share: {treasuryStats.revenuePerShare}</div>
+                    <div>• Can Estimate Claim Gas: {parseFloat(claimableAmount) > 0 ? '⚠️ Unknown' : 'N/A'}</div>
                 </div>
             )}
 
