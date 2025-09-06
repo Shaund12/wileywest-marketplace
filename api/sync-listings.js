@@ -1,5 +1,5 @@
-import { ethers } from 'ethers';
-import { createClient } from '@supabase/supabase-js';
+const { ethers } = require('ethers');
+const { createClient } = require('@supabase/supabase-js');
 
 // Import ABI and utilities - we'll need to duplicate some logic from the frontend
 const MARKETPLACE_ABI = [
@@ -280,7 +280,7 @@ async function cacheListingsToSupabase(listings) {
 }
 
 // Main handler
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
     // Set CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
