@@ -611,7 +611,7 @@ function ProfilePage() {
     const batchFetchMetadata = async (nfts) => {
         const nftsToFetch = nfts.filter(nft => {
             const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
-            return !nftMetadata[key]?.loaded && nft.tokenURI;
+            return !nftMetadata[key]?.loaded && (nft.tokenURI || nft.metadata?.tokenURI);
         });
 
         if (nftsToFetch.length === 0) return;
@@ -623,10 +623,11 @@ function ProfilePage() {
 
         if (visibleNfts.length > 0) {
             await Promise.all(
-                visibleNfts.map(nft =>
-                    fetchNftMetadata(nft.contractAddress, nft.tokenId, nft.tokenURI)
-                        .catch(err => criticalError(`Error fetching visible metadata for ${nft.tokenId}:`, err))
-                )
+                visibleNfts.map(nft => {
+                    const tokenURI = nft.tokenURI || nft.metadata?.tokenURI;
+                    return fetchNftMetadata(nft.contractAddress, nft.tokenId, tokenURI)
+                        .catch(err => criticalError(`Error fetching visible metadata for ${nft.tokenId}:`, err));
+                })
             );
         }
 
@@ -643,10 +644,11 @@ function ProfilePage() {
                 setStatus(`Fetching metadata chunk ${i + 1}/${chunks.length} (${chunk.length} NFTs)...`);
 
                 await Promise.all(
-                    chunk.map(nft =>
-                        fetchNftMetadata(nft.contractAddress, nft.tokenId, nft.tokenURI)
-                            .catch(err => criticalError(`Error fetching background metadata for ${nft.tokenId}:`, err))
-                    )
+                    chunk.map(nft => {
+                        const tokenURI = nft.tokenURI || nft.metadata?.tokenURI;
+                        return fetchNftMetadata(nft.contractAddress, nft.tokenId, tokenURI)
+                            .catch(err => criticalError(`Error fetching background metadata for ${nft.tokenId}:`, err));
+                    })
                 );
             }
         }
@@ -817,6 +819,19 @@ function ProfilePage() {
                         
                         setStatus(`✅ Loaded ${totalNfts} NFTs from cache (${successRate}% with metadata)`);
                         await fetchContractInfoForNfts(cachedProfile.nfts);
+                        
+                        // Fetch metadata for cached NFTs that don't have complete metadata
+                        const nftsNeedingMetadata = cachedProfile.nfts.filter(nft => {
+                            const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                            const meta = metadata[key];
+                            return !meta?.hasMetadata || !meta?.hasImage;
+                        });
+                        
+                        if (nftsNeedingMetadata.length > 0) {
+                            setStatus(`🔄 Fetching metadata for ${nftsNeedingMetadata.length} NFTs...`);
+                            await batchFetchMetadata(nftsNeedingMetadata);
+                            setStatus(`✅ Metadata refresh complete - ${totalNfts} NFTs ready`);
+                        }
                         
                         setTimeout(() => setStatus(''), 3000);
                     } else {
