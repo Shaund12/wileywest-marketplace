@@ -148,7 +148,17 @@ async function fetchFromIPFS(ipfsURI, nftContract, tokenId) {
                 continue;
             }
             
-            const metadata = await response.json();
+            // Get response text first and validate JSON parsing
+            const text = await response.text();
+            let metadata;
+            
+            try {
+                metadata = JSON.parse(text);
+            } catch (jsonError) {
+                console.warn(`Failed to parse JSON from ${gateway} for ${nftContract}:${tokenId}:`, jsonError.message);
+                console.warn(`Response text (first 200 chars):`, text.substring(0, 200));
+                continue; // Try next gateway
+            }
             
             // Resolve nested IPFS image URLs
             if (metadata.image?.startsWith('ipfs://')) {
@@ -199,7 +209,17 @@ async function fetchFromHTTP(httpURI, nftContract, tokenId) {
             return null;
         }
         
-        const metadata = await response.json();
+        // Get response text first and validate JSON parsing
+        const text = await response.text();
+        let metadata;
+        
+        try {
+            metadata = JSON.parse(text);
+        } catch (jsonError) {
+            console.warn(`Failed to parse HTTP JSON for ${nftContract}:${tokenId}:`, jsonError.message);
+            console.warn(`Response text (first 200 chars):`, text.substring(0, 200));
+            return null;
+        }
         
         if (typeof metadata === 'object' && metadata !== null) {
             console.log(`✅ Successfully fetched HTTP metadata for ${nftContract}:${tokenId}`);

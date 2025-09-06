@@ -483,11 +483,11 @@ function ProfilePage() {
                     .replace(/\{id\}/g, tokenId);
 
                 if (resolvedUri.startsWith('ipfs://')) {
-                    resolvedUri = `https://cloudflare-ipfs.com/ipfs/${resolvedUri.replace('ipfs://', '')}`;
+                    resolvedUri = `${IPFS_GATEWAYS[0]}${resolvedUri.replace('ipfs://', '')}`;
                 }
 
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+                const timeoutId = setTimeout(() => controller.abort(), 30000); // Increased to 30s timeout
 
                 try {
                     const response = await fetch(resolvedUri, {
@@ -499,7 +499,34 @@ function ProfilePage() {
                     clearTimeout(timeoutId);
 
                     if (response.ok) {
-                        const metadata = await response.json();
+                        // Check content type for better error handling
+                        const contentType = response.headers.get('content-type');
+                        if (contentType && !contentType.includes('application/json') && !contentType.includes('text/')) {
+                            debugWarn(`Unexpected content type for ${tokenId}: ${contentType}`);
+                        }
+                        
+                        const text = await response.text();
+                        let metadata;
+                        
+                        // Handle data URIs that contain JSON
+                        if (resolvedUri.startsWith('data:application/json,')) {
+                            try {
+                                const jsonData = decodeURIComponent(resolvedUri.split(',')[1]);
+                                metadata = JSON.parse(jsonData);
+                            } catch (dataUriError) {
+                                debugWarn(`Failed to parse data URI JSON for ${tokenId}:`, dataUriError);
+                                throw new Error('Invalid data URI JSON');
+                            }
+                        } else {
+                            // Parse regular JSON response
+                            try {
+                                metadata = JSON.parse(text);
+                            } catch (jsonError) {
+                                debugWarn(`Failed to parse JSON for ${tokenId} from ${resolvedUri}:`, jsonError);
+                                debugWarn(`Response text (first 200 chars):`, text.substring(0, 200));
+                                throw new Error('Invalid JSON response');
+                            }
+                        }
 
                         let imageUrl = null;
 
@@ -535,13 +562,29 @@ function ProfilePage() {
 
                     if (tokenURI.startsWith('ipfs://')) {
                         for (const gateway of IPFS_GATEWAYS) {
-                            if (gateway === 'https://cloudflare-ipfs.com/ipfs/') continue;
+                            if (gateway === IPFS_GATEWAYS[0]) continue; // Skip the one we already tried
 
                             try {
                                 const altUri = `${gateway}${tokenURI.replace('ipfs://', '')}`;
-                                const altResponse = await fetch(altUri);
+                                const gatewayController = new AbortController();
+                                let gatewayTimeout = setTimeout(() => gatewayController.abort(), 15000); // 15s per gateway
+                                
+                                const altResponse = await fetch(altUri, { 
+                                    signal: gatewayController.signal,
+                                    headers: { 'Accept': 'application/json' }
+                                });
+                                clearTimeout(gatewayTimeout);
+                                gatewayTimeout = null;
                                 if (altResponse.ok) {
-                                    const metadata = await altResponse.json();
+                                    const text = await altResponse.text();
+                                    let metadata;
+                                    
+                                    try {
+                                        metadata = JSON.parse(text);
+                                    } catch (jsonError) {
+                                        debugWarn(`Failed to parse JSON from gateway ${gateway} for ${tokenId}:`, jsonError);
+                                        continue; // Try next gateway
+                                    }
 
                                     let imageUrl = null;
                                     if (metadata.image) {
@@ -568,7 +611,12 @@ function ProfilePage() {
                                     }));
                                     return;
                                 }
-                            } catch { /* next gateway */ }
+                            } catch (gatewayError) { 
+                                // Clear timeout on error
+                                if (gatewayTimeout) clearTimeout(gatewayTimeout);
+                                debugWarn(`Gateway ${gateway} failed for ${tokenId}:`, gatewayError.message);
+                                /* continue to next gateway */ 
+                            }
                         }
                     }
                 }
