@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import RevShareTreasuryAbi from '../abi/RevShareTreasury.json';
+import RevShareTreasuryMinimalAbi from '../abi/RevShareTreasuryMinimal.json';
 import RevShareNFTAbi from '../abi/RevShareNFT.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { convertToUSDCValue } from '../utils/tokenUtils';
@@ -9,10 +10,19 @@ import { convertToUSDCValue } from '../utils/tokenUtils';
 const BlockSharePage = () => {
     const { wallet, signer, provider } = useWallet();
     const [treasuryContract, setTreasuryContract] = useState(null);
+    const [treasuryMinimalContract, setTreasuryMinimalContract] = useState(null);
     const [nftContract, setNftContract] = useState(null);
     const [loading, setLoading] = useState(false);
     const [claiming, setClaiming] = useState(false);
     const [status, setStatus] = useState('');
+    const [contractError, setContractError] = useState('');
+    const [dataLoaded, setDataLoaded] = useState(false);
+    const [methodsWorking, setMethodsWorking] = useState({
+        totalRevenue: false,
+        getClaimableAmount: false,
+        getUserShares: false,
+        claim: false
+    });
     
     // User-specific data
     const [userShares, setUserShares] = useState(0);
@@ -37,25 +47,123 @@ const BlockSharePage = () => {
         }
     }, [provider, treasuryAddress, nftAddress]);
 
+    // Test contract method availability 
+    const testContractMethods = async () => {
+        if (!treasuryContract || !provider) return;
+        
+        const methods = {
+            totalRevenue: false,
+            getClaimableAmount: false,
+            getUserShares: false,
+            getTotalClaimed: false,
+            claim: false
+        };
+        
+        debugLog('Testing contract methods availability...');
+        
+        // Test each method by trying to call it
+        const testAddress = '0x0000000000000000000000000000000000000000';
+        
+        try {
+            await treasuryContract.totalRevenue();
+            methods.totalRevenue = true;
+        } catch (e) {
+            debugLog('totalRevenue() not available:', e.reason || e.message);
+        }
+        
+        try {
+            await treasuryContract.getClaimableAmount(testAddress);
+            methods.getClaimableAmount = true;
+        } catch (e) {
+            debugLog('getClaimableAmount() not available:', e.reason || e.message);
+        }
+        
+        try {
+            await treasuryContract.getUserShares(testAddress);
+            methods.getUserShares = true;
+        } catch (e) {
+            debugLog('getUserShares() not available:', e.reason || e.message);
+        }
+        
+        try {
+            await treasuryContract.getTotalClaimed(testAddress);
+            methods.getTotalClaimed = true;
+        } catch (e) {
+            debugLog('getTotalClaimed() not available:', e.reason || e.message);
+        }
+        
+        // For claim method, we can't actually call it, but we can check if it exists
+        try {
+            // Just check if the function exists by trying to encode it
+            treasuryContract.interface.getFunction('claim');
+            methods.claim = true;
+        } catch (e) {
+            debugLog('claim() not available:', e.reason || e.message);
+        }
+        
+        debugLog('Contract method test results:', methods);
+        return methods;
+    };
+
     useEffect(() => {
-        if (treasuryContract && nftContract && wallet) {
+        if (treasuryContract && import.meta.env.VITE_DEBUG_MODE === 'true') {
+            testContractMethods();
+        }
+    }, [treasuryContract]);
+
+    useEffect(() => {
+        if (treasuryContract && nftContract && wallet && !dataLoaded) {
             loadUserData();
             loadTreasuryStats();
         }
-    }, [treasuryContract, nftContract, wallet]);
+    }, [treasuryContract, nftContract, wallet, dataLoaded]);
 
     const initializeContracts = async () => {
         try {
             debugLog('Initializing RevShare contracts...');
+            setContractError('');
+            
+            if (!treasuryAddress || !nftAddress) {
+                const error = 'RevShare contract addresses not configured';
+                setContractError(error);
+                setStatus(error);
+                return;
+            }
+            
             const treasury = new ethers.Contract(treasuryAddress, RevShareTreasuryAbi.abi, provider);
+            const treasuryMinimal = new ethers.Contract(treasuryAddress, RevShareTreasuryMinimalAbi.abi, provider);
             const nft = new ethers.Contract(nftAddress, RevShareNFTAbi.abi, provider);
             
+            // Test contract connectivity
+            try {
+                const treasuryCode = await provider.getCode(treasuryAddress);
+                const nftCode = await provider.getCode(nftAddress);
+                
+                if (treasuryCode === '0x') {
+                    throw new Error('Treasury contract not found at address');
+                }
+                if (nftCode === '0x') {
+                    throw new Error('NFT contract not found at address');
+                }
+                
+                debugLog('Both contracts verified on chain');
+            } catch (error) {
+                const errorMsg = `Contract verification failed: ${error.message}`;
+                setContractError(errorMsg);
+                setStatus(errorMsg);
+                return;
+            }
+            
             setTreasuryContract(treasury);
+            setTreasuryMinimalContract(treasuryMinimal);
             setNftContract(nft);
+            setDataLoaded(false);
             debugLog('RevShare contracts initialized successfully');
         } catch (error) {
-            criticalError('Failed to initialize RevShare contracts:', error);
-            setStatus('Failed to connect to RevShare contracts');
+            const errorMsg = `Failed to initialize RevShare contracts: ${error.message}`;
+            criticalError(errorMsg, error);
+            setContractError(errorMsg);
+            setStatus(errorMsg);
         }
     };
 
@@ -67,24 +175,63 @@ const BlockSharePage = () => {
             debugLog('Loading user RevShare data...');
             
             // Get user's NFT balance (determines shares)
-            const nftBalance = await nftContract.balanceOf(wallet);
-            setUserNFTBalance(parseInt(nftBalance.toString()));
+            try {
+                const nftBalance = await nftContract.balanceOf(wallet);
+                setUserNFTBalance(parseInt(nftBalance.toString()));
+                debugLog('NFT balance loaded:', nftBalance.toString());
+            } catch (error) {
+                debugWarn('Failed to get NFT balance:', error);
+                setUserNFTBalance(0);
+            }
             
-            // Get user's shares in the treasury
-            const shares = await treasuryContract.getUserShares(wallet);
-            setUserShares(parseInt(shares.toString()));
+            // Try to get user's shares in the treasury
+            try {
+                const shares = await treasuryContract.getUserShares(wallet);
+                setUserShares(parseInt(shares.toString()));
+                debugLog('User shares loaded:', shares.toString());
+                setMethodsWorking(prev => ({ ...prev, getUserShares: true }));
+            } catch (error) {
+                debugWarn('Failed to get user shares (method may not exist):', error);
+                // Fallback: if user has NFTs, assume 1 share per NFT
+                setUserShares(userNFTBalance);
+                setMethodsWorking(prev => ({ ...prev, getUserShares: false }));
+            }
             
-            // Get claimable amount
-            const claimable = await treasuryContract.getClaimableAmount(wallet);
-            setClaimableAmount(ethers.formatEther(claimable));
+            // Try to get claimable amount
+            try {
+                const claimable = await treasuryContract.getClaimableAmount(wallet);
+                setClaimableAmount(ethers.formatEther(claimable));
+                debugLog('Claimable amount loaded:', ethers.formatEther(claimable));
+                setMethodsWorking(prev => ({ ...prev, getClaimableAmount: true }));
+            } catch (error) {
+                debugWarn('Failed to get claimable amount (trying minimal ABI):', error);
+                // Fallback to minimal contract
+                try {
+                    const claimable = await treasuryMinimalContract.getClaimableAmount(wallet);
+                    setClaimableAmount(ethers.formatEther(claimable));
+                    debugLog('Claimable amount loaded with minimal ABI:', ethers.formatEther(claimable));
+                    setMethodsWorking(prev => ({ ...prev, getClaimableAmount: true }));
+                } catch (minimalError) {
+                    debugWarn('Failed to get claimable amount with minimal ABI:', minimalError);
+                    setClaimableAmount('0');
+                    setMethodsWorking(prev => ({ ...prev, getClaimableAmount: false }));
+                }
+            }
             
             // Get total claimed by user
-            const claimed = await treasuryContract.getTotalClaimed(wallet);
-            setTotalClaimed(ethers.formatEther(claimed));
+            try {
+                const claimed = await treasuryContract.getTotalClaimed(wallet);
+                setTotalClaimed(ethers.formatEther(claimed));
+                debugLog('Total claimed loaded:', ethers.formatEther(claimed));
+            } catch (error) {
+                debugWarn('Failed to get total claimed (method may not exist):', error);
+                setTotalClaimed('0');
+            }
             
-            debugLog('User RevShare data loaded successfully');
+            debugLog('User RevShare data loading completed');
+            setDataLoaded(true);
         } catch (error) {
-            debugWarn('Error loading user RevShare data:', error);
+            criticalError('Error loading user RevShare data:', error);
             setStatus('Failed to load your RevShare data');
         } finally {
             setLoading(false);
@@ -97,21 +244,90 @@ const BlockSharePage = () => {
         try {
             debugLog('Loading treasury statistics...');
             
-            const [totalRevenue, totalShares, revenuePerShare, totalHolders] = await Promise.all([
-                treasuryContract.totalRevenue(),
-                treasuryContract.totalShares(),
-                treasuryContract.getRevenuePerShare(),
-                treasuryContract.getTotalHolders()
-            ]);
+            let totalRevenue = '0';
+            let totalShares = 0;
+            let revenuePerShare = '0';
+            let totalHolders = 0;
+            
+            // Try to get total revenue (most important stat)
+            try {
+                const revenue = await treasuryContract.totalRevenue();
+                totalRevenue = ethers.formatEther(revenue);
+                debugLog('Total revenue loaded:', totalRevenue);
+                setMethodsWorking(prev => ({ ...prev, totalRevenue: true }));
+            } catch (error) {
+                debugWarn('Failed to get total revenue (trying minimal ABI):', error);
+                // Fallback to minimal contract
+                try {
+                    const revenue = await treasuryMinimalContract.totalRevenue();
+                    totalRevenue = ethers.formatEther(revenue);
+                    debugLog('Total revenue loaded with minimal ABI:', totalRevenue);
+                    setMethodsWorking(prev => ({ ...prev, totalRevenue: true }));
+                } catch (minimalError) {
+                    debugWarn('Failed to get total revenue with minimal ABI:', minimalError);
+                    // Fallback: try to get contract balance directly
+                    try {
+                        const balance = await provider.getBalance(treasuryAddress);
+                        totalRevenue = ethers.formatEther(balance);
+                        debugLog('Using contract balance as revenue:', totalRevenue);
+                        setMethodsWorking(prev => ({ ...prev, totalRevenue: 'fallback' }));
+                    } catch (balanceError) {
+                        debugWarn('Failed to get contract balance:', balanceError);
+                        setMethodsWorking(prev => ({ ...prev, totalRevenue: false }));
+                    }
+                }
+            }
+            
+            // Try to get total shares
+            try {
+                const shares = await treasuryContract.totalShares();
+                totalShares = parseInt(shares.toString());
+                debugLog('Total shares loaded:', totalShares);
+            } catch (error) {
+                debugWarn('Failed to get total shares (method may not exist):', error);
+                // Fallback: try to get total supply from NFT contract if available
+                try {
+                    if (nftContract) {
+                        const totalSupply = await nftContract.totalSupply();
+                        totalShares = parseInt(totalSupply.toString());
+                        debugLog('Using NFT total supply as shares:', totalShares);
+                    }
+                } catch (nftError) {
+                    debugWarn('Failed to get NFT total supply:', nftError);
+                }
+            }
+            
+            // Try to get revenue per share
+            try {
+                const perShare = await treasuryContract.getRevenuePerShare();
+                revenuePerShare = ethers.formatEther(perShare);
+                debugLog('Revenue per share loaded:', revenuePerShare);
+            } catch (error) {
+                debugWarn('Failed to get revenue per share (method may not exist):', error);
+                // Calculate manually if we have both values
+                if (totalShares > 0 && parseFloat(totalRevenue) > 0) {
+                    revenuePerShare = (parseFloat(totalRevenue) / totalShares).toString();
+                    debugLog('Calculated revenue per share:', revenuePerShare);
+                }
+            }
+            
+            // Try to get total holders
+            try {
+                const holders = await treasuryContract.getTotalHolders();
+                totalHolders = parseInt(holders.toString());
+                debugLog('Total holders loaded:', totalHolders);
+            } catch (error) {
+                debugWarn('Failed to get total holders (method may not exist):', error);
+            }
             
             setTreasuryStats({
-                totalRevenue: ethers.formatEther(totalRevenue),
-                totalShares: parseInt(totalShares.toString()),
-                revenuePerShare: ethers.formatEther(revenuePerShare),
-                totalHolders: parseInt(totalHolders.toString())
+                totalRevenue,
+                totalShares,
+                revenuePerShare,
+                totalHolders
             });
             
-            debugLog('Treasury statistics loaded successfully');
+            debugLog('Treasury statistics loading completed');
         } catch (error) {
             debugWarn('Error loading treasury statistics:', error);
         }
@@ -128,26 +344,73 @@ const BlockSharePage = () => {
             setStatus('Claiming revenue...');
             debugLog('Claiming revenue from treasury...');
             
-            const treasuryWithSigner = treasuryContract.connect(signer);
-            const tx = await treasuryWithSigner.claim();
-            
-            setStatus('Transaction submitted, waiting for confirmation...');
-            const receipt = await tx.wait();
-            
-            if (receipt.status === 1) {
-                setStatus('Revenue claimed successfully!');
-                // Refresh user data
-                await loadUserData();
-                await loadTreasuryStats();
+            // Check if claim method exists
+            try {
+                const treasuryWithSigner = treasuryContract.connect(signer);
                 
-                setTimeout(() => setStatus(''), 5000);
-            } else {
-                setStatus('Transaction failed');
+                // First try to estimate gas to see if the method works
+                await treasuryWithSigner.claim.estimateGas();
+                
+                const tx = await treasuryWithSigner.claim();
+                
+                setStatus('Transaction submitted, waiting for confirmation...');
+                const receipt = await tx.wait();
+                
+                if (receipt.status === 1) {
+                    setStatus('Revenue claimed successfully!');
+                    // Refresh user data
+                    setDataLoaded(false);
+                    await loadUserData();
+                    await loadTreasuryStats();
+                    
+                    setTimeout(() => setStatus(''), 5000);
+                } else {
+                    setStatus('Transaction failed');
+                }
+                
+            } catch (estimateError) {
+                debugWarn('Claim with full ABI failed, trying minimal ABI:', estimateError);
+                
+                // Try with minimal contract
+                try {
+                    const treasuryMinimalWithSigner = treasuryMinimalContract.connect(signer);
+                    
+                    await treasuryMinimalWithSigner.claim.estimateGas();
+                    const tx = await treasuryMinimalWithSigner.claim();
+                    
+                    setStatus('Transaction submitted, waiting for confirmation...');
+                    const receipt = await tx.wait();
+                    
+                    if (receipt.status === 1) {
+                        setStatus('Revenue claimed successfully!');
+                        // Refresh user data
+                        setDataLoaded(false);
+                        await loadUserData();
+                        await loadTreasuryStats();
+                        
+                        setTimeout(() => setStatus(''), 5000);
+                    } else {
+                        setStatus('Transaction failed');
+                    }
+                    
+                } catch (minimalError) {
+                    if (minimalError.message.includes('function does not exist')) {
+                        setStatus('Claim function is not available on this contract');
+                    } else {
+                        throw minimalError;
+                    }
+                }
             }
             
         } catch (error) {
             criticalError('Error claiming revenue:', error);
-            setStatus(`Claim failed: ${error.message}`);
+            if (error.message.includes('insufficient funds')) {
+                setStatus('Transaction failed: Insufficient gas fees');
+            } else if (error.message.includes('user rejected')) {
+                setStatus('Transaction cancelled by user');
+            } else {
+                setStatus(`Claim failed: ${error.message}`);
+            }
         } finally {
             setClaiming(false);
         }
@@ -182,7 +445,20 @@ const BlockSharePage = () => {
                 </p>
             </div>
 
-            {status && (
+            {contractError && (
+                <div style={{
+                    padding: '1rem',
+                    marginBottom: '1.5rem',
+                    borderRadius: '8px',
+                    background: 'rgba(220, 38, 127, 0.1)',
+                    border: '1px solid rgba(220, 38, 127, 0.3)',
+                    color: '#ff6b6b'
+                }}>
+                    <strong>⚠️ Contract Issue:</strong> {contractError}
+                </div>
+            )}
+
+            {status && !contractError && (
                 <div style={{
                     padding: '1rem',
                     marginBottom: '1.5rem',
@@ -192,6 +468,55 @@ const BlockSharePage = () => {
                     color: '#fff'
                 }}>
                     {status}
+                </div>
+            )}
+
+            {/* Debug Information Panel */}
+            {import.meta.env.VITE_DEBUG_MODE === 'true' && treasuryContract && (
+                <div style={{
+                    padding: '1rem',
+                    marginBottom: '1.5rem',
+                    borderRadius: '8px',
+                    background: 'rgba(30, 30, 30, 0.8)',
+                    border: '1px solid rgba(85, 51, 255, 0.3)',
+                    fontSize: '0.85rem',
+                    fontFamily: 'monospace'
+                }}>
+                    <div style={{ color: '#00d4ff', marginBottom: '0.5rem' }}>🔍 Debug Information</div>
+                    <div>Treasury Address: {treasuryAddress}</div>
+                    <div>NFT Address: {nftAddress}</div>
+                    <div>Data Loaded: {dataLoaded ? '✅' : '❌'}</div>
+                    <div>Loading: {loading ? '🔄' : '✅'}</div>
+                    <div style={{ marginTop: '0.5rem', color: '#ffeb3b' }}>Contract Methods Status:</div>
+                    <div>• totalRevenue(): {methodsWorking.totalRevenue === true ? '✅' : methodsWorking.totalRevenue === 'fallback' ? '⚠️ (using balance)' : '❌'}</div>
+                    <div>• getClaimableAmount(): {methodsWorking.getClaimableAmount ? '✅' : '❌'}</div>
+                    <div>• getUserShares(): {methodsWorking.getUserShares ? '✅' : '❌ (using NFT count)'}</div>
+                </div>
+            )}
+
+            {/* Manual Refresh Button */}
+            {wallet && treasuryContract && (
+                <div style={{ 
+                    marginBottom: '1.5rem', 
+                    textAlign: 'center' 
+                }}>
+                    <button 
+                        className="hp-btn hp-btn--secondary"
+                        onClick={() => {
+                            setDataLoaded(false);
+                            setStatus('Refreshing data...');
+                            loadUserData();
+                            loadTreasuryStats();
+                        }}
+                        disabled={loading}
+                        style={{ 
+                            fontSize: '0.9rem', 
+                            padding: '0.5rem 1rem',
+                            opacity: loading ? 0.6 : 1
+                        }}
+                    >
+                        {loading ? 'Refreshing...' : '🔄 Refresh Data'}
+                    </button>
                 </div>
             )}
 
