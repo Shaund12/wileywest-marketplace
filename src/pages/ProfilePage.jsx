@@ -1360,12 +1360,12 @@ function ProfilePage() {
                             </div>
                         )}
 
-                        {isLoading && (
+                        {isLoading ? (
                             <div className="loading-container">
                                 <div className="loading-spinner"></div>
                                 <p>Loading your NFT collection...</p>
                             </div>
-                        )} : groupByCollection ? (
+                        ) : groupByCollection ? (
                             // Grouped by collection view
                             <div className="collections-view">
                                 {paginatedItems.length > 0 ? (
