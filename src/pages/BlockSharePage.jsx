@@ -1,460 +1,311 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { ethers, Log } from 'ethers';
+import React, { useState, useEffect } from 'react';
+import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
-import RevShareTreasuryAbi from '../abi/RevShareTreasury.json';
+import RevShareTreasuryAbi from '../abi/RevShareTreasuryActual.json'; // must include: cumulativePerTokenX18, claimedPerTokenX18, claim, claimMany
 import RevShareNFTAbi from '../abi/RevShareNFT.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
-type MethodsState = {
-    treasuryBalance: boolean;
-    claimableCall: boolean;
-    nftBalance: boolean;
-    logsScanning: boolean;
-    holdersScanning: boolean;
-};
-
-const BlockSharePage: React.FC = () => {
+const BlockSharePage = () => {
     const { wallet, signer, provider } = useWallet();
 
-    const [treasury, setTreasury] = useState < any > (null);
-    const [nft, setNft] = useState < any > (null);
+    const treasuryAddress = import.meta.env.VITE_REVSHARE_TREASURY_ADDRESS;
+    const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
+    const DEBUG = import.meta.env.VITE_DEBUG_MODE === 'true';
 
-    const [loading, setLoading] = useState(false);
-    const [claiming, setClaiming] = useState(false);
-    const [calculating, setCalculating] = useState(false);
+    // Contracts
+    const [treasury, setTreasury] = useState(null);
+    const [nft, setNft] = useState(null);
+
+    // UI / status
     const [status, setStatus] = useState('');
     const [contractError, setContractError] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [calculating, setCalculating] = useState(false);
+    const [claiming, setClaiming] = useState(false);
     const [dataLoaded, setDataLoaded] = useState(false);
 
-    const [methodsWorking, setMethodsWorking] = useState < MethodsState > ({
-        treasuryBalance: false,
-        claimableCall: false,
-        nftBalance: false,
-        logsScanning: false,
-        holdersScanning: false,
+    // Method availability flags (for debug panel)
+    const [methodsWorking, setMethodsWorking] = useState({
+        totalRevenue: false,
+        actualContract: false
     });
 
-    // user
+    // User data
     const [userNFTBalance, setUserNFTBalance] = useState(0);
-    const [userTokenIds, setUserTokenIds] = useState < number[] > ([]);
     const [userShares, setUserShares] = useState(0);
-    const [claimableAmount, setClaimableAmount] = useState('0');
-    const [userTotalClaimed, setUserTotalClaimed] = useState('0');
+    const [userTokenIds, setUserTokenIds] = useState([]);
+    const [claimableAmount, setClaimableAmount] = useState('0');  // string VTRU
+    const [totalClaimed, setTotalClaimed] = useState('0');        // string VTRU (sum of last snapshots)
 
-    // global
+    // Treasury stats
     const [treasuryStats, setTreasuryStats] = useState({
-        totalRevenue: '0',
-        totalShares: 0,
+        totalRevenue: '0',   // current contract balance
+        totalShares: 0,      // NFT total supply
         revenuePerShare: '0',
-        totalHolders: 0,
+        totalHolders: 0      // (left as 0 unless you compute externally)
     });
 
-    // env
-    const treasuryAddress = import.meta.env.VITE_REVSHARE_TREASURY_ADDRESS as string;
-    const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS as string;
-    const STEP = Number(import.meta.env.VITE_LOG_SCAN_STEP || '50000'); // blocks per batch
-    const TREASURY_START = useMemo(
-        () => BigInt(import.meta.env.VITE_TREASURY_START_BLOCK || '0'),
-        []
-    );
-    const NFT_START = useMemo(
-        () => BigInt(import.meta.env.VITE_NFT_START_BLOCK || '0'),
-        []
-    );
+    // ---------- helpers ----------
+    const formatVTRU = (amount) => {
+        // Accept numbers, strings, or wei-like strings
+        if (typeof amount === 'string' && amount.length > 15 && !amount.includes('.') && !amount.includes('e')) {
+            try {
+                const formatted = ethers.formatUnits(amount, 18);
+                const num = parseFloat(formatted);
+                if (num === 0) return '0.0000';
+                if (num < 0.0001) return '< 0.0001';
+                return num.toFixed(4);
+            } catch {
+                // fall back below
+            }
+        }
+        const num = parseFloat(amount || '0');
+        if (!isFinite(num) || num === 0) return '0.0000';
+        if (num < 0.0001) return '< 0.0001';
+        return num.toFixed(4);
+    };
 
+    const big = (v) => {
+        try { return ethers.getBigInt(v); } catch { return BigInt(v); }
+    };
+
+    // ---------- init ----------
     useEffect(() => {
         if (provider && treasuryAddress && nftAddress) {
             initContracts();
         }
     }, [provider, treasuryAddress, nftAddress]);
 
-    useEffect(() => {
-        if (treasury && nft && wallet && !dataLoaded) {
-            loadEverything();
-        }
-    }, [treasury, nft, wallet, dataLoaded]);
-
-    const initContracts = async () => {
+    async function initContracts() {
         try {
             setContractError('');
-            const t = new ethers.Contract(treasuryAddress, RevShareTreasuryAbi.abi, provider);
-            const n = new ethers.Contract(nftAddress, RevShareNFTAbi.abi, provider);
+            debugLog('Initializing RevShare contracts...');
 
-            const [tc, nc] = await Promise.all([provider.getCode(treasuryAddress), provider.getCode(nftAddress)]);
-            if (tc === '0x') throw new Error('Treasury contract not found at address');
-            if (nc === '0x') throw new Error('NFT contract not found at address');
+            if (!treasuryAddress || !nftAddress) {
+                const e = 'RevShare contract addresses not configured';
+                setContractError(e);
+                setStatus(e);
+                return;
+            }
+
+            const t = new ethers.Contract(treasuryAddress, RevShareTreasuryAbi.abi || RevShareTreasuryAbi, provider);
+            const n = new ethers.Contract(nftAddress, RevShareNFTAbi.abi || RevShareNFTAbi, provider);
+
+            // On-chain code check
+            const [tCode, nCode] = await Promise.all([provider.getCode(treasuryAddress), provider.getCode(nftAddress)]);
+            if (tCode === '0x') throw new Error('Treasury contract not found at address');
+            if (nCode === '0x') throw new Error('NFT contract not found at address');
 
             setTreasury(t);
             setNft(n);
             setDataLoaded(false);
-        } catch (e: any) {
-            const msg = `Failed to initialize RevShare contracts: ${e.message}`;
+            debugLog('Contracts OK');
+
+        } catch (err) {
+            const msg = `Failed to initialize RevShare contracts: ${err.message}`;
             setContractError(msg);
             setStatus(msg);
-            criticalError(msg, e);
+            criticalError(msg, err);
+            return;
         }
-    };
+    }
 
-    const loadEverything = async () => {
+    // Load once everything is ready
+    useEffect(() => {
+        if (treasury && nft && wallet && !dataLoaded) {
+            (async () => {
+                await loadUserData();
+                await loadTreasuryStats();
+                setDataLoaded(true);
+            })();
+        }
+    }, [treasury, nft, wallet, dataLoaded]);
+
+    // ---------- data loaders ----------
+    async function loadUserData() {
+        if (!wallet || !treasury || !nft) return;
+
         try {
             setLoading(true);
+            debugLog('Loading user data...');
 
-            // user balances + tokenIds
-            await loadUserBasics();
+            // user NFT balance / shares
+            let bal = 0;
+            try {
+                const b = await nft.balanceOf(wallet);
+                bal = parseInt(b.toString());
+            } catch (e) {
+                debugWarn('balanceOf failed', e);
+            }
+            setUserNFTBalance(bal);
+            setUserShares(bal);
 
-            // claimables
-            const c = await calcClaimable(userTokenIds);
-            setClaimableAmount(c);
+            // token ids
+            const ids = await getUserTokenIds(wallet);
+            setUserTokenIds(ids);
 
-            // user total claimed: sum Claim / ClaimMany logs to this wallet
-            const userClaimed = await calcUserTotalClaimed(wallet!);
-            setUserTotalClaimed(userClaimed);
+            // claimable
+            const claimable = await calcClaimable(ids);
+            setClaimableAmount(claimable);
 
-            // global stats
-            await loadGlobalStats();
+            // total claimed (sum of last snapshots per token)
+            const tc = await calcTotalClaimed(ids);
+            setTotalClaimed(tc);
 
-            setDataLoaded(true);
-        } catch (e) {
-            debugWarn('loadEverything error', e);
+        } catch (err) {
+            criticalError('Error loading user data', err);
+            setStatus('Failed to load your RevShare data');
         } finally {
             setLoading(false);
         }
-    };
+    }
 
-    const loadUserBasics = async () => {
-        if (!wallet || !nft) return;
-
-        try {
-            const bal = await nft.balanceOf(wallet);
-            const n = Number(bal);
-            setUserNFTBalance(n);
-            setUserShares(n);
-            setMethodsWorking((s) => ({ ...s, nftBalance: true }));
-
-            const ids = await getUserTokenIds(wallet);
-            setUserTokenIds(ids);
-        } catch (e) {
-            debugWarn('Failed to get user basics', e);
-            setUserNFTBalance(0);
-            setUserShares(0);
-            setUserTokenIds([]);
-            setMethodsWorking((s) => ({ ...s, nftBalance: false }));
-        }
-    };
-
-    const getUserTokenIds = async (owner: string) => {
-        if (!nft) return [];
-        const out: number[] = [];
-        try {
-            const bal = Number(await nft.balanceOf(owner));
-            if (bal === 0) return out;
-
-            // try Enumerable
-            try {
-                nft.interface.getFunction('tokenOfOwnerByIndex');
-                for (let i = 0; i < bal; i++) {
-                    const id = await nft.tokenOfOwnerByIndex(owner, i);
-                    out.push(Number(id));
-                }
-                return out;
-            } catch {
-                // fallback scan
-                let total = 0;
-                try {
-                    total = Number(await nft.totalSupply());
-                } catch {
-                    total = 1500; // cap – safe fallback
-                }
-                for (let id = 1; id <= total && out.length < bal; id++) {
-                    try {
-                        const o = await nft.ownerOf(id);
-                        if (o?.toLowerCase() === owner.toLowerCase()) out.push(id);
-                    } catch { /* skip gaps */ }
-                }
-                return out;
-            }
-        } catch (e) {
-            debugWarn('getUserTokenIds failed', e);
-            return [];
-        }
-    };
-
-    const calcClaimable = async (tokenIds: number[]) => {
-        if (!treasury || tokenIds.length === 0) return '0';
-        try {
-            setCalculating(true);
-            let sum = 0n;
-            for (const id of tokenIds) {
-                try {
-                    const v = await treasury.claimable(BigInt(id));
-                    sum += v;
-                } catch (e) {
-                    debugWarn(`claimable(${id}) failed`, e);
-                }
-            }
-            const clean = Number(ethers.formatUnits(sum, 18)).toFixed(8).replace(/\.?0+$/, '');
-            setMethodsWorking((s) => ({ ...s, claimableCall: true }));
-            return clean;
-        } catch (e) {
-            debugWarn('calcClaimable failed', e);
-            setMethodsWorking((s) => ({ ...s, claimableCall: false }));
-            return '0';
-        } finally {
-            setCalculating(false);
-        }
-    };
-
-    const loadGlobalStats = async () => {
+    async function loadTreasuryStats() {
         if (!treasury || !nft) return;
 
         try {
-            // total revenue (native)
+            debugLog('Loading treasury stats...');
             let totalRevenue = '0';
+            let totalShares = 0;
+            let revenuePerShare = '0';
+
+            // Current contract balance (native)
             try {
-                const bal = await provider!.getBalance(treasuryAddress);
+                const bal = await provider.getBalance(treasuryAddress);
                 totalRevenue = ethers.formatEther(bal);
-                setMethodsWorking((s) => ({ ...s, treasuryBalance: true }));
+                setMethodsWorking((m) => ({ ...m, totalRevenue: true }));
             } catch (e) {
-                debugWarn('getBalance failed', e);
-                setMethodsWorking((s) => ({ ...s, treasuryBalance: false }));
+                setMethodsWorking((m) => ({ ...m, totalRevenue: false }));
             }
 
-            // shares = totalSupply
-            let totalShares = 0;
+            // NFT total supply = shares
             try {
-                totalShares = Number(await nft.totalSupply());
+                const ts = await nft.totalSupply();
+                totalShares = parseInt(ts.toString());
             } catch (e) {
                 debugWarn('totalSupply failed', e);
             }
 
-            // revenue/share from cumulativePerTokenX18
-            let revenuePerShare = '0';
+            // revenuePerShare from contract’s cumulativePerTokenX18 if present
             try {
-                const cpx18 = await treasury.cumulativePerTokenX18();
-                revenuePerShare = Number(ethers.formatUnits(cpx18, 18)).toFixed(8).replace(/\.?0+$/, '');
-            } catch {
+                const c = await treasury.cumulativePerTokenX18();
+                const per = ethers.formatUnits(c, 18);
+                if (parseFloat(per) > 0) {
+                    revenuePerShare = Number(per).toFixed(8).replace(/\.?0+$/, '');
+                    setMethodsWorking((m) => ({ ...m, actualContract: true }));
+                }
+            } catch (e) {
+                setMethodsWorking((m) => ({ ...m, actualContract: false }));
+                // fallback calc
                 if (totalShares > 0 && parseFloat(totalRevenue) > 0) {
-                    revenuePerShare = (parseFloat(totalRevenue) / totalShares).toFixed(8).replace(/\.?0+$/, '');
+                    revenuePerShare = (parseFloat(totalRevenue) / totalShares).toString();
                 }
             }
 
-            // total holders from NFT Transfer logs
-            const holders = await calcTotalHolders();
-            setTreasuryStats({
+            setTreasuryStats((s) => ({
+                ...s,
                 totalRevenue,
                 totalShares,
-                revenuePerShare,
-                totalHolders: holders,
-            });
+                revenuePerShare
+            }));
         } catch (e) {
-            debugWarn('loadGlobalStats failed', e);
+            debugWarn('loadTreasuryStats error', e);
         }
-    };
+    }
 
-    // ---- LOG SCANNERS ----
+    async function getUserTokenIds(userAddr) {
+        try {
+            const balanceBN = await nft.balanceOf(userAddr);
+            const balance = parseInt(balanceBN.toString());
+            if (balance === 0) return [];
 
-    const ifaceTreasury = useMemo(() => new ethers.Interface(RevShareTreasuryAbi.abi), []);
-    const ifaceNFT = useMemo(() => new ethers.Interface(RevShareNFTAbi.abi), []);
-
-    const topicClaimed = useMemo(
-        () => ethers.id('Claimed(uint256,address,uint256)'),
-        []
-    );
-    const topicClaimedMany = useMemo(
-        () => ethers.id('ClaimedMany(address,uint256,uint256)'),
-        []
-    );
-    const topicTransfer = useMemo(
-        () => ethers.id('Transfer(address,address,uint256)'),
-        []
-    );
-
-    const getLatestBlock = async (): Promise<bigint> => {
-        const n = await provider!.getBlockNumber();
-        return BigInt(n);
-    };
-
-    const getLogsBatched = async (params: {
-        address: string;
-        topics: (string | string[] | null)[];
-        fromBlock: bigint;
-        toBlock: bigint;
-    }) => {
-        const res: Log[] = [];
-        const step = BigInt(STEP);
-        let start = params.fromBlock;
-        const end = params.toBlock;
-
-        while (start <= end) {
-            const chunkEnd = start + step - 1n <= end ? start + step - 1n : end;
-            const filter = {
-                address: params.address,
-                topics: params.topics,
-                fromBlock: Number(start),
-                toBlock: Number(chunkEnd),
-            };
+            // Try ERC721Enumerable
             try {
-                const logs = await provider!.getLogs(filter);
-                res.push(...logs);
-            } catch (e) {
-                // If provider rejects large ranges, fall back to smaller step
-                debugWarn(`getLogs failed for ${start}-${chunkEnd}, reducing step`, e);
-                // try halving step once
-                const smallStep = step / 5n;
-                if (smallStep < 1000n) throw e;
-                for (let s = start; s <= chunkEnd; s += smallStep) {
-                    const sEnd = s + smallStep - 1n <= chunkEnd ? s + smallStep - 1n : chunkEnd;
-                    const f2 = {
-                        address: params.address,
-                        topics: params.topics,
-                        fromBlock: Number(s),
-                        toBlock: Number(sEnd),
-                    };
+                const ids = [];
+                for (let i = 0; i < balance; i++) {
+                    const id = await nft.tokenOfOwnerByIndex(userAddr, i);
+                    ids.push(parseInt(id.toString()));
+                }
+                debugLog('IDs via tokenOfOwnerByIndex', ids);
+                return ids;
+            } catch {
+                // Fallback: scan 1..totalSupply and match owner
+                const ids = [];
+                let ts = 0;
+                try {
+                    const t = await nft.totalSupply();
+                    ts = parseInt(t.toString());
+                } catch {
+                    // if no totalSupply, assume <= 1200
+                    ts = 1200;
+                }
+                for (let tokenId = 1; tokenId <= ts && ids.length < balance; tokenId++) {
                     try {
-                        const logs2 = await provider!.getLogs(f2);
-                        res.push(...logs2);
-                    } catch (e2) {
-                        debugWarn(`mini getLogs failed for ${s}-${sEnd}`, e2);
+                        const owner = await nft.ownerOf(tokenId);
+                        if (owner.toLowerCase() === userAddr.toLowerCase()) ids.push(tokenId);
+                    } catch {
+                        // skip non-existent
                     }
                 }
+                debugLog('IDs via ownerOf scan', ids);
+                return ids;
             }
-            start = chunkEnd + 1n;
-        }
-        return res;
-    };
-
-    // Sum of all amounts the current wallet has ever claimed (Claimed + ClaimedMany)
-    const calcUserTotalClaimed = async (user: string) => {
-        if (!treasury || !user) return '0';
-        try {
-            setMethodsWorking((s) => ({ ...s, logsScanning: true }));
-            const latest = await getLatestBlock();
-
-            // Claimed(tokenId indexed, to indexed, amount)
-            const logs1 = await getLogsBatched({
-                address: treasuryAddress,
-                topics: [topicClaimed, null, ethers.zeroPadValue(user, 32)],
-                fromBlock: TREASURY_START,
-                toBlock: latest,
-            });
-
-            // ClaimedMany(to indexed, count, totalAmount)
-            const logs2 = await getLogsBatched({
-                address: treasuryAddress,
-                topics: [topicClaimedMany, ethers.zeroPadValue(user, 32)],
-                fromBlock: TREASURY_START,
-                toBlock: latest,
-            });
-
-            let total = 0n;
-
-            for (const l of logs1) {
-                try {
-                    const parsed = ifaceTreasury.parseLog(l);
-                    // args: tokenId, to, amount
-                    total += BigInt(parsed.args.amount);
-                } catch (e) {
-                    debugWarn('parse Claimed failed', e);
-                }
-            }
-
-            for (const l of logs2) {
-                try {
-                    const parsed = ifaceTreasury.parseLog(l);
-                    // args: to, count, totalAmount
-                    total += BigInt(parsed.args.totalAmount);
-                } catch (e) {
-                    debugWarn('parse ClaimedMany failed', e);
-                }
-            }
-
-            const clean = Number(ethers.formatUnits(total, 18)).toFixed(8).replace(/\.?0+$/, '');
-            return clean;
         } catch (e) {
-            debugWarn('calcUserTotalClaimed failed', e);
+            debugWarn('getUserTokenIds error', e);
+            return [];
+        }
+    }
+
+    async function calcClaimable(tokenIds) {
+        if (!treasury || !tokenIds || tokenIds.length === 0) return '0';
+        try {
+            setCalculating(true);
+            const c = await treasury.cumulativePerTokenX18();
+            let totalX18 = big(0);
+
+            for (const id of tokenIds) {
+                try {
+                    const last = await treasury.claimedPerTokenX18(id);
+                    const delta = c - last;
+                    if (delta > 0) totalX18 += delta;
+                } catch (e) {
+                    // ignore bad token
+                }
+            }
+
+            const out = ethers.formatUnits(totalX18, 18);
+            return Number(out).toFixed(8).replace(/\.?0+$/, '');
+        } catch (e) {
+            debugWarn('calcClaimable error', e);
             return '0';
         } finally {
-            setMethodsWorking((s) => ({ ...s, logsScanning: false }));
+            setCalculating(false);
         }
-    };
+    }
 
-    // Approx total holders: replay balances from Transfer logs
-    const calcTotalHolders = async () => {
-        if (!nft) return 0;
+    async function calcTotalClaimed(tokenIds) {
+        if (!treasury || !tokenIds || tokenIds.length === 0) return '0';
         try {
-            setMethodsWorking((s) => ({ ...s, holdersScanning: true }));
-            const latest = await getLatestBlock();
-
-            const logs = await getLogsBatched({
-                address: nftAddress,
-                topics: [topicTransfer],
-                fromBlock: NFT_START,
-                toBlock: latest,
-            });
-
-            const balances = new Map < string, number> ();
-            const ZERO = '0x0000000000000000000000000000000000000000';
-
-            for (const l of logs) {
-                // Standard ERC721 Transfer(address,address,uint256)
-                const from = '0x' + l.topics[1].slice(26).toLowerCase();
-                const to = '0x' + l.topics[2].slice(26).toLowerCase();
-
-                if (from !== ZERO) {
-                    balances.set(from, (balances.get(from) || 0) - 1);
-                }
-                if (to !== ZERO) {
-                    balances.set(to, (balances.get(to) || 0) + 1);
+            let totalX18 = big(0);
+            for (const id of tokenIds) {
+                try {
+                    const last = await treasury.claimedPerTokenX18(id); // snapshot at last claim in X18
+                    totalX18 += last;
+                } catch {
+                    // ignore
                 }
             }
-
-            let holders = 0;
-            for (const [, bal] of balances) {
-                if (bal > 0) holders++;
-            }
-            return holders;
+            const out = ethers.formatUnits(totalX18, 18);
+            return Number(out).toFixed(8).replace(/\.?0+$/, '');
         } catch (e) {
-            debugWarn('calcTotalHolders failed, returning 0', e);
-            return 0;
-        } finally {
-            setMethodsWorking((s) => ({ ...s, holdersScanning: false }));
+            debugWarn('calcTotalClaimed error', e);
+            return '0';
         }
-    };
+    }
 
-    // ---- CLAIM ----
-
-    const claimWithRetry = async (
-        contract: any,
-        method: 'claim' | 'claimMany',
-        args: any[]
-    ) => {
-        const strategies = [
-            { name: 'Standard', gasLimit: null as number | null },
-            { name: 'High', gasLimit: 400_000 },
-            { name: 'Very High', gasLimit: 600_000 },
-            { name: 'Emergency', gasLimit: 800_000 },
-        ];
-
-        for (let i = 0; i < strategies.length; i++) {
-            const s = strategies[i];
-            try {
-                let gasLimit: number;
-                if (s.gasLimit) {
-                    gasLimit = s.gasLimit;
-                } else {
-                    const estimated = await contract.estimateGas[method](...args);
-                    gasLimit = Math.floor(Number(estimated) * 1.2);
-                }
-                return await contract[method](...args, { gasLimit });
-            } catch (err: any) {
-                if (String(err?.message || '').includes('native send fail')) throw err;
-                if (i === strategies.length - 1) throw err;
-            }
-        }
-    };
-
-    const handleClaim = async () => {
-        if (!signer || !treasury || calculating || !(parseFloat(claimableAmount) > 0) || userTokenIds.length === 0) {
+    // ---------- claim ----------
+    async function handleClaim() {
+        if (!signer || !treasury || calculating || parseFloat(claimableAmount) <= 0 || userTokenIds.length === 0) {
             setStatus('No claimable amount available or no tokens owned');
             return;
         }
@@ -463,93 +314,116 @@ const BlockSharePage: React.FC = () => {
             setClaiming(true);
             setStatus('Claiming revenue...');
 
-            const c = treasury.connect(signer);
+            const t = treasury.connect(signer);
             let tx;
 
             if (userTokenIds.length === 1) {
-                tx = await claimWithRetry(c, 'claim', [BigInt(userTokenIds[0])]);
+                tx = await claimWithRetry(t, 'claim', [userTokenIds[0]]);
             } else {
                 try {
-                    tx = await claimWithRetry(c, 'claimMany', [userTokenIds.map(BigInt)]);
+                    tx = await claimWithRetry(t, 'claimMany', [userTokenIds]);
                 } catch (e) {
-                    // fallback: individual
-                    let ok = 0;
+                    debugWarn('claimMany failed; trying per token', e);
+                    let okCount = 0;
                     for (const id of userTokenIds) {
                         try {
-                            const t = await claimWithRetry(c, 'claim', [BigInt(id)]);
-                            await t.wait();
-                            ok++;
+                            const singleTx = await claimWithRetry(t, 'claim', [id]);
+                            if (singleTx) {
+                                await singleTx.wait();
+                                okCount++;
+                            }
                         } catch (e2) {
                             debugWarn(`claim(${id}) failed`, e2);
                         }
                     }
-                    if (ok > 0) {
-                        setStatus(`Revenue claimed for ${ok}/${userTokenIds.length} token(s).`);
+                    if (okCount > 0) {
+                        setStatus(`Revenue claimed for ${okCount}/${userTokenIds.length} tokens.`);
                         setDataLoaded(false);
-                        await loadEverything();
+                        await loadUserData();
+                        await loadTreasuryStats();
                         setTimeout(() => setStatus(''), 4000);
                         return;
+                    } else {
+                        throw new Error('Failed to claim for any tokens');
                     }
-                    throw new Error('Failed to claim for any tokens');
                 }
             }
 
             if (tx) {
-                setStatus('Transaction submitted, waiting for confirmation...');
-                const r = await tx.wait();
-                if (r.status === 1) {
+                setStatus('Transaction submitted, waiting confirmation...');
+                const rc = await tx.wait();
+                if (rc.status === 1) {
                     setStatus('Revenue claimed successfully!');
                     setDataLoaded(false);
-                    await loadEverything();
+                    await loadUserData();
+                    await loadTreasuryStats();
                     setTimeout(() => setStatus(''), 4000);
                 } else {
                     setStatus('Transaction failed');
                 }
             }
-        } catch (error: any) {
+        } catch (error) {
             criticalError('Error claiming revenue:', error);
-            if (String(error?.message || '').includes('native send fail')) {
-                setStatus(
-                    '🚨 Claim reverted in treasury (native send fail). Check contract balance and transfer logic; retry with more gas. If persistent, it is contract-level.'
-                );
-            } else if (String(error?.message || '').includes('insufficient funds')) {
-                setStatus('Insufficient gas funds. Add VTRU and try again.');
-            } else if (String(error?.message || '').match(/denied|rejected/i)) {
-                setStatus('Transaction was cancelled.');
+            if ((error.message || '').includes('native send fail')) {
+                setStatus('Claim failed in treasury transfer (native send). Contract may lack balance or have a send bug.');
+            } else if ((error.message || '').includes('insufficient funds')) {
+                setStatus('Insufficient gas funds to claim.');
+            } else if ((error.message || '').includes('user rejected')) {
+                setStatus('Transaction cancelled.');
             } else {
-                setStatus(`Claim failed: ${error?.reason || error?.message || 'Unknown error'}`);
+                setStatus(`Claim failed: ${error.reason || error.message}`);
             }
         } finally {
             setClaiming(false);
         }
-    };
+    }
 
-    // ---- UI helpers ----
+    // ethers v6 gas estimation helpers (no TypeScript):
+    async function claimWithRetry(contractWithSigner, method, args) {
+        const strategies = [
+            { label: 'estimate', useEstimate: true },
+            { label: 'high', gasLimit: 400000n },
+            { label: 'very-high', gasLimit: 600000n },
+            { label: 'emergency', gasLimit: 800000n },
+        ];
 
-    const formatVTRU = (amount: string | number | bigint) => {
-        try {
-            if (typeof amount === 'bigint') {
-                const f = Number(ethers.formatUnits(amount, 18));
-                return f === 0 ? '0.0000' : f < 0.0001 ? '< 0.0001' : f.toFixed(4);
+        for (let i = 0; i < strategies.length; i++) {
+            const s = strategies[i];
+            try {
+                let overrides = {};
+                if (s.useEstimate) {
+                    try {
+                        // ethers v6: contract.estimateGas.<fn>(...args)
+                        const est = await contractWithSigner.estimateGas[method](...args);
+                        const padded = (big(est) * 12n) / 10n; // +20%
+                        overrides = { gasLimit: padded };
+                        debugLog(`${method} gas est: ${est.toString()} -> using ${padded.toString()}`);
+                    } catch (e) {
+                        debugWarn('gas estimate failed, fallback fixed gas', e);
+                        continue; // try next strategy
+                    }
+                } else {
+                    overrides = { gasLimit: s.gasLimit };
+                }
+                const tx = await contractWithSigner[method](...args, overrides);
+                return tx;
+            } catch (e) {
+                debugWarn(`${method} with strategy "${s.label}" failed`, e);
+                if ((e.message || '').includes('native send fail')) throw e;
+                if (i === strategies.length - 1) throw e;
             }
-            if (typeof amount === 'string' && amount.length > 15 && !amount.includes('.') && !amount.includes('e')) {
-                const f = Number(ethers.formatUnits(amount, 18));
-                return f === 0 ? '0.0000' : f < 0.0001 ? '< 0.0001' : f.toFixed(4);
-            }
-            const n = Number(amount);
-            return n === 0 ? '0.0000' : n < 0.0001 ? '< 0.0001' : n.toFixed(4);
-        } catch {
-            const n = Number(amount);
-            return isNaN(n) ? String(amount) : n.toFixed(4);
         }
-    };
+    }
 
+    // ---------- render ----------
     if (!provider) {
         return (
             <div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
                 <div className="hp-section__head">
                     <h2>BlockShare Revenue Portal</h2>
-                    <p style={{ color: 'var(--hp-muted)' }}>Connect your wallet to view stats and claim earnings.</p>
+                    <p style={{ color: 'var(--hp-muted)' }}>
+                        Connect your wallet to view your revenue sharing stats and claim earnings.
+                    </p>
                 </div>
             </div>
         );
@@ -560,73 +434,47 @@ const BlockSharePage: React.FC = () => {
             <div className="hp-section__head">
                 <h2>🏛️ BlockShare Revenue Portal</h2>
                 <p style={{ color: 'var(--hp-muted)' }}>
-                    Track Blockdust marketplace revenue sharing and claim your earnings.
+                    Track your BlockDust marketplace revenue sharing and claim your earnings.
                 </p>
             </div>
 
             {contractError && (
-                <div
-                    style={{
-                        padding: '1rem',
-                        marginBottom: '1.5rem',
-                        borderRadius: '8px',
-                        background: 'rgba(220, 38, 127, 0.1)',
-                        border: '1px solid rgba(220, 38, 127, 0.3)',
-                        color: '#ff6b6b',
-                    }}
-                >
+                <div style={{
+                    padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px',
+                    background: 'rgba(220, 38, 127, 0.1)', border: '1px solid rgba(220, 38, 127, 0.3)', color: '#ff6b6b'
+                }}>
                     <strong>⚠️ Contract Issue:</strong> {contractError}
                 </div>
             )}
 
             {status && !contractError && (
-                <div
-                    style={{
-                        whiteSpace: 'pre-wrap',
-                        padding: '1rem',
-                        marginBottom: '1.5rem',
-                        borderRadius: '8px',
-                        background: 'rgba(85, 51, 255, 0.1)',
-                        border: '1px solid rgba(85, 51, 255, 0.3)',
-                        color: '#fff',
-                    }}
-                >
+                <div style={{
+                    padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px',
+                    background: 'rgba(85, 51, 255, 0.1)', border: '1px solid rgba(85, 51, 255, 0.3)', color: '#fff'
+                }}>
                     {status}
                 </div>
             )}
 
-            {import.meta.env.VITE_DEBUG_MODE === 'true' && treasury && (
-                <div
-                    style={{
-                        padding: '1rem',
-                        marginBottom: '1.5rem',
-                        borderRadius: '8px',
-                        background: 'rgba(30, 30, 30, 0.8)',
-                        border: '1px solid rgba(85, 51, 255, 0.3)',
-                        fontSize: '0.85rem',
-                        fontFamily: 'monospace',
-                    }}
-                >
+            {DEBUG && treasury && (
+                <div style={{
+                    padding: '1rem', marginBottom: '1.5rem', borderRadius: '8px',
+                    background: 'rgba(30, 30, 30, 0.8)', border: '1px solid rgba(85, 51, 255, 0.3)',
+                    fontSize: '0.85rem', fontFamily: 'monospace'
+                }}>
                     <div style={{ color: '#00d4ff', marginBottom: '0.5rem' }}>🔍 Debug</div>
                     <div>Treasury: {treasuryAddress}</div>
                     <div>NFT: {nftAddress}</div>
-                    <div>Loaded: {dataLoaded ? '✅' : '❌'}</div>
+                    <div>Data Loaded: {dataLoaded ? '✅' : '❌'}</div>
                     <div>Loading: {loading ? '🔄' : '✅'}</div>
                     <div>Calculating: {calculating ? '🔄' : '✅'}</div>
                     <div>Token IDs: [{userTokenIds.join(', ')}]</div>
                     <div>Claimable: {claimableAmount} VTRU</div>
-                    <div>Methods → balance: {methodsWorking.treasuryBalance ? '✅' : '❌'}</div>
-                    <div>Methods → claimable(): {methodsWorking.claimableCall ? '✅' : '❌'}</div>
-                    <div>Methods → nftBalance: {methodsWorking.nftBalance ? '✅' : '❌'}</div>
-                    <div>Logs → user claims: {methodsWorking.logsScanning ? '🔄' : '✅ (done)'}</div>
-                    <div>Logs → holders: {methodsWorking.holdersScanning ? '🔄' : '✅ (done)'}</div>
-                    <div>Scan step: {STEP} blocks</div>
-                    <div>Treasury start: {TREASURY_START.toString()}</div>
-                    <div>NFT start: {NFT_START.toString()}</div>
+                    <div>• Treasury Balance: {methodsWorking.totalRevenue ? '✅' : '❌'}</div>
+                    <div>• Contract cumulativePerTokenX18: {methodsWorking.actualContract ? '✅' : '❌'}</div>
                 </div>
             )}
 
-            {/* Refresh */}
             {wallet && treasury && (
                 <div style={{ marginBottom: '1.5rem', textAlign: 'center' }}>
                     <button
@@ -634,7 +482,8 @@ const BlockSharePage: React.FC = () => {
                         onClick={async () => {
                             setDataLoaded(false);
                             setStatus('Refreshing data...');
-                            await loadEverything();
+                            await loadUserData();
+                            await loadTreasuryStats();
                             setStatus('');
                         }}
                         disabled={loading}
@@ -664,16 +513,11 @@ const BlockSharePage: React.FC = () => {
                         <div className="hp-mini__label">Claimable Amount</div>
                         <div className="hp-mini__value">
                             {calculating ? 'Calculating...' : `${formatVTRU(claimableAmount)} VTRU`}
-                            {parseFloat(claimableAmount) > 0 && (
-                                <div style={{ fontSize: '0.7rem', color: '#4ade80', marginTop: '0.2rem' }}>
-                                    ✅ From treasury claimable()
-                                </div>
-                            )}
                         </div>
                     </div>
                     <div className="hp-mini__card">
-                        <div className="hp-mini__label">Total Claimed (you)</div>
-                        <div className="hp-mini__value">{formatVTRU(userTotalClaimed)} VTRU</div>
+                        <div className="hp-mini__label">Total Claimed (lifetime)</div>
+                        <div className="hp-mini__value">{formatVTRU(totalClaimed)} VTRU</div>
                     </div>
                 </div>
 
@@ -691,14 +535,7 @@ const BlockSharePage: React.FC = () => {
                 )}
 
                 {wallet && !calculating && parseFloat(claimableAmount) === 0 && (
-                    <div
-                        style={{
-                            marginTop: '1.5rem',
-                            textAlign: 'center',
-                            color: 'var(--hp-muted)',
-                            fontStyle: 'italic',
-                        }}
-                    >
+                    <div style={{ marginTop: '1.5rem', textAlign: 'center', color: 'var(--hp-muted)', fontStyle: 'italic' }}>
                         No revenue available to claim at this time
                     </div>
                 )}
@@ -712,7 +549,7 @@ const BlockSharePage: React.FC = () => {
 
                 <div className="hp-mini">
                     <div className="hp-mini__card">
-                        <div className="hp-mini__label">Total Revenue</div>
+                        <div className="hp-mini__label">Total Revenue (balance)</div>
                         <div className="hp-mini__value">{formatVTRU(treasuryStats.totalRevenue)} VTRU</div>
                     </div>
                     <div className="hp-mini__card">
@@ -730,20 +567,24 @@ const BlockSharePage: React.FC = () => {
                 </div>
             </div>
 
+            {/* How it works */}
+            <div className="hp-section">
+                <div className="hp-section__head">
+                    <h3>How BlockShare Works</h3>
+                </div>
+                <div style={{ color: 'var(--hp-muted)', lineHeight: 1.6 }}>
+                    <p><strong>Revenue Sharing:</strong> A portion of marketplace fees is automatically distributed to RevShare NFT holders.</p>
+                    <p><strong>Your Share:</strong> Each RevShare NFT grants you shares in the revenue pool proportional to your holdings.</p>
+                    <p><strong>Claiming:</strong> Revenue accumulates over time and can be claimed anytime when available.</p>
+                    <p><strong>Mint RevShare NFTs:</strong> Visit the <a href="/mint" style={{ color: 'var(--hp-accent)' }}>Mint page</a> to acquire more RevShare NFTs and increase your revenue share.</p>
+                </div>
+            </div>
+
             {loading && (
-                <div
-                    style={{
-                        position: 'fixed',
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        background: 'rgba(0, 0, 0, 0.8)',
-                        padding: '2rem',
-                        borderRadius: '8px',
-                        color: '#fff',
-                        zIndex: 1000,
-                    }}
-                >
+                <div style={{
+                    position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
+                    background: 'rgba(0,0,0,0.8)', padding: '2rem', borderRadius: '8px', color: '#fff', zIndex: 1000
+                }}>
                     Loading RevShare data...
                 </div>
             )}
