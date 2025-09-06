@@ -21,6 +21,8 @@ const MintPage = () => {
     const [payoutAddress, setPayoutAddress] = useState('');
     const [contractHealthy, setContractHealthy] = useState(true);
     const [contractDiagnostics, setContractDiagnostics] = useState(null);
+    const [manualGasMode, setManualGasMode] = useState(false);
+    const [manualGasLimit, setManualGasLimit] = useState('400000');
 
     const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
 
@@ -199,30 +201,104 @@ const MintPage = () => {
                     debugLog(`- Payout type: ${diagnostics.payoutAddressType}`);
                     debugLog(`- Can receive ETH: ${diagnostics.payoutCanReceiveETH}`);
                     
-                    // Try to estimate gas - this will fail if payout mechanism has issues
-                    const gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
-                    diagnostics.gasEstimationWorks = true;
-                    debugLog(`✅ Gas estimation successful: ${gasEstimate.toString()} gas`);
+                    // Enhanced gas estimation with multiple strategies
+                    let gasEstimate = null;
+                    let estimationMethod = 'unknown';
+                    
+                    // Strategy 1: Standard gas estimation
+                    try {
+                        gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
+                        estimationMethod = 'standard';
+                        debugLog(`✅ Standard gas estimation successful: ${gasEstimate.toString()} gas`);
+                    } catch (standardError) {
+                        debugWarn('Standard gas estimation failed:', standardError);
+                        
+                        // Strategy 2: Try with higher gas limit
+                        try {
+                            gasEstimate = await contractWithSigner.mint.estimateGas(1, { 
+                                value: mintPriceWei,
+                                gasLimit: 500000 // Fixed high gas limit
+                            });
+                            estimationMethod = 'high-gas-limit';
+                            debugLog(`✅ High gas limit estimation successful: ${gasEstimate.toString()} gas`);
+                        } catch (highGasError) {
+                            debugWarn('High gas limit estimation failed:', highGasError);
+                            
+                            // Strategy 3: Try static gas analysis
+                            try {
+                                // Use a conservative fixed gas estimate based on typical mint operations
+                                if (diagnostics.payoutAddressType === 'contract') {
+                                    gasEstimate = 300000n; // Higher for contract payouts
+                                } else {
+                                    gasEstimate = 150000n; // Lower for EOA payouts
+                                }
+                                estimationMethod = 'static-analysis';
+                                debugLog(`⚠️ Using static gas estimate: ${gasEstimate.toString()} gas (${estimationMethod})`);
+                                
+                                // Test if this static estimate would work by calling with gasLimit
+                                await contractWithSigner.mint.estimateGas(1, { 
+                                    value: mintPriceWei,
+                                    gasLimit: gasEstimate
+                                });
+                                debugLog('✅ Static gas estimate validated');
+                            } catch (staticError) {
+                                debugWarn('Static gas estimation validation failed:', staticError);
+                                throw standardError; // Throw the original error
+                            }
+                        }
+                    }
+                    
+                    if (gasEstimate) {
+                        diagnostics.gasEstimationWorks = true;
+                        diagnostics.gasEstimate = gasEstimate.toString();
+                        diagnostics.gasEstimationMethod = estimationMethod;
+                        debugLog(`✅ Gas estimation successful via ${estimationMethod}: ${gasEstimate.toString()} gas`);
+                    } else {
+                        throw new Error('All gas estimation strategies failed');
+                    }
+                    
                 } catch (error) {
                     diagnostics.gasEstimationWorks = false;
-                    debugWarn('❌ Gas estimation failed:', error);
+                    debugWarn('❌ All gas estimation strategies failed:', error);
                     
-                    if (error.message.includes('payout fail')) {
+                    // Enhanced error analysis
+                    const errorMessage = error.message || '';
+                    const errorData = error.data || '';
+                    const errorCode = error.code || '';
+                    
+                    debugLog('Error analysis:', {
+                        message: errorMessage,
+                        data: errorData,
+                        code: errorCode,
+                        reason: error.reason
+                    });
+                    
+                    if (errorMessage.includes('payout fail')) {
                         if (diagnostics.payoutAddressType === 'contract' && !diagnostics.payoutCanReceiveETH) {
                             diagnostics.recommendations.push('IDENTIFIED: Payout address is a contract that cannot receive ETH. The contract needs a receive() or fallback() function, or the payout address should be changed to an EOA.');
                         } else if (diagnostics.payoutAddressType === 'contract') {
-                            diagnostics.recommendations.push('IDENTIFIED: Payout address is a contract. Even though it appears to accept ETH, the mint transaction might be running out of gas when transferring to it.');
+                            diagnostics.recommendations.push('IDENTIFIED: Payout address is a contract. The mint transaction requires significantly more gas to complete the payout transfer to a contract.');
+                            diagnostics.recommendations.push('SOLUTION: Try minting with manual gas limit of 500,000+ or ask the contract owner to change payout to an EOA.');
                         } else {
-                            diagnostics.recommendations.push('IDENTIFIED: Payout mechanism is failing for unknown reasons. This may be a contract bug or gas limit issue.');
+                            diagnostics.recommendations.push('IDENTIFIED: Payout mechanism is failing. This may be a contract bug, insufficient contract balance, or gas limit issue.');
                         }
-                    } else if (error.message.includes('insufficient funds')) {
+                    } else if (errorMessage.includes('missing revert data')) {
+                        diagnostics.recommendations.push('IDENTIFIED: Contract is reverting without clear error data. This often indicates:');
+                        diagnostics.recommendations.push('• Gas limit too low for complex payout operations');
+                        diagnostics.recommendations.push('• Contract state issue preventing successful execution');
+                        diagnostics.recommendations.push('• Payout address cannot properly receive the transfer');
+                        diagnostics.recommendations.push('SOLUTION: Try manual gas limit of 500,000+ or contact contract administrator');
+                    } else if (errorMessage.includes('insufficient funds')) {
                         // This is actually good - it means gas estimation worked but user doesn't have enough ETH
                         diagnostics.gasEstimationWorks = true;
                         diagnostics.recommendations.push('Gas estimation works, but you need more VTRU for minting');
-                    } else if (error.message.includes('execution reverted')) {
-                        diagnostics.recommendations.push(`Contract execution reverted: ${error.reason || error.message}`);
+                    } else if (errorMessage.includes('execution reverted')) {
+                        diagnostics.recommendations.push(`Contract execution reverted: ${error.reason || errorMessage}`);
                     } else {
-                        diagnostics.recommendations.push(`Gas estimation failed: ${error.message}`);
+                        diagnostics.recommendations.push(`Gas estimation failed: ${errorMessage}`);
+                        if (errorCode) {
+                            diagnostics.recommendations.push(`Error code: ${errorCode}`);
+                        }
                     }
                 }
             }
@@ -324,49 +400,116 @@ const MintPage = () => {
                 return;
             }
             
-            // Estimate gas for the mint function (minting 1 NFT)
+            // Enhanced gas estimation for the mint function
             setStatus('Estimating gas for mint transaction...');
             let gasEstimate;
-            try {
-                gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
-                debugLog('Gas estimation successful:', gasEstimate.toString());
-            } catch (gasError) {
-                criticalError('Gas estimation failed:', gasError);
-                
-                // Enhanced error handling with more specific messages
-                if (gasError.message.includes('payout fail')) {
-                    setStatus('❌ Contract Error: The minting payout mechanism is failing. This appears to be a contract-level issue that needs to be resolved by the contract administrator. Please contact support with this error.');
+            let gasEstimationMethod = 'unknown';
+            
+            // Check if user wants to use manual gas mode
+            if (manualGasMode && manualGasLimit) {
+                gasEstimate = BigInt(manualGasLimit);
+                gasEstimationMethod = 'manual-override';
+                debugLog(`Using manual gas limit: ${gasEstimate.toString()}`);
+                setStatus('Using manual gas limit...');
+            } else {
+                try {
+                    // Strategy 1: Use diagnostics gas estimate if available
+                    if (contractDiagnostics?.gasEstimate && contractDiagnostics?.gasEstimationWorks) {
+                        gasEstimate = BigInt(contractDiagnostics.gasEstimate);
+                        gasEstimationMethod = contractDiagnostics.gasEstimationMethod;
+                        debugLog(`Using pre-calculated gas estimate: ${gasEstimate.toString()} (${gasEstimationMethod})`);
+                    } else {
+                        // Strategy 2: Real-time gas estimation with fallbacks
+                        try {
+                            gasEstimate = await contractWithSigner.mint.estimateGas(1, { value: mintPriceWei });
+                            gasEstimationMethod = 'realtime-standard';
+                            debugLog('Real-time gas estimation successful:', gasEstimate.toString());
+                        } catch (standardError) {
+                            debugWarn('Standard gas estimation failed, trying alternatives...', standardError);
+                            
+                            try {
+                                // Try with higher fixed gas limit
+                                gasEstimate = await contractWithSigner.mint.estimateGas(1, { 
+                                    value: mintPriceWei,
+                                    gasLimit: 500000
+                                });
+                                gasEstimationMethod = 'realtime-high-gas';
+                                debugLog('High gas limit estimation successful:', gasEstimate.toString());
+                            } catch (highGasError) {
+                                debugWarn('High gas estimation failed, using emergency fallback...', highGasError);
+                                
+                                // Emergency fallback: Use conservative static estimates
+                                if (contractDiagnostics?.payoutAddressType === 'contract') {
+                                    gasEstimate = 400000n; // Very high for problematic contract payouts
+                                    gasEstimationMethod = 'emergency-contract-fallback';
+                                } else {
+                                    gasEstimate = 200000n; // High but reasonable for EOA payouts
+                                    gasEstimationMethod = 'emergency-eoa-fallback';
+                                }
+                                
+                                debugLog(`Using emergency gas estimate: ${gasEstimate.toString()} (${gasEstimationMethod})`);
+                                
+                                // Test if this emergency estimate is reasonable by trying a validation call
+                                try {
+                                    await contractWithSigner.mint.staticCall(1, { 
+                                        value: mintPriceWei,
+                                        gasLimit: gasEstimate
+                                    });
+                                    debugLog('✅ Emergency gas estimate validated with staticCall');
+                                } catch (staticError) {
+                                    debugWarn('Emergency gas estimate validation failed:', staticError);
+                                    
+                                    // Suggest manual gas mode
+                                    setStatus('❌ Automatic gas estimation failed. Please try Manual Gas Mode below.');
+                                    setManualGasMode(true);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                } catch (gasError) {
+                    criticalError('All gas estimation strategies failed:', gasError);
                     
-                    // Log detailed diagnostic information
-                    debugLog('Payout fail diagnostics:', {
-                        payoutAddress,
-                        saleActive,
-                        mintPrice,
-                        totalSupply,
-                        maxSupply,
-                        diagnostics: contractDiagnostics
-                    });
+                    // Enhanced error handling with more specific messages
+                    const errorMsg = gasError.message || '';
                     
-                    return;
-                } else if (gasError.message.includes('sale not active')) {
-                    setStatus('Minting is not currently active');
-                    return;
-                } else if (gasError.message.includes('max supply reached')) {
-                    setStatus('All RevShare NFTs have been minted');
-                    return;
-                } else if (gasError.message.includes('insufficient payment')) {
-                    setStatus('Insufficient payment amount. Please check the mint price.');
-                    return;
-                } else if (gasError.message.includes('insufficient funds')) {
-                    setStatus('Insufficient VTRU balance to mint. You need more VTRU in your wallet.');
-                    return;
-                } else {
-                    setStatus(`Contract error: ${gasError.reason || gasError.message}`);
-                    return;
+                    if (errorMsg.includes('payout fail')) {
+                        setStatus('❌ Contract Error: The minting payout mechanism is failing. Please try Manual Gas Mode below or contact the contract administrator.');
+                        setManualGasMode(true);
+                        return;
+                    } else if (errorMsg.includes('missing revert data')) {
+                        setStatus('❌ Contract Error: Transaction is failing without clear error data. Please try Manual Gas Mode below.');
+                        setManualGasMode(true);
+                        return;
+                    } else if (errorMsg.includes('sale not active')) {
+                        setStatus('Minting is not currently active');
+                        return;
+                    } else if (errorMsg.includes('max supply reached')) {
+                        setStatus('All RevShare NFTs have been minted');
+                        return;
+                    } else if (errorMsg.includes('insufficient payment')) {
+                        setStatus('Insufficient payment amount. Please check the mint price.');
+                        return;
+                    } else if (errorMsg.includes('insufficient funds')) {
+                        setStatus('Insufficient VTRU balance to mint. You need more VTRU in your wallet.');
+                        return;
+                    } else {
+                        setStatus(`❌ Gas estimation failed: ${gasError.reason || errorMsg}. Please try Manual Gas Mode below.`);
+                        setManualGasMode(true);
+                        return;
+                    }
                 }
             }
             
-            const gasLimit = gasEstimate * 120n / 100n; // 20% buffer
+            // Calculate gas limit with appropriate buffer based on estimation method
+            let gasBuffer = 20; // Default 20% buffer
+            if (gasEstimationMethod.includes('emergency') || gasEstimationMethod.includes('static') || gasEstimationMethod.includes('manual')) {
+                gasBuffer = 10; // Lower buffer for already conservative estimates
+            } else if (gasEstimationMethod.includes('high-gas')) {
+                gasBuffer = 15; // Medium buffer for high gas estimates
+            }
+            
+            const gasLimit = gasEstimate * BigInt(100 + gasBuffer) / 100n;
             
             setStatus('Sending mint transaction...');
             debugLog('Sending mint transaction with gas limit:', gasLimit.toString());
@@ -533,6 +676,12 @@ const MintPage = () => {
                             {contractDiagnostics.payoutCanReceiveETH !== undefined && (
                                 <div>Payout Can Receive ETH: {contractDiagnostics.payoutCanReceiveETH ? '✅' : '❌'}</div>
                             )}
+                            {contractDiagnostics.gasEstimate && (
+                                <div>Estimated Gas: {parseInt(contractDiagnostics.gasEstimate).toLocaleString()}</div>
+                            )}
+                            {contractDiagnostics.gasEstimationMethod && (
+                                <div>Gas Method: {contractDiagnostics.gasEstimationMethod}</div>
+                            )}
                             
                             {contractDiagnostics.recommendations && contractDiagnostics.recommendations.length > 0 && (
                                 <div style={{ marginTop: '0.5rem' }}>
@@ -540,11 +689,13 @@ const MintPage = () => {
                                     {contractDiagnostics.recommendations.map((rec, index) => (
                                         <div key={index} style={{ 
                                             color: rec.startsWith('IDENTIFIED:') ? '#ff6b6b' : 
-                                                   rec.startsWith('SOLUTION:') ? '#4ecdc4' : '#ffcc00', 
+                                                   rec.startsWith('SOLUTION:') ? '#4ecdc4' : 
+                                                   rec.startsWith('•') ? '#ffcc00' :
+                                                   '#ffcc00', 
                                             marginLeft: '1rem',
                                             fontWeight: rec.startsWith('IDENTIFIED:') || rec.startsWith('SOLUTION:') ? 'bold' : 'normal'
                                         }}>
-                                            • {rec}
+                                            {rec.startsWith('•') ? rec : `• ${rec}`}
                                         </div>
                                     ))}
                                 </div>
@@ -671,15 +822,152 @@ const MintPage = () => {
                     </div>
                 )}
 
-                {wallet && !contractHealthy && (
+                {/* Manual Gas Mode */}
+                {wallet && saleActive && totalSupply < maxSupply && (
+                    <div style={{ marginTop: '1.5rem' }}>
+                        <div style={{
+                            padding: '1rem',
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: '8px'
+                        }}>
+                            <div style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                marginBottom: '0.5rem',
+                                cursor: 'pointer'
+                            }} onClick={() => setManualGasMode(!manualGasMode)}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={manualGasMode}
+                                    onChange={(e) => setManualGasMode(e.target.checked)}
+                                    style={{ marginRight: '0.5rem' }}
+                                />
+                                <label style={{ fontWeight: 'bold', color: '#ffcc00' }}>
+                                    🛠️ Manual Gas Mode (Advanced)
+                                </label>
+                            </div>
+                            
+                            {manualGasMode && (
+                                <div style={{ marginTop: '1rem' }}>
+                                    <div style={{ 
+                                        fontSize: '0.9rem', 
+                                        color: 'rgba(255, 255, 255, 0.7)',
+                                        marginBottom: '0.5rem'
+                                    }}>
+                                        Use this when automatic gas estimation fails. Higher gas limits work better for contract payout addresses.
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                                        <label style={{ minWidth: '80px', fontSize: '0.9rem' }}>Gas Limit:</label>
+                                        <input
+                                            type="number"
+                                            value={manualGasLimit}
+                                            onChange={(e) => setManualGasLimit(e.target.value)}
+                                            min="100000"
+                                            max="1000000"
+                                            step="10000"
+                                            style={{
+                                                flex: 1,
+                                                padding: '0.5rem',
+                                                borderRadius: '4px',
+                                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                                background: 'rgba(0, 0, 0, 0.5)',
+                                                color: '#fff'
+                                            }}
+                                        />
+                                    </div>
+                                    <div style={{ 
+                                        display: 'flex', 
+                                        gap: '0.5rem', 
+                                        fontSize: '0.8rem',
+                                        marginTop: '0.5rem'
+                                    }}>
+                                        <button 
+                                            onClick={() => setManualGasLimit('200000')}
+                                            style={{
+                                                padding: '0.25rem 0.5rem',
+                                                borderRadius: '4px',
+                                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                                background: 'rgba(255, 255, 255, 0.1)',
+                                                color: '#fff',
+                                                fontSize: '0.8rem',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            Low (200k)
+                                        </button>
+                                        <button 
+                                            onClick={() => setManualGasLimit('400000')}
+                                            style={{
+                                                padding: '0.25rem 0.5rem',
+                                                borderRadius: '4px',
+                                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                                background: 'rgba(255, 255, 255, 0.1)',
+                                                color: '#fff',
+                                                fontSize: '0.8rem',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            Medium (400k)
+                                        </button>
+                                        <button 
+                                            onClick={() => setManualGasLimit('600000')}
+                                            style={{
+                                                padding: '0.25rem 0.5rem',
+                                                borderRadius: '4px',
+                                                border: '1px solid rgba(255, 255, 255, 0.2)',
+                                                background: 'rgba(255, 255, 255, 0.1)',
+                                                color: '#fff',
+                                                fontSize: '0.8rem',
+                                                cursor: 'pointer'
+                                            }}
+                                        >
+                                            High (600k)
+                                        </button>
+                                    </div>
+                                    <div style={{ 
+                                        fontSize: '0.8rem', 
+                                        color: 'rgba(255, 255, 255, 0.6)',
+                                        marginTop: '0.5rem'
+                                    }}>
+                                        💡 Recommended: Use "High (600k)" for contract payout addresses that are failing.
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {wallet && !contractHealthy && saleActive && totalSupply < maxSupply && (
                     <div style={{ 
                         marginTop: '2rem', 
-                        textAlign: 'center',
-                        color: '#ff4444',
-                        fontSize: '1.1rem',
-                        fontWeight: 'bold'
+                        textAlign: 'center'
                     }}>
-                        ⚠️ Contract configuration issue - minting disabled
+                        <div style={{
+                            marginBottom: '1rem',
+                            color: '#ffcc00',
+                            fontSize: '0.9rem'
+                        }}>
+                            ⚠️ Contract health check failed, but you can try Manual Gas Mode
+                        </div>
+                        <button 
+                            className="hp-btn hp-btn--primary"
+                            onClick={() => {
+                                setManualGasMode(true);
+                                setManualGasLimit('600000'); // Set high gas limit by default
+                                handleMint();
+                            }}
+                            disabled={minting || loading}
+                            style={{ 
+                                fontSize: '1rem', 
+                                padding: '0.8rem 2rem',
+                                background: 'linear-gradient(135deg, #ff8800, #ff3366)',
+                                border: 'none',
+                                opacity: 0.9
+                            }}
+                        >
+                            {minting ? 'Minting...' : `Try Mint with High Gas (${formatVTRU(mintPrice)} VTRU)`}
+                        </button>
                     </div>
                 )}
 
