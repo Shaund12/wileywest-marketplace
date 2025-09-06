@@ -233,6 +233,14 @@ function ProfilePage() {
         return () => { cancelled = true; };
     }, [activeTab, wallet, supabaseConnected, supabase]);
 
+    // Load user's NFT collection when collection tab is selected
+    useEffect(() => {
+        if (activeTab === 'collection' && wallet && provider) {
+            // Load collection data immediately when tab is selected
+            findAllUserNfts(false, false, false); // Load from cache first
+        }
+    }, [activeTab, wallet, provider]);
+
     // NEW: Build activity timeline from multiple sources (non-invasive, read-only)
     useEffect(() => {
         if (!wallet) { setActivities([]); return; }
