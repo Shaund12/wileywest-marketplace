@@ -134,14 +134,33 @@ const BlockSharePage = () => {
 
     async function testMethodAvailability(t, n) {
         const m = { ...methodsWorking };
-        // Treasury
+        // Treasury - try both standard and actual ABIs for claim methods
         try { await t.cumulativePerTokenX18(); m.cumulativePerTokenX18 = true; } catch { }
         try { await t.claimedPerTokenX18(1); m.claimedPerTokenX18 = true; } catch { }
         try { await t.claimable(1); m.claimable = true; } catch { }
         try { await t.pendingBeforeMint(); m.pendingBeforeMint = true; } catch { }
-        try { t.interface.getFunction('claim'); m.claim = true; } catch { }
-        try { t.interface.getFunction('claimMany'); m.claimMany = true; } catch { }
+        
+        // Test claim methods on both treasury contracts
+        try { 
+            t.interface.getFunction('claim'); 
+            m.claim = true; 
+        } catch { 
+            try {
+                treasuryActual?.interface.getFunction('claim');
+                m.claim = true;
+            } catch { }
+        }
+        try { 
+            t.interface.getFunction('claimMany'); 
+            m.claimMany = true; 
+        } catch { 
+            try {
+                treasuryActual?.interface.getFunction('claimMany');
+                m.claimMany = true;
+            } catch { }
+        }
         try { t.interface.getFunction('allocatePending'); m.allocatePending = true; } catch { }
+        
         // NFT
         try { await n.totalSupply(); m.nft_totalSupply = true; } catch { }
         try { await n.balanceOf(ethers.ZeroAddress); m.nft_balanceOf = true; } catch { }
@@ -503,7 +522,8 @@ const BlockSharePage = () => {
             setClaiming(true);
             setStatus('Claiming revenue…');
 
-            const t = treasury.connect(signer);
+            // Use treasuryActual which has the correct claim functions in its ABI
+            const t = (treasuryActual || treasury).connect(signer);
             let tx;
 
             if (userTokenIds.length === 1) {
@@ -594,6 +614,7 @@ const BlockSharePage = () => {
                 } else {
                     overrides = { gasLimit: s.gasLimit };
                 }
+                // For ethers v6, overrides must be the last parameter in the args array
                 const tx = await contractWithSigner[method](...args, overrides);
                 return tx;
             } catch (e) {
