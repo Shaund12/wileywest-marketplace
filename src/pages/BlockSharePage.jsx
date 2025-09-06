@@ -573,8 +573,8 @@ const BlockSharePage = () => {
                             Notes:
                             <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
                                 <li>“Minted after allocation” means you need NEW revenue for deltas.</li>
-                                <li>Allocate pending if pendingRevenue &gt; 0.</li>
-                                <li>If balance > 0 and cumulative == 0, contract logic didn’t allocate yet.</li>
+                                <li>Allocate pending if pendingRevenue {">"} 0.</li>
+                                <li>If balance {">"} 0 and cumulative == 0, contract logic didn't allocate yet.</li>
                             </ul>
                         </div>
                     </div>

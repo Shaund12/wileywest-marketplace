@@ -895,7 +895,14 @@ function ProfilePage() {
 
             // If user requests sync or cache is empty, trigger backend sync
             if (triggerSync || (userNfts.length === 0 && forceRefresh)) {
-                await triggerCollectionSync();
+                try {
+                    await triggerCollectionSync();
+                } catch (syncError) {
+                    console.warn('Collection sync failed, using cache only:', syncError);
+                    if (userNfts.length === 0) {
+                        setStatus("❌ Sync unavailable and no cached data - try refreshing or check connection");
+                    }
+                }
             }
 
         } catch (error) {
@@ -922,20 +929,42 @@ function ProfilePage() {
                 })
             });
             
+            // Get response text first to handle both JSON and HTML responses
+            const responseText = await response.text();
+            
             if (response.ok) {
-                const result = await response.json();
-                setStatus(`✅ Sync completed - found ${result.stats?.nfts || 0} NFTs`);
-                
-                // Reload from cache after sync
-                setTimeout(() => {
-                    findAllUserNfts(false, false, false);
-                }, 1000);
+                try {
+                    const result = JSON.parse(responseText);
+                    setStatus(`✅ Sync completed - found ${result.stats?.nfts || 0} NFTs`);
+                    
+                    // Reload from cache after sync
+                    setTimeout(() => {
+                        findAllUserNfts(false, false, false);
+                    }, 1000);
+                } catch (jsonError) {
+                    console.warn('Sync API returned non-JSON response:', responseText.substring(0, 200));
+                    setStatus(`❌ Sync API error: Invalid response format`);
+                }
             } else {
-                const error = await response.json();
-                setStatus(`❌ Sync failed: ${error.error || 'Unknown error'}`);
+                try {
+                    const error = JSON.parse(responseText);
+                    setStatus(`❌ Sync failed: ${error.error || 'Unknown error'}`);
+                } catch (jsonError) {
+                    // Response was not JSON (likely HTML error page)
+                    console.warn('Sync API returned HTML error:', responseText.substring(0, 200));
+                    
+                    if (responseText.includes('500') || responseText.includes('Internal Server Error')) {
+                        setStatus(`❌ Sync service temporarily unavailable - using cache only`);
+                    } else if (responseText.includes('404') || responseText.includes('Not Found')) {
+                        setStatus(`❌ Sync service not found - using cache only`);
+                    } else {
+                        setStatus(`❌ Sync service error - using cache only`);
+                    }
+                }
             }
         } catch (error) {
-            setStatus(`❌ Sync request failed: ${error.message}`);
+            console.warn('Sync request failed:', error);
+            setStatus(`❌ Sync unavailable - using cache only`);
         }
     };
 
@@ -1428,7 +1457,7 @@ function ProfilePage() {
                                         className="secondary-button action-button"
                                         onClick={() => findAllUserNfts(false, false, true)}
                                         disabled={isLoading}
-                                        title="Trigger immediate collection sync via backend"
+                                        title="Trigger blockchain scan to find new NFTs (requires backend service)"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
                                             <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
@@ -1596,15 +1625,16 @@ function ProfilePage() {
                                         ) : (
                                             <>
                                                 <p>No NFTs found in your wallet</p>
-                                                <p className="small">Try syncing your collection data</p>
+                                                <p className="small">Try scanning for NFTs in your wallet</p>
                                             </>
                                         )}
                                         <button
                                             className="primary-button"
                                             onClick={() => findAllUserNfts(true, false, true)}
                                             disabled={isLoading}
+                                            title="Scan blockchain for NFTs in your wallet"
                                         >
-                                            {isLoading ? 'Loading...' : 'Sync Collection Data'}
+                                            {isLoading ? 'Scanning...' : 'Scan for NFTs'}
                                         </button>
                                     </div>
                                 )}
@@ -1673,7 +1703,7 @@ function ProfilePage() {
                                         ) : (
                                             <>
                                                 <p>No NFTs found in your wallet</p>
-                                                <p className="small">Try syncing your collection data</p>
+                                                <p className="small">Try scanning for NFTs in your wallet</p>
                                             </>
 
                                         )}
@@ -1681,8 +1711,9 @@ function ProfilePage() {
                                             className="primary-button"
                                             onClick={() => findAllUserNfts(true, false, true)}
                                             disabled={isLoading}
+                                            title="Scan blockchain for NFTs in your wallet"
                                         >
-                                            {isLoading ? 'Loading...' : 'Sync Collection Data'}
+                                            {isLoading ? 'Scanning...' : 'Scan for NFTs'}
                                         </button>
                                     </div>
                                 )}
