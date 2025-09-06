@@ -823,12 +823,16 @@ function ProfilePage() {
         setIsLoading(true);
 
         try {
+            // Track if we have an existing cached profile
+            let hasExistingProfile = false;
+            
             // Always load cache first for instant display
             if (supabaseConnected && getCachedProfile) {
                 setStatus("Loading collection from cache...");
                 try {
                     const cachedProfile = await getCachedProfile(wallet);
                     if (cachedProfile?.nfts && cachedProfile.nfts.length > 0) {
+                        hasExistingProfile = true;
                         setUserNfts(cachedProfile.nfts);
                         
                         // Build metadata from cached NFTs with fallbacks
@@ -888,14 +892,19 @@ function ProfilePage() {
                     }
                 } catch (error) {
                     debugWarn("Cache load failed:", error);
-                    setStatus("Cache unavailable - will use manual sync");
+                    setStatus("Cache unavailable - will trigger sync to create profile");
                     setUserNfts([]);
                 }
             }
 
-            // If user requests sync or cache is empty, trigger backend sync
-            if (triggerSync || (userNfts.length === 0 && forceRefresh)) {
+            // Auto-trigger sync for new profiles or when explicitly requested
+            const shouldTriggerSync = triggerSync || 
+                                     (userNfts.length === 0 && forceRefresh) ||
+                                     (!hasExistingProfile && userNfts.length === 0);
+            
+            if (shouldTriggerSync) {
                 try {
+                    debugLog(`Triggering collection sync - triggerSync: ${triggerSync}, forceRefresh: ${forceRefresh}, hasExistingProfile: ${hasExistingProfile}`);
                     await triggerCollectionSync();
                 } catch (syncError) {
                     console.warn('Collection sync failed, using cache only:', syncError);
