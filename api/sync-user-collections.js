@@ -24,9 +24,11 @@ const ERC1155_ABI = [
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ];
 
-// Known NFT contracts to scan
+// Known NFT contracts to scan - expanded list for better initial discovery
 const KNOWN_NFT_CONTRACTS = [
     '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
+    // Add more known NFT contracts on Vitruveo network here
+    // This ensures new users get scanned for common collections even without recent transfers
 ];
 
 // IPFS gateways for metadata resolution (ordered by reliability)
@@ -41,7 +43,7 @@ const IPFS_GATEWAYS = [
 
 // Configuration
 const COLLECTION_CONFIG = {
-    MAX_BLOCKS_BACK: 500000, // ~6 months of blocks
+    MAX_BLOCKS_BACK: 1000000, // Increased to ~12 months for better initial discovery
     BATCH_SIZE: 50,
     MAX_RETRIES: 3,
     RETRY_DELAY: 1000,
@@ -494,35 +496,51 @@ async function scanERC1155(contractAddress, walletAddress) {
     }
 }
 
-// Find NFT contracts from Transfer events
+// Find NFT contracts from Transfer events and comprehensive scanning
 async function findNFTContracts(walletAddress) {
     try {
         console.log(`🔍 Finding NFT contracts for ${walletAddress}...`);
         
-        // ERC721 Transfer events
-        const erc721TransferTopic = ethers.id('Transfer(address,address,uint256)');
-        const toUserTopic = ethers.zeroPadValue(walletAddress.toLowerCase(), 32);
-        
-        const currentBlock = await provider.getBlockNumber();
-        const fromBlock = Math.max(0, currentBlock - COLLECTION_CONFIG.MAX_BLOCKS_BACK);
-        
-        const filter = {
-            topics: [erc721TransferTopic, null, toUserTopic],
-            fromBlock,
-            toBlock: 'latest'
-        };
-        
-        const logs = await provider.getLogs(filter);
+        // Start with known contracts to ensure basic coverage
         const contracts = new Set([...KNOWN_NFT_CONTRACTS.map(addr => addr.toLowerCase())]);
         
-        logs.forEach(log => {
-            contracts.add(log.address.toLowerCase());
-        });
+        try {
+            // ERC721 Transfer events
+            const erc721TransferTopic = ethers.id('Transfer(address,address,uint256)');
+            const toUserTopic = ethers.zeroPadValue(walletAddress.toLowerCase(), 32);
+            
+            const currentBlock = await provider.getBlockNumber();
+            const fromBlock = Math.max(0, currentBlock - COLLECTION_CONFIG.MAX_BLOCKS_BACK);
+            
+            console.log(`Scanning Transfer events from block ${fromBlock} to ${currentBlock}...`);
+            
+            const filter = {
+                topics: [erc721TransferTopic, null, toUserTopic],
+                fromBlock,
+                toBlock: 'latest'
+            };
+            
+            const logs = await provider.getLogs(filter);
+            
+            logs.forEach(log => {
+                contracts.add(log.address.toLowerCase());
+            });
+            
+            console.log(`📋 Found ${logs.length} transfer events, ${contracts.size} total contracts to scan`);
+        } catch (eventError) {
+            console.warn('Failed to fetch transfer events, using known contracts only:', eventError.message);
+        }
         
-        console.log(`📋 Found ${contracts.size} potential NFT contracts`);
+        // Always ensure we have at least the known contracts even if event scanning fails
+        if (contracts.size === 0) {
+            console.log('No contracts found via events, using fallback known contracts');
+            KNOWN_NFT_CONTRACTS.forEach(addr => contracts.add(addr.toLowerCase()));
+        }
+        
         return [...contracts];
     } catch (e) {
         console.warn('Failed to find NFT contracts:', e.message);
+        console.log('Falling back to known contracts only');
         return [...KNOWN_NFT_CONTRACTS.map(addr => addr.toLowerCase())];
     }
 }
@@ -628,13 +646,16 @@ async function cacheUserNFTs(walletAddress, nfts) {
     try {
         console.log(`💾 Caching ${nfts.length} NFTs for ${walletAddress}...`);
         
-        // Use upsert to update or insert user profile
+        // Always create/update user profile, even if they have 0 NFTs
+        // This ensures the profile exists for future cache lookups
         const { error } = await supabase
             .from('user_profiles')
             .upsert({
                 wallet_address: walletAddress.toLowerCase(),
                 nfts: nfts,
-                updated_at: new Date().toISOString()
+                updated_at: new Date().toISOString(),
+                last_sync: new Date().toISOString(),
+                sync_status: nfts.length > 0 ? 'completed' : 'completed_empty'
             });
         
         if (error) {
@@ -642,7 +663,11 @@ async function cacheUserNFTs(walletAddress, nfts) {
             return false;
         }
         
-        console.log(`✅ Cached ${nfts.length} NFTs for ${walletAddress}`);
+        if (nfts.length === 0) {
+            console.log(`✅ Created empty profile for ${walletAddress} - no NFTs found`);
+        } else {
+            console.log(`✅ Cached ${nfts.length} NFTs for ${walletAddress}`);
+        }
         return true;
     } catch (error) {
         console.error(`❌ Failed to cache NFTs for ${walletAddress}:`, error.message);
@@ -736,7 +761,12 @@ export default async function handler(req, res) {
                 errors: cached ? 0 : 1,
                 total: 1,
                 nfts: nfts.length,
-                wallet: targetWallet
+                wallet: targetWallet,
+                message: cached 
+                    ? (nfts.length > 0 
+                        ? `Successfully scanned and cached ${nfts.length} NFTs` 
+                        : 'Scan completed - no NFTs found but profile created') 
+                    : 'Failed to cache scan results'
             };
         } else {
             // Batch sync for multiple users (cron job or general sync)

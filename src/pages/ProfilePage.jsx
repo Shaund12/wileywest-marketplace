@@ -831,63 +831,72 @@ function ProfilePage() {
                 setStatus("Loading collection from cache...");
                 try {
                     const cachedProfile = await getCachedProfile(wallet);
-                    if (cachedProfile?.nfts && cachedProfile.nfts.length > 0) {
+                    if (cachedProfile) {
+                        // Profile exists, regardless of NFT count
                         hasExistingProfile = true;
-                        setUserNfts(cachedProfile.nfts);
                         
-                        // Build metadata from cached NFTs with fallbacks
-                        const metadata = {};
-                        let metadataLoaded = 0;
-                        let metadataMissing = 0;
-                        
-                        cachedProfile.nfts.forEach(nft => {
-                            const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                        if (cachedProfile.nfts && cachedProfile.nfts.length > 0) {
+                            setUserNfts(cachedProfile.nfts);
                             
-                            // Always create metadata entry, even if minimal
-                            metadata[key] = {
-                                name: nft.name || nft.metadata?.name || `NFT #${nft.tokenId}`,
-                                imageUrl: nft.image || nft.metadata?.image || null,
-                                description: nft.metadata?.description || null,
-                                attributes: nft.metadata?.attributes || [],
-                                loaded: true,
-                                loading: false,
-                                hasMetadata: !!(nft.metadata && Object.keys(nft.metadata).length > 0),
-                                hasImage: !!(nft.image || nft.metadata?.image)
-                            };
+                            // Build metadata from cached NFTs with fallbacks
+                            const metadata = {};
+                            let metadataLoaded = 0;
+                            let metadataMissing = 0;
                             
-                            // Include all metadata if available
-                            if (nft.metadata && Object.keys(nft.metadata).length > 0) {
-                                metadata[key] = { ...metadata[key], ...nft.metadata };
-                                metadataLoaded++;
-                            } else {
-                                metadataMissing++;
+                            cachedProfile.nfts.forEach(nft => {
+                                const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                                
+                                // Always create metadata entry, even if minimal
+                                metadata[key] = {
+                                    name: nft.name || nft.metadata?.name || `NFT #${nft.tokenId}`,
+                                    imageUrl: nft.image || nft.metadata?.image || null,
+                                    description: nft.metadata?.description || null,
+                                    attributes: nft.metadata?.attributes || [],
+                                    loaded: true,
+                                    loading: false,
+                                    hasMetadata: !!(nft.metadata && Object.keys(nft.metadata).length > 0),
+                                    hasImage: !!(nft.image || nft.metadata?.image)
+                                };
+                                
+                                // Include all metadata if available
+                                if (nft.metadata && Object.keys(nft.metadata).length > 0) {
+                                    metadata[key] = { ...metadata[key], ...nft.metadata };
+                                    metadataLoaded++;
+                                } else {
+                                    metadataMissing++;
+                                }
+                            });
+                            
+                            setNftMetadata(metadata);
+                            
+                            const totalNfts = cachedProfile.nfts.length;
+                            const successRate = totalNfts > 0 ? Math.round((metadataLoaded / totalNfts) * 100) : 0;
+                            
+                            setStatus(`✅ Loaded ${totalNfts} NFTs from cache (${successRate}% with metadata)`);
+                            await fetchContractInfoForNfts(cachedProfile.nfts);
+                            
+                            // Fetch metadata for cached NFTs that don't have complete metadata
+                            const nftsNeedingMetadata = cachedProfile.nfts.filter(nft => {
+                                const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                                const meta = metadata[key];
+                                return !meta?.hasMetadata || !meta?.hasImage;
+                            });
+                            
+                            if (nftsNeedingMetadata.length > 0) {
+                                setStatus(`🔄 Fetching metadata for ${nftsNeedingMetadata.length} NFTs...`);
+                                await batchFetchMetadata(nftsNeedingMetadata);
+                                setStatus(`✅ Metadata refresh complete - ${totalNfts} NFTs ready`);
                             }
-                        });
-                        
-                        setNftMetadata(metadata);
-                        
-                        const totalNfts = cachedProfile.nfts.length;
-                        const successRate = totalNfts > 0 ? Math.round((metadataLoaded / totalNfts) * 100) : 0;
-                        
-                        setStatus(`✅ Loaded ${totalNfts} NFTs from cache (${successRate}% with metadata)`);
-                        await fetchContractInfoForNfts(cachedProfile.nfts);
-                        
-                        // Fetch metadata for cached NFTs that don't have complete metadata
-                        const nftsNeedingMetadata = cachedProfile.nfts.filter(nft => {
-                            const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
-                            const meta = metadata[key];
-                            return !meta?.hasMetadata || !meta?.hasImage;
-                        });
-                        
-                        if (nftsNeedingMetadata.length > 0) {
-                            setStatus(`🔄 Fetching metadata for ${nftsNeedingMetadata.length} NFTs...`);
-                            await batchFetchMetadata(nftsNeedingMetadata);
-                            setStatus(`✅ Metadata refresh complete - ${totalNfts} NFTs ready`);
+                            
+                            setTimeout(() => setStatus(''), 3000);
+                        } else {
+                            // Profile exists but has 0 NFTs
+                            setUserNfts([]);
+                            setStatus("✅ Profile found - no NFTs in collection");
+                            setTimeout(() => setStatus(''), 3000);
                         }
-                        
-                        setTimeout(() => setStatus(''), 3000);
                     } else {
-                        setStatus("No NFTs found in cache - triggering sync...");
+                        setStatus("No profile found - will trigger initial scan...");
                         setUserNfts([]);
                     }
                 } catch (error) {
@@ -944,9 +953,16 @@ function ProfilePage() {
             if (response.ok) {
                 try {
                     const result = JSON.parse(responseText);
-                    setStatus(`✅ Sync completed - found ${result.stats?.nfts || 0} NFTs`);
+                    const nftCount = result.stats?.nfts || 0;
+                    const message = result.stats?.message || '';
                     
-                    // Reload from cache after sync
+                    if (nftCount > 0) {
+                        setStatus(`✅ Sync completed - found ${nftCount} NFTs`);
+                    } else {
+                        setStatus(`✅ Sync completed - no NFTs found but profile created for future updates`);
+                    }
+                    
+                    // Reload from cache after sync, even if 0 NFTs found
                     setTimeout(() => {
                         findAllUserNfts(false, false, false);
                     }, 1000);
