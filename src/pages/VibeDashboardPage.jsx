@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSupabase } from '../context/SupabaseContext';
-import { debugWarn, criticalError } from '../utils/debugUtils';
+import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
 
 function VibeDashboardPage() {
@@ -82,61 +82,79 @@ function VibeDashboardPage() {
                 default: timeframeBoundary = sevenDaysAgo;
             }
 
-            // Try multiple table options to find where the data is stored
-            const tables = ['sale_breakdowns', 'marketplace_sale_breakdowns', 'marketplace_transactions'];
-            let saleBreakdowns = [];
-
-            for (const table of tables) {
-                try {
-                    const { data, error } = await supabase
-                        .from(table)
-                        .select('*');
-
-                    if (!error && data?.length > 0) {
-                        saleBreakdowns = data;
-                        debugLog(`Found ${data.length} records in ${table}`);
-                        break;
-                    }
-                } catch (e) {
-                    // Continue trying other tables
-                }
-            }
-
-            // Same for auction tables
-            const auctionTables = ['auction_breakdowns', 'marketplace_auction_breakdowns', 'auction_transactions'];
-            let auctionBreakdowns = [];
-
-            for (const table of auctionTables) {
-                try {
-                    const { data, error } = await supabase
-                        .from(table)
-                        .select('*');
-
-                    if (!error && data?.length > 0) {
-                        auctionBreakdowns = data;
-                        debugLog(`Found ${data.length} records in ${table}`);
-                        break;
-                    }
-                } catch (e) {
-                    // Continue trying other tables
-                }
-            }
-
-            // Try to get royalty payments
-            const { data: royaltyPayments, error: royaltyError } = await supabase
-                .from('royalty_payments')
-                .select('recipient, amount, timestamp, transaction_hash')
-                .order('timestamp', { ascending: false });
-
-            if (royaltyError) criticalError('Error fetching royalty payments:', royaltyError);
-
-            const saleData = saleBreakdowns || [];
-            const auctionData = auctionBreakdowns || [];
-            const royaltyData = royaltyPayments || [];
-            const allBreakdowns = [
-                ...saleData.map(b => ({ ...b, kind: 'sale', id: b.listing_id || b.listingId })),
-                ...auctionData.map(b => ({ ...b, kind: 'auction', id: b.auction_id || b.auctionId }))
+            // Try all table options that might contain our data
+            const possibleTables = [
+                'sale_breakdowns',
+                'auction_breakdowns',
+                'SaleBreakdown',
+                'AuctionBreakdown',
+                'nft_sales',
+                'marketplace_events'
             ];
+
+            // Try each table and collect any valid data
+            let allBreakdowns = [];
+
+            for (const tableName of possibleTables) {
+                try {
+                    debugLog(`Attempting to fetch data from table: ${tableName}`);
+                    const { data, error } = await supabase
+                        .from(tableName)
+                        .select('*')
+                        .limit(1000);
+
+                    // Skip if table doesn't exist or has no data
+                    if (error) {
+                        if (error.code === '404' || error.code === 'PGRST116') {
+                            debugLog(`Table ${tableName} not found`);
+                        } else {
+                            debugWarn(`Error fetching from ${tableName}:`, error);
+                        }
+                        continue;
+                    }
+
+                    if (data && data.length > 0) {
+                        debugLog(`Found ${data.length} records in ${tableName}`);
+
+                        // Normalize the data to handle different field naming conventions
+                        const normalized = data.map(row => ({
+                            ...row,
+                            // Normalize common field names that may vary
+                            kind: tableName.includes('sale') ? 'sale' : 'auction',
+                            id: row.listing_id || row.listingId || row.auction_id || row.auctionId || row.id,
+                            nft_contract: row.nft_contract || row.nftContract || row.contract_address,
+                            timestamp: row.timestamp || row.created_at || row.createdAt || row.block_timestamp,
+                            transaction_hash: row.transaction_hash || row.transactionHash || row.tx_hash
+                        }));
+
+                        allBreakdowns = [...allBreakdowns, ...normalized];
+                    }
+                } catch (e) {
+                    debugWarn(`Exception when fetching from ${tableName}:`, e);
+                    // Continue to next table on error
+                }
+            }
+
+            // If we found no data, show empty state
+            if (allBreakdowns.length === 0) {
+                debugWarn('No marketplace data found in any table');
+                setStats({
+                    totalVTRUSent: '0',
+                    vtruSent24h: '0',
+                    vtruSent7d: '0',
+                    totalTransactions: 0,
+                    totalPlatformFees: '0',
+                    totalRoyalties: '0',
+                    avgPayout: '0'
+                });
+                setChartData([]);
+                setLeaderboards({ collections: [], royalties: [] });
+                setRecentEvents([]);
+                setLoading(false);
+                return;
+            }
+
+            debugLog(`Processing ${allBreakdowns.length} total marketplace events`);
 
             // Aggregate stats
             const totalVTRUSentNum = allBreakdowns.reduce((sum, b) => sum + getVibeAmount(b), 0);
@@ -174,7 +192,11 @@ function VibeDashboardPage() {
 
             // Chart (by day) from marketplace breakdowns
             const chartDataMap = new Map();
-            const timeframeRows = allBreakdowns.filter(b => toMs(b.timestamp) >= timeframeBoundary.getTime());
+            const timeframeRows = allBreakdowns.filter(b => {
+                const ts = toMs(b.timestamp);
+                return !isNaN(ts) && ts >= timeframeBoundary.getTime();
+            });
+
             timeframeRows.forEach(b => {
                 const date = new Date(toMs(b.timestamp)).toISOString().split('T')[0];
                 if (!chartDataMap.has(date)) {
@@ -184,6 +206,7 @@ function VibeDashboardPage() {
                 entry.vtruSent += getVibeAmount(b);
                 entry.transactions += 1;
             });
+
             const chartDataArray = Array.from(chartDataMap.entries())
                 .map(([date, data]) => ({ date, ...data }))
                 .sort((a, b) => a.date.localeCompare(b.date));
@@ -196,6 +219,8 @@ function VibeDashboardPage() {
             // Track collections by nftContract instead of listing ID
             allBreakdowns.forEach(b => {
                 const nftContract = b.nft_contract || b.nftContract || 'Unknown';
+                if (!nftContract || nftContract === 'Unknown') return;
+
                 const key = String(nftContract);
 
                 const pf = parseFloat(b.platform_fee_total || b.platformFeeTotal || b.platform_fee || '0') || 0;
@@ -208,12 +233,12 @@ function VibeDashboardPage() {
             // Group by royalty recipient for royalty leaderboard
             const royaltyRecipientMap = new Map();
             allBreakdowns.forEach(b => {
-                const recipient = b.royalty_receiver || b.royaltyReceiver || 'Unknown';
-                if (recipient && recipient !== 'Unknown' && recipient !== '0x0000000000000000000000000000000000000000') {
-                    const amount = parseFloat(b.royalty_amount || b.royaltyAmount || b.royalty || '0') || 0;
-                    if (amount > 0) {
-                        royaltyRecipientMap.set(recipient, (royaltyRecipientMap.get(recipient) || 0) + amount);
-                    }
+                const recipient = b.royalty_receiver || b.royaltyReceiver || '';
+                if (!recipient || recipient === '0x0000000000000000000000000000000000000000') return;
+
+                const amount = parseFloat(b.royalty_amount || b.royaltyAmount || b.royalty || '0') || 0;
+                if (amount > 0) {
+                    royaltyRecipientMap.set(recipient, (royaltyRecipientMap.get(recipient) || 0) + amount);
                 }
             });
 
@@ -242,25 +267,43 @@ function VibeDashboardPage() {
             const payoutEvents = allBreakdowns.map(row => {
                 const ts = toMs(row.timestamp);
                 const amt = getVibeAmount(row);
+                if (isNaN(ts) || amt <= 0) return null;
+
                 return {
                     ts,
                     time: formatTimeAgo(ts),
-                    description: `VIBE payout ${amt.toFixed(2)} VTRU from ${row.kind} ${String(row.id || '—').slice(0, 10)}...`,
-                    hash: row.transaction_hash || row.transactionHash,
+                    description: `VIBE payout ${amt.toFixed(2)} VTRU from ${row.kind || 'transaction'} ${String(row.id || '—').slice(0, 10)}...`,
+                    hash: row.transaction_hash || row.transactionHash || row.tx_hash,
                     type: 'vibe_payout'
                 };
-            }).filter(e => parseFloat(e.description.split(' ')[2]) > 0); // Filter out zero payouts
+            }).filter(Boolean); // Filter out nulls
 
-            const royaltyEvents = (royaltyData || []).map(r => {
-                const ts = toMs(r.timestamp);
-                return {
-                    ts,
-                    time: formatTimeAgo(ts),
-                    description: `Royalty payment: ${parseFloat(r.amount || '0').toFixed(2)} VTRU`,
-                    hash: r.transaction_hash,
-                    type: 'royalty'
-                };
-            });
+            // Try to fetch royalty payments, but don't fail if the table doesn't exist
+            let royaltyEvents = [];
+            try {
+                const { data: royaltyPayments, error: royaltyError } = await supabase
+                    .from('royalty_payments')
+                    .select('recipient, amount, timestamp, transaction_hash')
+                    .order('timestamp', { ascending: false })
+                    .limit(50);
+
+                if (!royaltyError && royaltyPayments?.length) {
+                    royaltyEvents = royaltyPayments.map(r => {
+                        const ts = toMs(r.timestamp);
+                        if (isNaN(ts)) return null;
+
+                        return {
+                            ts,
+                            time: formatTimeAgo(ts),
+                            description: `Royalty payment: ${parseFloat(r.amount || '0').toFixed(2)} VTRU`,
+                            hash: r.transaction_hash || r.transactionHash || r.tx_hash,
+                            type: 'royalty'
+                        };
+                    }).filter(Boolean);
+                }
+            } catch (e) {
+                debugWarn('Error fetching royalty payments:', e);
+            }
 
             const allEvents = [...payoutEvents, ...royaltyEvents]
                 .sort((a, b) => b.ts - a.ts)
@@ -288,6 +331,8 @@ function VibeDashboardPage() {
     };
 
     const formatTimeAgo = (timestamp) => {
+        if (!timestamp || isNaN(timestamp)) return 'Unknown';
+
         const now = Date.now();
         const diffMs = now - timestamp;
         const diffMins = Math.floor(diffMs / (1000 * 60));
@@ -300,11 +345,6 @@ function VibeDashboardPage() {
     };
 
     const formatVTRU = (amount) => `${amount} VTRU`;
-
-    // Helper function for debugging - not displayed in UI
-    const debugLog = (message, ...args) => {
-        console.log(`[VIBE Dashboard] ${message}`, ...args);
-    };
 
     return (
         <div className="hp" style={{ maxWidth: 1400, margin: '3rem auto', padding: '0 1.25rem' }}>
