@@ -897,10 +897,10 @@ function ProfilePage() {
                 }
             }
 
-            // Auto-trigger sync for new profiles or when explicitly requested
+            // Auto-trigger sync for new profiles when Supabase is connected, or when explicitly requested
             const shouldTriggerSync = triggerSync || 
                                      (userNfts.length === 0 && forceRefresh) ||
-                                     (!hasExistingProfile && userNfts.length === 0);
+                                     (!hasExistingProfile && userNfts.length === 0 && supabaseConnected);
             
             if (shouldTriggerSync) {
                 try {
