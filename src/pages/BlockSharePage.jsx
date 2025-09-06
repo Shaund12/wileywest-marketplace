@@ -37,6 +37,7 @@ const BlockSharePage = () => {
         totalRevenue: false,              // via provider.getBalance(treasury)
         cumulativePerTokenX18: false,     // treasury.cumulativePerTokenX18()
         claimedPerTokenX18: false,        // treasury.claimedPerTokenX18(id)
+        claimable: false,                 // treasury.claimable(uint256)
         claim: false,                     // treasury.claim(uint256)
         claimMany: false,                 // treasury.claimMany(uint256[])
         nft_totalSupply: false,           // nft.totalSupply()
@@ -133,6 +134,7 @@ const BlockSharePage = () => {
         // Treasury
         try { await t.cumulativePerTokenX18(); m.cumulativePerTokenX18 = true; } catch { }
         try { await t.claimedPerTokenX18(1); m.claimedPerTokenX18 = true; } catch { }
+        try { await t.claimable(1); m.claimable = true; } catch { }
         try { t.interface.getFunction('claim'); m.claim = true; } catch { }
         try { t.interface.getFunction('claimMany'); m.claimMany = true; } catch { }
         // NFT
@@ -330,20 +332,47 @@ const BlockSharePage = () => {
         if (!treasury || !tokenIds || tokenIds.length === 0) return '0';
         try {
             setCalculating(true);
-            const c = await treasury.cumulativePerTokenX18();
             let totalX18 = big(0);
 
-            for (const id of tokenIds) {
-                try {
-                    const last = await treasury.claimedPerTokenX18(id);
-                    const delta = c - last;
-                    if (delta > 0) totalX18 += delta;
-                } catch {
-                    // ignore
+            // Try using the contract's built-in claimable function first
+            try {
+                for (const id of tokenIds) {
+                    try {
+                        const claimableAmount = await treasury.claimable(id);
+                        totalX18 += big(claimableAmount);
+                        debugLog(`Token ${id} claimable: ${ethers.formatUnits(claimableAmount, 18)} VTRU`);
+                    } catch (e) {
+                        debugWarn(`claimable(${id}) failed`, e);
+                    }
                 }
+                if (totalX18 > 0) {
+                    const out = ethers.formatUnits(totalX18, 18);
+                    return Number(out).toFixed(8).replace(/\.?0+$/, '');
+                }
+            } catch (e) {
+                debugWarn('Direct claimable method failed, falling back to manual calculation', e);
             }
-            const out = ethers.formatUnits(totalX18, 18);
-            return Number(out).toFixed(8).replace(/\.?0+$/, '');
+
+            // Fallback: manual calculation using cumulative system
+            try {
+                const c = await treasury.cumulativePerTokenX18();
+                totalX18 = big(0);
+
+                for (const id of tokenIds) {
+                    try {
+                        const last = await treasury.claimedPerTokenX18(id);
+                        const delta = c - last;
+                        if (delta > 0) totalX18 += delta;
+                    } catch {
+                        // ignore
+                    }
+                }
+                const out = ethers.formatUnits(totalX18, 18);
+                return Number(out).toFixed(8).replace(/\.?0+$/, '');
+            } catch (e) {
+                debugWarn('Manual calculation also failed', e);
+                return '0';
+            }
         } catch (e) {
             debugWarn('calcClaimable error', e);
             return '0';
@@ -542,6 +571,7 @@ const BlockSharePage = () => {
                     <div>• totalRevenue(balance): {methodsWorking.totalRevenue ? '✅' : '❌'}</div>
                     <div>• cumulativePerTokenX18: {methodsWorking.cumulativePerTokenX18 ? '✅' : '❌'}</div>
                     <div>• claimedPerTokenX18: {methodsWorking.claimedPerTokenX18 ? '✅' : '❌'}</div>
+                    <div>• claimable: {methodsWorking.claimable ? '✅' : '❌'}</div>
                     <div>• claim: {methodsWorking.claim ? '✅' : '❌'}</div>
                     <div>• claimMany: {methodsWorking.claimMany ? '✅' : '❌'}</div>
                     <div>• NFT totalSupply: {methodsWorking.nft_totalSupply ? '✅' : '❌'}</div>
