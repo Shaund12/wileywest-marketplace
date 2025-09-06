@@ -36,13 +36,14 @@ const KNOWN_NFT_CONTRACTS = [
     '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
 ];
 
-// Multiple IPFS gateways to try for better reliability
+// Multiple IPFS gateways to try for better reliability (ordered by reliability)
 const IPFS_GATEWAYS = [
-
-    'https://ipfs.io/ipfs/',
     'https://gateway.pinata.cloud/ipfs/',
-    'https://ipfs.fleek.co/ipfs/',
     'https://dweb.link/ipfs/',
+    'https://ipfs.io/ipfs/',
+    'https://cloudflare-ipfs.com/ipfs/',
+    'https://gateway.ipfs.io/ipfs/',
+    'https://ipfs.fleek.co/ipfs/',
 ];
 
 // Small helpers for activity timeline
@@ -505,7 +506,8 @@ function ProfilePage() {
                         if (metadata.image) {
                             imageUrl = metadata.image;
                             if (imageUrl.startsWith('ipfs://')) {
-                                imageUrl = `https://cloudflare-ipfs.com/ipfs/${imageUrl.replace('ipfs://', '')}`;
+                                // Use the first reliable IPFS gateway
+                                imageUrl = `${IPFS_GATEWAYS[0]}${imageUrl.replace('ipfs://', '')}`;
                             }
                         } else if (metadata.image_url) {
                             imageUrl = metadata.image_url;
@@ -779,26 +781,44 @@ function ProfilePage() {
                     if (cachedProfile?.nfts && cachedProfile.nfts.length > 0) {
                         setUserNfts(cachedProfile.nfts);
                         
-                        // Build metadata from cached NFTs
+                        // Build metadata from cached NFTs with fallbacks
                         const metadata = {};
+                        let metadataLoaded = 0;
+                        let metadataMissing = 0;
+                        
                         cachedProfile.nfts.forEach(nft => {
                             const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
-                            if (nft.metadata) {
-                                metadata[key] = {
-                                    ...nft.metadata,
-                                    name: nft.name,
-                                    imageUrl: nft.image,
-                                    loaded: true,
-                                    loading: false
-                                };
+                            
+                            // Always create metadata entry, even if minimal
+                            metadata[key] = {
+                                name: nft.name || nft.metadata?.name || `NFT #${nft.tokenId}`,
+                                imageUrl: nft.image || nft.metadata?.image || null,
+                                description: nft.metadata?.description || null,
+                                attributes: nft.metadata?.attributes || [],
+                                loaded: true,
+                                loading: false,
+                                hasMetadata: !!(nft.metadata && Object.keys(nft.metadata).length > 0),
+                                hasImage: !!(nft.image || nft.metadata?.image)
+                            };
+                            
+                            // Include all metadata if available
+                            if (nft.metadata && Object.keys(nft.metadata).length > 0) {
+                                metadata[key] = { ...metadata[key], ...nft.metadata };
+                                metadataLoaded++;
+                            } else {
+                                metadataMissing++;
                             }
                         });
+                        
                         setNftMetadata(metadata);
                         
-                        setStatus(`✅ Loaded ${cachedProfile.nfts.length} NFTs from cache`);
+                        const totalNfts = cachedProfile.nfts.length;
+                        const successRate = totalNfts > 0 ? Math.round((metadataLoaded / totalNfts) * 100) : 0;
+                        
+                        setStatus(`✅ Loaded ${totalNfts} NFTs from cache (${successRate}% with metadata)`);
                         await fetchContractInfoForNfts(cachedProfile.nfts);
                         
-                        setTimeout(() => setStatus(''), 2000);
+                        setTimeout(() => setStatus(''), 3000);
                     } else {
                         setStatus("No NFTs found in cache - triggering sync...");
                         setUserNfts([]);
@@ -853,6 +873,46 @@ function ProfilePage() {
             }
         } catch (error) {
             setStatus(`❌ Sync request failed: ${error.message}`);
+        }
+    };
+
+    // Retry metadata loading for NFTs that don't have metadata
+    const retryMissingMetadata = async () => {
+        if (!userNfts.length) {
+            setStatus("No NFTs to retry metadata for");
+            return;
+        }
+
+        // Find NFTs without metadata
+        const nftsWithoutMetadata = userNfts.filter(nft => {
+            const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+            const metadata = nftMetadata[key];
+            return !metadata?.hasMetadata || !metadata?.hasImage;
+        });
+
+        if (nftsWithoutMetadata.length === 0) {
+            setStatus("All NFTs already have metadata loaded");
+            setTimeout(() => setStatus(''), 2000);
+            return;
+        }
+
+        setStatus(`🔄 Retrying metadata for ${nftsWithoutMetadata.length} NFTs...`);
+
+        // Trigger metadata fetch for NFTs without metadata
+        const nftList = nftsWithoutMetadata.map(nft => ({
+            contractAddress: nft.contractAddress,
+            tokenId: nft.tokenId,
+            tokenURI: nft.tokenURI,
+            type: nft.type
+        }));
+
+        try {
+            await batchFetchMetadata(nftList);
+            setStatus(`✅ Metadata retry completed for ${nftsWithoutMetadata.length} NFTs`);
+            setTimeout(() => setStatus(''), 3000);
+        } catch (error) {
+            setStatus(`❌ Metadata retry failed: ${error.message}`);
+            setTimeout(() => setStatus(''), 3000);
         }
     };
 
@@ -1311,6 +1371,17 @@ function ProfilePage() {
                                             <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
                                         </svg>
                                         Sync Data
+                                    </button>
+                                    <button
+                                        className="secondary-button action-button retry-metadata-button"
+                                        onClick={() => retryMissingMetadata()}
+                                        disabled={isLoading || userNfts.length === 0}
+                                        title="Retry loading metadata for NFTs without images or descriptions"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                            <path fill="currentColor" d="M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z" />
+                                        </svg>
+                                        Retry Metadata
                                     </button>
                                     <button
                                         className="tertiary-button action-button force-refresh-button"

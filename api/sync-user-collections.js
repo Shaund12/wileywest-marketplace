@@ -29,11 +29,14 @@ const KNOWN_NFT_CONTRACTS = [
     '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
 ];
 
-// IPFS gateways for metadata resolution
+// IPFS gateways for metadata resolution (ordered by reliability)
 const IPFS_GATEWAYS = [
-    'https://ipfs.io/ipfs/',
-    'https://dweb.link/ipfs/',
     'https://gateway.pinata.cloud/ipfs/',
+    'https://dweb.link/ipfs/',
+    'https://ipfs.io/ipfs/',
+    'https://cloudflare-ipfs.com/ipfs/',
+    'https://gateway.ipfs.io/ipfs/',
+    'https://ipfs.fleek.co/ipfs/',
 ];
 
 // Configuration
@@ -43,7 +46,8 @@ const COLLECTION_CONFIG = {
     MAX_RETRIES: 3,
     RETRY_DELAY: 1000,
     MAX_CONCURRENT_USERS: 5, // Process max 5 users per cron run
-    METADATA_TIMEOUT: 10000
+    METADATA_TIMEOUT: 30000, // Increased to 30 seconds for better IPFS reliability
+    GATEWAY_TIMEOUT: 8000 // Per-gateway timeout
 };
 
 // Initialize providers
@@ -68,7 +72,7 @@ function initializeClients() {
     console.log('✅ Initialized clients for user collection sync');
 }
 
-// Fetch NFT metadata from tokenURI
+// Fetch NFT metadata from tokenURI with improved reliability
 async function fetchNFTMetadata(nftContract, tokenId) {
     try {
         const nftAbi = [
@@ -86,58 +90,156 @@ async function fetchNFTMetadata(nftContract, tokenId) {
             try {
                 tokenURI = await nft.uri(tokenId);
             } catch {
+                console.warn(`No tokenURI found for ${nftContract}:${tokenId}`);
                 return null;
             }
         }
         
-        if (!tokenURI) return null;
-        
-        // Resolve IPFS URLs with multiple gateway attempts
-        if (tokenURI.startsWith('ipfs://')) {
-            const cid = tokenURI.slice(7);
-            
-            for (const gateway of IPFS_GATEWAYS) {
-                try {
-                    const response = await fetch(`${gateway}${cid}`, { 
-                        timeout: COLLECTION_CONFIG.METADATA_TIMEOUT,
-                        headers: { 'Accept': 'application/json' }
-                    });
-                    
-                    if (response.ok) {
-                        const metadata = await response.json();
-                        
-                        // Resolve image URLs
-                        if (metadata.image?.startsWith('ipfs://')) {
-                            metadata.image = `${gateway}${metadata.image.slice(7)}`;
-                        }
-                        
-                        return metadata;
-                    }
-                } catch (e) {
-                    // Try next gateway
-                    continue;
-                }
-            }
-        } else {
-            // Direct HTTP URL
-            try {
-                const response = await fetch(tokenURI, { 
-                    timeout: COLLECTION_CONFIG.METADATA_TIMEOUT,
-                    headers: { 'Accept': 'application/json' }
-                });
-                
-                if (response.ok) {
-                    const metadata = await response.json();
-                    return metadata;
-                }
-            } catch (e) {
-                // Ignore and return null
-            }
+        if (!tokenURI) {
+            console.warn(`Empty tokenURI for ${nftContract}:${tokenId}`);
+            return null;
         }
         
-        return null;
+        console.log(`Fetching metadata for ${nftContract}:${tokenId} from URI: ${tokenURI}`);
+        
+        // Handle different URI schemes
+        if (tokenURI.startsWith('ipfs://')) {
+            return await fetchFromIPFS(tokenURI, nftContract, tokenId);
+        } else if (tokenURI.startsWith('http://') || tokenURI.startsWith('https://')) {
+            return await fetchFromHTTP(tokenURI, nftContract, tokenId);
+        } else if (tokenURI.startsWith('data:')) {
+            return await parseDataURI(tokenURI, nftContract, tokenId);
+        } else {
+            console.warn(`Unsupported URI scheme for ${nftContract}:${tokenId}: ${tokenURI}`);
+            return null;
+        }
     } catch (error) {
         console.warn(`Failed to fetch metadata for ${nftContract}:${tokenId}:`, error.message);
+        return null;
+    }
+}
+
+// Fetch metadata from IPFS with multiple gateway fallbacks
+async function fetchFromIPFS(ipfsURI, nftContract, tokenId) {
+    const cid = ipfsURI.slice(7); // Remove 'ipfs://'
+    
+    for (let i = 0; i < IPFS_GATEWAYS.length; i++) {
+        const gateway = IPFS_GATEWAYS[i];
+        const url = `${gateway}${cid}`;
+        
+        try {
+            console.log(`Trying IPFS gateway ${i + 1}/${IPFS_GATEWAYS.length}: ${gateway}`);
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), COLLECTION_CONFIG.GATEWAY_TIMEOUT);
+            
+            const response = await fetch(url, { 
+                signal: controller.signal,
+                headers: { 
+                    'Accept': 'application/json',
+                    'User-Agent': 'BlockDust-NFT-Scanner/1.0'
+                }
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                console.warn(`Gateway ${gateway} returned ${response.status} for ${nftContract}:${tokenId}`);
+                continue;
+            }
+            
+            const metadata = await response.json();
+            
+            // Resolve nested IPFS image URLs
+            if (metadata.image?.startsWith('ipfs://')) {
+                const imageCid = metadata.image.slice(7);
+                metadata.image = `${gateway}${imageCid}`;
+                console.log(`Resolved image URL: ${metadata.image}`);
+            }
+            
+            // Validate metadata structure
+            if (typeof metadata === 'object' && metadata !== null) {
+                console.log(`✅ Successfully fetched metadata for ${nftContract}:${tokenId} from ${gateway}`);
+                return metadata;
+            } else {
+                console.warn(`Invalid metadata structure from ${gateway} for ${nftContract}:${tokenId}`);
+                continue;
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.warn(`Gateway ${gateway} timeout for ${nftContract}:${tokenId}`);
+            } else {
+                console.warn(`Gateway ${gateway} error for ${nftContract}:${tokenId}:`, error.message);
+            }
+        }
+    }
+    
+    console.warn(`❌ All IPFS gateways failed for ${nftContract}:${tokenId}`);
+    return null;
+}
+
+// Fetch metadata from HTTP/HTTPS URLs
+async function fetchFromHTTP(httpURI, nftContract, tokenId) {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), COLLECTION_CONFIG.METADATA_TIMEOUT);
+        
+        const response = await fetch(httpURI, { 
+            signal: controller.signal,
+            headers: { 
+                'Accept': 'application/json',
+                'User-Agent': 'BlockDust-NFT-Scanner/1.0'
+            }
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            console.warn(`HTTP ${response.status} for ${nftContract}:${tokenId} at ${httpURI}`);
+            return null;
+        }
+        
+        const metadata = await response.json();
+        
+        if (typeof metadata === 'object' && metadata !== null) {
+            console.log(`✅ Successfully fetched HTTP metadata for ${nftContract}:${tokenId}`);
+            return metadata;
+        } else {
+            console.warn(`Invalid HTTP metadata structure for ${nftContract}:${tokenId}`);
+            return null;
+        }
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            console.warn(`HTTP timeout for ${nftContract}:${tokenId} at ${httpURI}`);
+        } else {
+            console.warn(`HTTP error for ${nftContract}:${tokenId}:`, error.message);
+        }
+        return null;
+    }
+}
+
+// Parse data: URI scheme metadata
+async function parseDataURI(dataURI, nftContract, tokenId) {
+    try {
+        if (dataURI.startsWith('data:application/json;base64,')) {
+            const base64Data = dataURI.slice(29);
+            const jsonString = Buffer.from(base64Data, 'base64').toString('utf-8');
+            const metadata = JSON.parse(jsonString);
+            
+            console.log(`✅ Successfully parsed data URI metadata for ${nftContract}:${tokenId}`);
+            return metadata;
+        } else if (dataURI.startsWith('data:application/json,')) {
+            const jsonString = decodeURIComponent(dataURI.slice(22));
+            const metadata = JSON.parse(jsonString);
+            
+            console.log(`✅ Successfully parsed data URI metadata for ${nftContract}:${tokenId}`);
+            return metadata;
+        } else {
+            console.warn(`Unsupported data URI format for ${nftContract}:${tokenId}: ${dataURI.slice(0, 50)}...`);
+            return null;
+        }
+    } catch (error) {
+        console.warn(`Failed to parse data URI for ${nftContract}:${tokenId}:`, error.message);
         return null;
     }
 }
@@ -194,13 +296,20 @@ async function getContractInfo(contractAddress, contractType) {
 // Scan for ERC721 NFTs owned by user
 async function scanERC721(contractAddress, walletAddress) {
     try {
+        console.log(`Scanning ERC721 contract ${contractAddress} for wallet ${walletAddress}...`);
+        
         const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
         const balance = await contract.balanceOf(walletAddress);
         
-        if (balance.toString() === '0') return [];
+        if (balance.toString() === '0') {
+            console.log(`No ERC721 tokens found for ${walletAddress} in ${contractAddress}`);
+            return [];
+        }
         
         const nfts = [];
         const balanceNum = Number(balance.toString());
+        
+        console.log(`Found ${balanceNum} ERC721 tokens for ${walletAddress} in ${contractAddress}`);
         
         // Fetch contract info
         const contractInfo = await getContractInfo(contractAddress, 'ERC721');
@@ -212,27 +321,43 @@ async function scanERC721(contractAddress, walletAddress) {
                 let tokenURI = null;
                 try {
                     tokenURI = await contract.tokenURI(tokenId);
-                } catch { /* optional */ }
+                } catch (e) {
+                    console.warn(`Failed to get tokenURI for ${contractAddress}:${tokenId}:`, e.message);
+                }
                 
-                // Fetch metadata in background
+                // Fetch metadata with improved error handling
+                console.log(`Fetching metadata for ERC721 ${contractAddress}:${tokenId}...`);
                 const metadata = await fetchNFTMetadata(contractAddress, tokenId.toString());
                 
-                nfts.push({
+                // Generate fallback data if metadata fetch fails
+                const name = metadata?.name || `${contractInfo.name || 'NFT'} #${tokenId}`;
+                const image = metadata?.image || null;
+                
+                const nftData = {
                     contractAddress: contractAddress.toLowerCase(),
                     tokenId: tokenId.toString(),
                     type: 'ERC721',
                     tokenURI,
                     balance: '1',
                     metadata: metadata || {},
-                    name: metadata?.name || `Token #${tokenId}`,
-                    image: metadata?.image || null,
+                    name,
+                    image,
                     collection: contractInfo
-                });
+                };
+                
+                nfts.push(nftData);
+                
+                if (metadata) {
+                    console.log(`✅ Successfully processed ERC721 ${contractAddress}:${tokenId} with metadata`);
+                } else {
+                    console.log(`⚠️ Processed ERC721 ${contractAddress}:${tokenId} without metadata`);
+                }
             } catch (e) {
                 console.warn(`Failed to fetch ERC721 token ${i} from ${contractAddress}:`, e.message);
             }
         }
         
+        console.log(`Completed ERC721 scan: ${nfts.length} NFTs processed for ${contractAddress}`);
         return nfts;
     } catch (e) {
         console.warn(`Failed to scan ERC721 contract ${contractAddress}:`, e.message);
@@ -243,6 +368,8 @@ async function scanERC721(contractAddress, walletAddress) {
 // Scan for ERC1155 NFTs owned by user
 async function scanERC1155(contractAddress, walletAddress) {
     try {
+        console.log(`Scanning ERC1155 contract ${contractAddress} for wallet ${walletAddress}...`);
+        
         const contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
         
         // Fetch contract info
@@ -254,6 +381,8 @@ async function scanERC1155(contractAddress, walletAddress) {
         
         const currentBlock = await provider.getBlockNumber();
         const fromBlock = Math.max(0, currentBlock - COLLECTION_CONFIG.MAX_BLOCKS_BACK);
+        
+        console.log(`Scanning ERC1155 events from block ${fromBlock} to ${currentBlock}...`);
         
         const singleEvents = await contract.queryFilter(transferSingleFilter, fromBlock);
         const batchEvents = await contract.queryFilter(transferBatchFilter, fromBlock);
@@ -273,6 +402,8 @@ async function scanERC1155(contractAddress, walletAddress) {
             tokenIds.add(i.toString());
         }
         
+        console.log(`Found ${tokenIds.size} potential token IDs for ERC1155 ${contractAddress}`);
+        
         const nfts = [];
         const tokenIdArray = [...tokenIds].slice(0, 100); // Limit to 100 tokens
         
@@ -284,20 +415,50 @@ async function scanERC1155(contractAddress, walletAddress) {
                     let tokenURI = null;
                     try {
                         tokenURI = await contract.uri(tokenId);
-                    } catch { /* optional */ }
+                    } catch (e) {
+                        console.warn(`Failed to get URI for ERC1155 ${contractAddress}:${tokenId}:`, e.message);
+                    }
                     
-                    // Fetch metadata
+                    // Fetch metadata with improved error handling
+                    console.log(`Fetching metadata for ERC1155 ${contractAddress}:${tokenId}...`);
                     const metadata = await fetchNFTMetadata(contractAddress, tokenId);
                     
-                    nfts.push({
+                    // Generate fallback data if metadata fetch fails
+                    const name = metadata?.name || `${contractInfo.name || 'NFT'} #${tokenId}`;
+                    const image = metadata?.image || null;
+                    
+                    const nftData = {
                         contractAddress: contractAddress.toLowerCase(),
                         tokenId,
                         type: 'ERC1155',
                         tokenURI,
                         balance: balance.toString(),
                         metadata: metadata || {},
-                        name: metadata?.name || `Token #${tokenId}`,
-                        image: metadata?.image || null,
+                        name,
+                        image,
+                        collection: contractInfo
+                    };
+                    
+                    nfts.push(nftData);
+                    
+                    if (metadata) {
+                        console.log(`✅ Successfully processed ERC1155 ${contractAddress}:${tokenId} with metadata`);
+                    } else {
+                        console.log(`⚠️ Processed ERC1155 ${contractAddress}:${tokenId} without metadata`);
+                    }
+                }
+            } catch (e) {
+                console.warn(`Failed to process ERC1155 token ${tokenId} from ${contractAddress}:`, e.message);
+            }
+        }
+        
+        console.log(`Completed ERC1155 scan: ${nfts.length} NFTs processed for ${contractAddress}`);
+        return nfts;
+    } catch (e) {
+        console.warn(`Failed to scan ERC1155 contract ${contractAddress}:`, e.message);
+        return [];
+    }
+}
                         collection: contractInfo
                     });
                 }
@@ -353,9 +514,15 @@ async function scanUserNFTs(walletAddress) {
         
         const nftContracts = await findNFTContracts(walletAddress);
         const allNfts = [];
+        let totalWithMetadata = 0;
+        let totalWithoutMetadata = 0;
+        
+        console.log(`Found ${nftContracts.length} NFT contracts to scan for ${walletAddress}`);
         
         for (const contractAddress of nftContracts) {
             try {
+                console.log(`Scanning contract ${contractAddress}...`);
+                
                 // Detect contract type
                 const contractType = await detectNftStandard(contractAddress);
                 
@@ -365,16 +532,32 @@ async function scanUserNFTs(walletAddress) {
                 } else if (contractType === 'ERC1155') {
                     const nfts = await scanERC1155(contractAddress, walletAddress);
                     allNfts.push(...nfts);
+                } else {
+                    console.warn(`Unknown or unsupported contract type for ${contractAddress}`);
                 }
                 
                 // Small delay to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise(resolve => setTimeout(resolve, 250));
             } catch (e) {
                 console.warn(`Failed to scan contract ${contractAddress}:`, e.message);
             }
         }
         
-        console.log(`✅ Found ${allNfts.length} NFTs for ${walletAddress}`);
+        // Calculate metadata statistics
+        allNfts.forEach(nft => {
+            if (nft.metadata && Object.keys(nft.metadata).length > 0 && nft.image) {
+                totalWithMetadata++;
+            } else {
+                totalWithoutMetadata++;
+            }
+        });
+        
+        console.log(`📊 NFT scan results for ${walletAddress}:`);
+        console.log(`  Total NFTs: ${allNfts.length}`);
+        console.log(`  With metadata: ${totalWithMetadata}`);
+        console.log(`  Without metadata: ${totalWithoutMetadata}`);
+        console.log(`  Metadata success rate: ${allNfts.length > 0 ? ((totalWithMetadata / allNfts.length) * 100).toFixed(1) : 0}%`);
+        
         return allNfts;
     } catch (error) {
         console.error(`❌ Failed to scan NFTs for ${walletAddress}:`, error.message);
