@@ -599,28 +599,54 @@ async function getUsersToSync() {
             .gte('updated_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // Last 24 hours
             .limit(COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
         
-        if (error) {
-            console.warn('Failed to fetch recent users, using fallback:', error.message);
-            
-            // Fallback: get any users from user_profiles table
-            const { data: allUsers, error: profileError } = await supabase
-                .from('user_profiles')
-                .select('wallet_address')
-                .limit(COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
-            
-            if (profileError) {
-                console.warn('Failed to fetch any users:', profileError.message);
-                return [];
-            }
-            
-            return (allUsers || []).map(u => u.wallet_address);
+        // Extract unique wallet addresses from recent listings
+        const wallets = error ? [] : [...new Set((recentUsers || []).map(u => u.seller))];
+        
+        // If we have recent users and no error, return them
+        if (!error && wallets.length > 0) {
+            console.log(`📋 Found ${wallets.length} users to sync collections for`);
+            return wallets.slice(0, COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
         }
         
-        // Extract unique wallet addresses
-        const wallets = [...new Set((recentUsers || []).map(u => u.seller))];
-        console.log(`📋 Found ${wallets.length} users to sync collections for`);
+        // Fallback: try a longer time window for marketplace listings (last 7 days) when no recent activity found
+        if (!error && wallets.length === 0) {
+            console.log('No recent marketplace activity found, trying extended time window (7 days)...');
+            const { data: olderUsers, error: extendedError } = await supabase
+                .from('marketplace_listings')
+                .select('seller')
+                .gte('updated_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()) // Last 7 days
+                .limit(COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
+            
+            if (!extendedError && olderUsers && olderUsers.length > 0) {
+                const extendedWallets = [...new Set(olderUsers.map(u => u.seller))];
+                console.log(`📋 Found ${extendedWallets.length} users from extended time window`);
+                return extendedWallets.slice(0, COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
+            }
+        }
         
-        return wallets.slice(0, COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
+        // Fallback: get any users from user_profiles table (when no activity found or error)
+        console.warn(error ? `Failed to fetch recent users: ${error.message}` : 'No marketplace activity found in last 7 days');
+        console.log('Using fallback: scanning user_profiles table...');
+        
+        const { data: allUsers, error: profileError } = await supabase
+            .from('user_profiles')
+            .select('wallet_address')
+            .limit(COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
+        
+        if (profileError) {
+            console.warn('Failed to fetch any users:', profileError.message);
+            return [];
+        }
+        
+        const profileWallets = (allUsers || []).map(u => u.wallet_address);
+        if (profileWallets.length > 0) {
+            console.log(`📋 Found ${profileWallets.length} users from user_profiles to sync`);
+            return profileWallets;
+        }
+        
+        // Final fallback: if no users found anywhere, return empty array
+        console.log('📋 No users found to sync (both marketplace_listings and user_profiles are empty)');
+        return [];
     } catch (error) {
         console.error('Failed to get users to sync:', error.message);
         return [];
