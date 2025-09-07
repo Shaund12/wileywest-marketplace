@@ -1,19 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
-import RevShareTreasuryAbi from '../abi/RevShareTreasuryActual.json';
-import RevShareNFTAbi from '../abi/RevShareNFT.json';
+import RevShareNFTTreasuryAbi from '../abi/RevShareNFTTreasury.json';
 import { debugWarn, criticalError } from '../utils/debugUtils';
 
 const BlockSharePage = () => {
     const { wallet, signer, provider } = useWallet();
 
-    const treasuryAddress = import.meta.env.VITE_REVSHARE_TREASURY_ADDRESS;
-    const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
+    // Use the new combined contract address, fall back to old treasury address if not set
+    const contractAddress = import.meta.env.VITE_REVSHARE_NFT_TREASURY_ADDRESS || import.meta.env.VITE_REVSHARE_TREASURY_ADDRESS;
     const DEBUG = import.meta.env.VITE_DEBUG_MODE === 'true';
 
-    const [treasury, setTreasury] = useState(null);
-    const [nft, setNft] = useState(null);
+    const [contract, setContract] = useState(null);
 
     const [status, setStatus] = useState('');
     const [contractError, setContractError] = useState('');
@@ -62,20 +60,17 @@ const BlockSharePage = () => {
     const big = (v) => ethers.getBigInt(v);
 
     useEffect(() => {
-        if (provider && treasuryAddress && nftAddress) init();
-    }, [provider, treasuryAddress, nftAddress]);
+        if (provider && contractAddress) init();
+    }, [provider, contractAddress]);
 
     async function init() {
         try {
             setContractError('');
-            const t = new ethers.Contract(treasuryAddress, (RevShareTreasuryAbi.abi || RevShareTreasuryAbi), provider);
-            const n = new ethers.Contract(nftAddress, (RevShareNFTAbi.abi || RevShareNFTAbi), provider);
-            const [tCode, nCode] = await Promise.all([provider.getCode(treasuryAddress), provider.getCode(nftAddress)]);
-            if (tCode === '0x') throw new Error('Treasury not deployed at address');
-            if (nCode === '0x') throw new Error('NFT not deployed at address');
-            setTreasury(t);
-            setNft(n);
-            await probeCaps(t, n);
+            const c = new ethers.Contract(contractAddress, (RevShareNFTTreasuryAbi.abi || RevShareNFTTreasuryAbi), provider);
+            const contractCode = await provider.getCode(contractAddress);
+            if (contractCode === '0x') throw new Error('RevShare NFT Treasury not deployed at address');
+            setContract(c);
+            await probeCaps(c);
             setDataLoaded(false);
         } catch (e) {
             const msg = `Init failed: ${e.message}`;
@@ -85,28 +80,28 @@ const BlockSharePage = () => {
         }
     }
 
-    async function probeCaps(t, n) {
-        const c = { ...caps };
-        try { t.interface.getFunction('claim'); c.claim = true; } catch { }
-        try { t.interface.getFunction('claimMany'); c.claimMany = true; } catch { }
-        try { await t.claimable(1).catch(() => { }); c.claimable = true; } catch { }
-        try { await t.cumulativePerTokenX18(); c.cumulativePerTokenX18 = true; } catch { }
-        try { await t.claimedPerTokenX18(1); c.claimedPerTokenX18 = true; } catch { }
-        try { await t.pendingBeforeMint(); c.pendingBeforeMint = true; } catch { }
-        try { t.interface.getFunction('allocatePending'); c.allocatePending = true; } catch { }
-        try { t.interface.getFunction('forwardNative'); c.forwardNative = true; } catch { }
-        try { await n.totalSupply(); } catch { }
-        setCaps(c);
+    async function probeCaps(c) {
+        const newCaps = { ...caps };
+        try { c.interface.getFunction('claim'); newCaps.claim = true; } catch { }
+        try { c.interface.getFunction('claimMany'); newCaps.claimMany = true; } catch { }
+        try { await c.claimable(1).catch(() => { }); newCaps.claimable = true; } catch { }
+        try { await c.cumulativePerTokenX18(); newCaps.cumulativePerTokenX18 = true; } catch { }
+        try { await c.claimedPerTokenX18(1); newCaps.claimedPerTokenX18 = true; } catch { }
+        try { await c.pendingBeforeMint(); newCaps.pendingBeforeMint = true; } catch { }
+        try { c.interface.getFunction('allocatePending'); newCaps.allocatePending = true; } catch { }
+        try { c.interface.getFunction('forwardNative'); newCaps.forwardNative = true; } catch { }
+        try { await c.totalSupply(); } catch { }
+        setCaps(newCaps);
     }
 
     useEffect(() => {
-        if (treasury && nft && wallet && !dataLoaded) {
+        if (contract && wallet && !dataLoaded) {
             (async () => {
                 await refreshAll();
                 setDataLoaded(true);
             })();
         }
-    }, [treasury, nft, wallet, dataLoaded]);
+    }, [contract, wallet, dataLoaded]);
 
     async function refreshAll() {
         await loadUser();
@@ -115,11 +110,11 @@ const BlockSharePage = () => {
     }
 
     async function loadUser() {
-        if (!wallet || !treasury || !nft) return;
+        if (!wallet || !contract) return;
         setLoading(true);
         try {
             let bal = 0;
-            try { bal = Number((await nft.balanceOf(wallet)).toString()); } catch { }
+            try { bal = Number((await contract.balanceOf(wallet)).toString()); } catch { }
             setUserNFTBalance(bal);
             const ids = await getUserTokenIds(wallet, bal);
             setUserTokenIds(ids);
@@ -137,17 +132,17 @@ const BlockSharePage = () => {
         try {
             const out = [];
             for (let i = 0; i < balanceGuess; i++) {
-                const id = await nft.tokenOfOwnerByIndex(addr, i);
+                const id = await contract.tokenOfOwnerByIndex(addr, i);
                 out.push(Number(id)); // token IDs may start at 0 or 1
             }
             return out;
         } catch {
             const out = [];
             let supply = 0;
-            try { supply = Number((await nft.totalSupply()).toString()); } catch { supply = 1200; }
+            try { supply = Number((await contract.totalSupply()).toString()); } catch { supply = 1200; }
             for (let tokenId = 0; tokenId < supply && out.length < balanceGuess; tokenId++) {
                 try {
-                    const owner = await nft.ownerOf(tokenId);
+                    const owner = await contract.ownerOf(tokenId);
                     if (owner.toLowerCase() === addr.toLowerCase()) out.push(tokenId);
                 } catch { }
             }
@@ -166,16 +161,16 @@ const BlockSharePage = () => {
             let totalClaimedX18 = 0n;
             let cumulative = 0n;
             if (caps.cumulativePerTokenX18) {
-                try { cumulative = await treasury.cumulativePerTokenX18(); } catch { }
+                try { cumulative = await contract.cumulativePerTokenX18(); } catch { }
             }
             for (const id of ids) {
                 let claimedX18 = 0n;
                 let claimableX18 = 0n;
                 if (caps.claimedPerTokenX18) {
-                    try { claimedX18 = await treasury.claimedPerTokenX18(id); } catch { }
+                    try { claimedX18 = await contract.claimedPerTokenX18(id); } catch { }
                 }
                 if (caps.claimable) {
-                    try { claimableX18 = await treasury.claimable(id); } catch { }
+                    try { claimableX18 = await contract.claimable(id); } catch { }
                 } else if (cumulative) {
                     const delta = cumulative - claimedX18;
                     if (delta > 0n) claimableX18 = delta;
@@ -205,25 +200,25 @@ const BlockSharePage = () => {
     }
 
     async function loadTreasuryStats() {
-        if (!treasury) return;
+        if (!contract) return;
         try {
             let balanceWei = 0n;
-            try { balanceWei = await provider.getBalance(treasuryAddress); } catch { }
+            try { balanceWei = await provider.getBalance(contractAddress); } catch { }
             const totalRevenue = ethers.formatEther(balanceWei);
 
             let totalShares = 0;
-            try { totalShares = Number((await nft.totalSupply()).toString()); } catch { }
+            try { totalShares = Number((await contract.totalSupply()).toString()); } catch { }
 
             let pendingRevenue = '0';
             if (caps.pendingBeforeMint) {
-                try { pendingRevenue = ethers.formatUnits(await treasury.pendingBeforeMint(), 18); } catch { }
+                try { pendingRevenue = ethers.formatUnits(await contract.pendingBeforeMint(), 18); } catch { }
             }
 
             let cumulativeCallSuccess = false;
             let realCumulative = '0';
             try {
                 if (caps.cumulativePerTokenX18) {
-                    const c = await treasury.cumulativePerTokenX18();
+                    const c = await contract.cumulativePerTokenX18();
                     realCumulative = ethers.formatUnits(c, 18);
                     cumulativeCallSuccess = true;
                 }
@@ -342,28 +337,28 @@ const BlockSharePage = () => {
     }
 
     async function handleClaim() {
-        if (!signer || !treasury) { setStatus('Wallet not ready'); return; }
+        if (!signer || !contract) { setStatus('Wallet not ready'); return; }
         if (calculating) { setStatus('Calculating…'); return; }
         if (!positiveClaimIds.length) { setStatus('Nothing claimable'); return; }
         setClaiming(true);
         try {
-            const t = treasury.connect(signer);
+            const c = contract.connect(signer);
             if (positiveClaimIds.length === 1 && caps.claim) {
-                await execSingle(t, positiveClaimIds[0]);
+                await execSingle(c, positiveClaimIds[0]);
                 await postClaim();
                 return;
             }
             if (positiveClaimIds.length > 1 && caps.claimMany) {
-                const ok = await staticTry(t, 'claimMany', [positiveClaimIds]);
+                const ok = await staticTry(c, 'claimMany', [positiveClaimIds]);
                 if (ok) {
-                    await sendTx(t, 'claimMany', [positiveClaimIds]);
+                    await sendTx(c, 'claimMany', [positiveClaimIds]);
                     await postClaim();
                     return;
                 }
             }
             let success = 0;
             for (const id of positiveClaimIds) {
-                const ok = await execSingle(t, id, true);
+                const ok = await execSingle(c, id, true);
                 if (ok) success++;
             }
             if (success === 0) setStatus('All claim attempts reverted');
@@ -407,12 +402,12 @@ const BlockSharePage = () => {
     }
 
     async function handleForward() {
-        if (!signer || !treasury || !caps.forwardNative) return;
+        if (!signer || !contract || !caps.forwardNative) return;
         try {
             setStatus('Calling forwardNative (0 value)…');
-            const t = treasury.connect(signer);
+            const c = contract.connect(signer);
             // attempt zero value; if contract needs >0 supply ask user
-            const tx = await t.forwardNative({ value: 0n });
+            const tx = await c.forwardNative({ value: 0n });
             await tx.wait();
             setStatus('forwardNative confirmed. Refreshing…');
             await refreshAll();
@@ -428,13 +423,13 @@ const BlockSharePage = () => {
     }
 
     async function handleAllocatePending() {
-        if (!signer || !treasury || !caps.allocatePending) return;
+        if (!signer || !contract || !caps.allocatePending) return;
         try {
             setStatus('Allocating pending…');
-            const t = treasury.connect(signer);
-            const ok = await staticTry(t, 'allocatePending', []);
+            const c = contract.connect(signer);
+            const ok = await staticTry(c, 'allocatePending', []);
             if (!ok) { setStatus('allocatePending static revert'); return; }
-            await sendTx(t, 'allocatePending', []);
+            await sendTx(c, 'allocatePending', []);
             await postClaim();
         } catch (e) {
             setStatus(`Allocation failed: ${decodeRevert(e)}`);
