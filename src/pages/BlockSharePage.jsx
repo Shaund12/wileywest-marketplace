@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
+import RevShareNFTTreasuryAbi from '../abi/RevShareNFTTreasury.json';
 import RevShareTreasuryAbi from '../abi/RevShareTreasuryActual.json';
 import RevShareNFTAbi from '../abi/RevShareNFT.json';
 import { debugWarn, criticalError } from '../utils/debugUtils';
@@ -8,12 +9,20 @@ import { debugWarn, criticalError } from '../utils/debugUtils';
 const BlockSharePage = () => {
     const { wallet, signer, provider } = useWallet();
 
-    const treasuryAddress = import.meta.env.VITE_REVSHARE_TREASURY_ADDRESS;
-    const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
+    // Check which contract setup to use
+    const newContractAddress = import.meta.env.VITE_REVSHARE_NFT_TREASURY_ADDRESS;
+    const oldTreasuryAddress = import.meta.env.VITE_REVSHARE_TREASURY_ADDRESS;
+    const oldNftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
+    
+    // Use new combined contract if available and not zero address, otherwise fallback to old setup
+    const useNewContract = newContractAddress && newContractAddress !== '0x0000000000000000000000000000000000000000';
+    const contractAddress = useNewContract ? newContractAddress : oldTreasuryAddress;
+    const nftAddress = useNewContract ? newContractAddress : oldNftAddress;
+    
     const DEBUG = import.meta.env.VITE_DEBUG_MODE === 'true';
 
-    const [treasury, setTreasury] = useState(null);
-    const [nft, setNft] = useState(null);
+    const [contract, setContract] = useState(null);
+    const [nftContract, setNftContract] = useState(null);  // For old setup, separate NFT contract
 
     const [status, setStatus] = useState('');
     const [contractError, setContractError] = useState('');
@@ -62,20 +71,38 @@ const BlockSharePage = () => {
     const big = (v) => ethers.getBigInt(v);
 
     useEffect(() => {
-        if (provider && treasuryAddress && nftAddress) init();
-    }, [provider, treasuryAddress, nftAddress]);
+        if (provider && contractAddress) init();
+    }, [provider, contractAddress, useNewContract]);
 
     async function init() {
         try {
             setContractError('');
-            const t = new ethers.Contract(treasuryAddress, (RevShareTreasuryAbi.abi || RevShareTreasuryAbi), provider);
-            const n = new ethers.Contract(nftAddress, (RevShareNFTAbi.abi || RevShareNFTAbi), provider);
-            const [tCode, nCode] = await Promise.all([provider.getCode(treasuryAddress), provider.getCode(nftAddress)]);
-            if (tCode === '0x') throw new Error('Treasury not deployed at address');
-            if (nCode === '0x') throw new Error('NFT not deployed at address');
-            setTreasury(t);
-            setNft(n);
-            await probeCaps(t, n);
+            
+            if (useNewContract) {
+                // Use the new combined contract
+                const c = new ethers.Contract(contractAddress, (RevShareNFTTreasuryAbi.abi || RevShareNFTTreasuryAbi), provider);
+                const contractCode = await provider.getCode(contractAddress);
+                if (contractCode === '0x') throw new Error('RevShare NFT Treasury not deployed at address');
+                setContract(c);
+                setNftContract(c); // Same contract for both functions
+                await probeCaps(c, c);
+            } else {
+                // Use the old separate contracts
+                if (!oldNftAddress) throw new Error('NFT contract address not configured');
+                const treasuryContract = new ethers.Contract(contractAddress, (RevShareTreasuryAbi.abi || RevShareTreasuryAbi), provider);
+                const nftContract = new ethers.Contract(nftAddress, (RevShareNFTAbi.abi || RevShareNFTAbi), provider);
+                
+                const [tCode, nCode] = await Promise.all([
+                    provider.getCode(contractAddress), 
+                    provider.getCode(nftAddress)
+                ]);
+                if (tCode === '0x') throw new Error('Treasury not deployed at address');
+                if (nCode === '0x') throw new Error('NFT not deployed at address');
+                
+                setContract(treasuryContract);
+                setNftContract(nftContract);
+                await probeCaps(treasuryContract, nftContract);
+            }
             setDataLoaded(false);
         } catch (e) {
             const msg = `Init failed: ${e.message}`;
@@ -85,28 +112,28 @@ const BlockSharePage = () => {
         }
     }
 
-    async function probeCaps(t, n) {
-        const c = { ...caps };
-        try { t.interface.getFunction('claim'); c.claim = true; } catch { }
-        try { t.interface.getFunction('claimMany'); c.claimMany = true; } catch { }
-        try { await t.claimable(1).catch(() => { }); c.claimable = true; } catch { }
-        try { await t.cumulativePerTokenX18(); c.cumulativePerTokenX18 = true; } catch { }
-        try { await t.claimedPerTokenX18(1); c.claimedPerTokenX18 = true; } catch { }
-        try { await t.pendingBeforeMint(); c.pendingBeforeMint = true; } catch { }
-        try { t.interface.getFunction('allocatePending'); c.allocatePending = true; } catch { }
-        try { t.interface.getFunction('forwardNative'); c.forwardNative = true; } catch { }
-        try { await n.totalSupply(); } catch { }
-        setCaps(c);
+    async function probeCaps(treasuryContract, nftContract) {
+        const newCaps = { ...caps };
+        try { treasuryContract.interface.getFunction('claim'); newCaps.claim = true; } catch { }
+        try { treasuryContract.interface.getFunction('claimMany'); newCaps.claimMany = true; } catch { }
+        try { await treasuryContract.claimable(1).catch(() => { }); newCaps.claimable = true; } catch { }
+        try { await treasuryContract.cumulativePerTokenX18(); newCaps.cumulativePerTokenX18 = true; } catch { }
+        try { await treasuryContract.claimedPerTokenX18(1); newCaps.claimedPerTokenX18 = true; } catch { }
+        try { await treasuryContract.pendingBeforeMint(); newCaps.pendingBeforeMint = true; } catch { }
+        try { treasuryContract.interface.getFunction('allocatePending'); newCaps.allocatePending = true; } catch { }
+        try { treasuryContract.interface.getFunction('forwardNative'); newCaps.forwardNative = true; } catch { }
+        try { await nftContract.totalSupply(); } catch { }
+        setCaps(newCaps);
     }
 
     useEffect(() => {
-        if (treasury && nft && wallet && !dataLoaded) {
+        if (contract && nftContract && wallet && !dataLoaded) {
             (async () => {
                 await refreshAll();
                 setDataLoaded(true);
             })();
         }
-    }, [treasury, nft, wallet, dataLoaded]);
+    }, [contract, nftContract, wallet, dataLoaded]);
 
     async function refreshAll() {
         await loadUser();
@@ -115,11 +142,11 @@ const BlockSharePage = () => {
     }
 
     async function loadUser() {
-        if (!wallet || !treasury || !nft) return;
+        if (!wallet || !nftContract) return;
         setLoading(true);
         try {
             let bal = 0;
-            try { bal = Number((await nft.balanceOf(wallet)).toString()); } catch { }
+            try { bal = Number((await nftContract.balanceOf(wallet)).toString()); } catch { }
             setUserNFTBalance(bal);
             const ids = await getUserTokenIds(wallet, bal);
             setUserTokenIds(ids);
@@ -137,17 +164,17 @@ const BlockSharePage = () => {
         try {
             const out = [];
             for (let i = 0; i < balanceGuess; i++) {
-                const id = await nft.tokenOfOwnerByIndex(addr, i);
+                const id = await nftContract.tokenOfOwnerByIndex(addr, i);
                 out.push(Number(id)); // token IDs may start at 0 or 1
             }
             return out;
         } catch {
             const out = [];
             let supply = 0;
-            try { supply = Number((await nft.totalSupply()).toString()); } catch { supply = 1200; }
+            try { supply = Number((await nftContract.totalSupply()).toString()); } catch { supply = 1200; }
             for (let tokenId = 0; tokenId < supply && out.length < balanceGuess; tokenId++) {
                 try {
-                    const owner = await nft.ownerOf(tokenId);
+                    const owner = await nftContract.ownerOf(tokenId);
                     if (owner.toLowerCase() === addr.toLowerCase()) out.push(tokenId);
                 } catch { }
             }
@@ -166,16 +193,16 @@ const BlockSharePage = () => {
             let totalClaimedX18 = 0n;
             let cumulative = 0n;
             if (caps.cumulativePerTokenX18) {
-                try { cumulative = await treasury.cumulativePerTokenX18(); } catch { }
+                try { cumulative = await contract.cumulativePerTokenX18(); } catch { }
             }
             for (const id of ids) {
                 let claimedX18 = 0n;
                 let claimableX18 = 0n;
                 if (caps.claimedPerTokenX18) {
-                    try { claimedX18 = await treasury.claimedPerTokenX18(id); } catch { }
+                    try { claimedX18 = await contract.claimedPerTokenX18(id); } catch { }
                 }
                 if (caps.claimable) {
-                    try { claimableX18 = await treasury.claimable(id); } catch { }
+                    try { claimableX18 = await contract.claimable(id); } catch { }
                 } else if (cumulative) {
                     const delta = cumulative - claimedX18;
                     if (delta > 0n) claimableX18 = delta;
@@ -205,25 +232,25 @@ const BlockSharePage = () => {
     }
 
     async function loadTreasuryStats() {
-        if (!treasury) return;
+        if (!contract) return;
         try {
             let balanceWei = 0n;
-            try { balanceWei = await provider.getBalance(treasuryAddress); } catch { }
+            try { balanceWei = await provider.getBalance(contractAddress); } catch { }
             const totalRevenue = ethers.formatEther(balanceWei);
 
             let totalShares = 0;
-            try { totalShares = Number((await nft.totalSupply()).toString()); } catch { }
+            try { totalShares = Number((await nftContract.totalSupply()).toString()); } catch { }
 
             let pendingRevenue = '0';
             if (caps.pendingBeforeMint) {
-                try { pendingRevenue = ethers.formatUnits(await treasury.pendingBeforeMint(), 18); } catch { }
+                try { pendingRevenue = ethers.formatUnits(await contract.pendingBeforeMint(), 18); } catch { }
             }
 
             let cumulativeCallSuccess = false;
             let realCumulative = '0';
             try {
                 if (caps.cumulativePerTokenX18) {
-                    const c = await treasury.cumulativePerTokenX18();
+                    const c = await contract.cumulativePerTokenX18();
                     realCumulative = ethers.formatUnits(c, 18);
                     cumulativeCallSuccess = true;
                 }
@@ -342,28 +369,28 @@ const BlockSharePage = () => {
     }
 
     async function handleClaim() {
-        if (!signer || !treasury) { setStatus('Wallet not ready'); return; }
+        if (!signer || !contract) { setStatus('Wallet not ready'); return; }
         if (calculating) { setStatus('Calculating…'); return; }
         if (!positiveClaimIds.length) { setStatus('Nothing claimable'); return; }
         setClaiming(true);
         try {
-            const t = treasury.connect(signer);
+            const c = contract.connect(signer);
             if (positiveClaimIds.length === 1 && caps.claim) {
-                await execSingle(t, positiveClaimIds[0]);
+                await execSingle(c, positiveClaimIds[0]);
                 await postClaim();
                 return;
             }
             if (positiveClaimIds.length > 1 && caps.claimMany) {
-                const ok = await staticTry(t, 'claimMany', [positiveClaimIds]);
+                const ok = await staticTry(c, 'claimMany', [positiveClaimIds]);
                 if (ok) {
-                    await sendTx(t, 'claimMany', [positiveClaimIds]);
+                    await sendTx(c, 'claimMany', [positiveClaimIds]);
                     await postClaim();
                     return;
                 }
             }
             let success = 0;
             for (const id of positiveClaimIds) {
-                const ok = await execSingle(t, id, true);
+                const ok = await execSingle(c, id, true);
                 if (ok) success++;
             }
             if (success === 0) setStatus('All claim attempts reverted');
@@ -407,12 +434,12 @@ const BlockSharePage = () => {
     }
 
     async function handleForward() {
-        if (!signer || !treasury || !caps.forwardNative) return;
+        if (!signer || !contract || !caps.forwardNative) return;
         try {
             setStatus('Calling forwardNative (0 value)…');
-            const t = treasury.connect(signer);
+            const c = contract.connect(signer);
             // attempt zero value; if contract needs >0 supply ask user
-            const tx = await t.forwardNative({ value: 0n });
+            const tx = await c.forwardNative({ value: 0n });
             await tx.wait();
             setStatus('forwardNative confirmed. Refreshing…');
             await refreshAll();
@@ -428,13 +455,13 @@ const BlockSharePage = () => {
     }
 
     async function handleAllocatePending() {
-        if (!signer || !treasury || !caps.allocatePending) return;
+        if (!signer || !contract || !caps.allocatePending) return;
         try {
             setStatus('Allocating pending…');
-            const t = treasury.connect(signer);
-            const ok = await staticTry(t, 'allocatePending', []);
+            const c = contract.connect(signer);
+            const ok = await staticTry(c, 'allocatePending', []);
             if (!ok) { setStatus('allocatePending static revert'); return; }
-            await sendTx(t, 'allocatePending', []);
+            await sendTx(c, 'allocatePending', []);
             await postClaim();
         } catch (e) {
             setStatus(`Allocation failed: ${decodeRevert(e)}`);
@@ -548,7 +575,7 @@ const BlockSharePage = () => {
                             {!perTokenInfo.length && <div>—</div>}
                         </div>
                         <div style={{ marginTop: 10, fontSize: 11, opacity: 0.8 }}>
-                            If Unallocated > 0: press Forward (allocates balance) then Allocate (if pending appears).
+                            If Unallocated &gt; 0: press Forward (allocates balance) then Allocate (if pending appears).
                         </div>
                     </div>
                 </div>

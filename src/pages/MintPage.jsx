@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
-import RevShareNFTAbi from '../abi/RevShareNFT.json';
+import RevShareNFTTreasuryAbi from '../abi/RevShareNFTTreasury.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 
 const MintPage = () => {
@@ -24,7 +24,8 @@ const MintPage = () => {
     const [manualGasMode, setManualGasMode] = useState(false);
     const [manualGasLimit, setManualGasLimit] = useState('400000');
 
-    const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
+    // Use the new combined contract address, fall back to old NFT address if not set
+    const nftAddress = import.meta.env.VITE_REVSHARE_NFT_TREASURY_ADDRESS || import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
 
     useEffect(() => {
         if (provider && nftAddress) {
@@ -43,13 +44,13 @@ const MintPage = () => {
 
     const initializeContract = async () => {
         try {
-            debugLog('Initializing RevShare NFT contract...');
-            const contract = new ethers.Contract(nftAddress, RevShareNFTAbi.abi, provider);
+            debugLog('Initializing RevShare NFT Treasury contract...');
+            const contract = new ethers.Contract(nftAddress, RevShareNFTTreasuryAbi.abi, provider);
             setNftContract(contract);
-            debugLog('RevShare NFT contract initialized successfully');
+            debugLog('RevShare NFT Treasury contract initialized successfully');
         } catch (error) {
-            criticalError('Failed to initialize RevShare NFT contract:', error);
-            setStatus('Failed to connect to RevShare NFT contract');
+            criticalError('Failed to initialize RevShare NFT Treasury contract:', error);
+            setStatus('Failed to connect to RevShare NFT Treasury contract');
         }
     };
 
@@ -61,9 +62,9 @@ const MintPage = () => {
             debugLog('Loading contract data...');
             
             const [price, total, max, active, payout] = await Promise.all([
-                nftContract.mintPrice(),
+                nftContract.mintPriceWei(),
                 nftContract.totalSupply(),
-                nftContract.MAX_SUPPLY(),
+                nftContract.maxSupply(),
                 nftContract.saleActive(),
                 nftContract.payout()
             ]);
