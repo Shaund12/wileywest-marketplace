@@ -332,7 +332,16 @@ export function SupabaseProvider({ children }) {
     // ========== PROFILE CACHE ==========
     const cacheProfileData = useCallback(
         async (address, profileData) => {
-            if (!supabase || !address) return;
+            if (!address) return;
+            
+            // If Supabase is not properly configured, just cache in memory
+            if (!supabase || !isConnected) {
+                debugLog(`💾 Supabase not connected - caching profile for ${address} in memory only`);
+                const key = getCacheKey('profile', String(address).toLowerCase());
+                setCache(key, profileData, 'profile');
+                return;
+            }
+
             try {
                 debugLog(`💾 Caching profile data for ${address}...`);
                 const profileRecord = {
@@ -354,13 +363,14 @@ export function SupabaseProvider({ children }) {
                     debugLog(`✅ Cached profile for ${address}`);
                     const key = getCacheKey('profile', String(address).toLowerCase());
                     setCache(key, profileData, 'profile');
+                    updateCacheStats('updates');
                 }
             } catch (error) {
                 debugWarn('Error caching profile:', error);
                 updateCacheStats('errors');
             }
         },
-        [supabase]
+        [supabase, isConnected]
     );
 
     const getCachedProfile = useCallback(
@@ -370,7 +380,12 @@ export function SupabaseProvider({ children }) {
             const mem = getCache(memKey);
             if (mem) return mem;
 
-            if (!supabase) return null;
+            // If Supabase is not properly configured (dummy values), return null gracefully
+            if (!supabase || !isConnected) {
+                debugLog(`📭 Supabase not connected - no cached profile available for ${address}`);
+                updateCacheStats('misses');
+                return null;
+            }
 
             try {
                 debugLog(`🔍 Fetching cached profile for ${address}...`);
@@ -398,6 +413,7 @@ export function SupabaseProvider({ children }) {
                 };
                 setCache(memKey, profileData, 'profile');
                 debugLog(`📦 Retrieved cached profile for ${address}`);
+                updateCacheStats('hits');
                 return profileData;
             } catch (error) {
                 debugWarn('Error retrieving cached profile:', error);
@@ -405,7 +421,7 @@ export function SupabaseProvider({ children }) {
                 return null;
             }
         },
-        [supabase]
+        [supabase, isConnected]
     );
 
     // ========== SALES CACHE ==========

@@ -61,15 +61,17 @@ function initializeClients() {
     const rpcUrl = process.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
     provider = new ethers.JsonRpcProvider(rpcUrl);
     
-    // Initialize Supabase
+    // Initialize Supabase (if properly configured)
     const supabaseUrl = process.env.VITE_SUPABASE_URL;
     const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
     
-    if (!supabaseUrl || !supabaseKey) {
-        throw new Error('Supabase credentials not configured');
+    if (!supabaseUrl || !supabaseKey || supabaseUrl === 'https://dummy.supabase.co') {
+        console.log('⚠️ Supabase not configured or using dummy values - will skip caching');
+        supabase = null;
+    } else {
+        supabase = createClient(supabaseUrl, supabaseKey);
+        console.log('✅ Initialized Supabase client for caching');
     }
-    
-    supabase = createClient(supabaseUrl, supabaseKey);
     
     console.log('✅ Initialized clients for user collection sync');
 }
@@ -592,6 +594,12 @@ async function scanUserNFTs(walletAddress) {
 // Get users to sync (from recent activity or all users)
 async function getUsersToSync() {
     try {
+        // If Supabase is not available, return empty array (no batch sync possible)
+        if (!supabase) {
+            console.log('📋 Supabase not available - no users to batch sync');
+            return [];
+        }
+
         // Get users with recent activity (marketplace listings, sales, etc.)
         const { data: recentUsers, error } = await supabase
             .from('marketplace_listings')
@@ -631,6 +639,12 @@ async function getUsersToSync() {
 async function cacheUserNFTs(walletAddress, nfts) {
     try {
         console.log(`💾 Caching ${nfts.length} NFTs for ${walletAddress}...`);
+        
+        // If Supabase is not available, just log and return success
+        if (!supabase) {
+            console.log(`⚠️ Supabase not available - scanned ${nfts.length} NFTs but cannot cache`);
+            return true; // Still return true since the scan was successful
+        }
         
         // Always create/update user profile, even if they have 0 NFTs
         // This ensures the profile exists for future cache lookups

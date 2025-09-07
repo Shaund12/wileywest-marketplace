@@ -906,19 +906,22 @@ function ProfilePage() {
                 }
             }
 
-            // Auto-trigger sync for new profiles when Supabase is connected, or when explicitly requested
+            // Auto-trigger sync for new profiles, or when explicitly requested
+            // Also trigger if Supabase is not connected and we have no NFTs (direct scan)
             const shouldTriggerSync = triggerSync || 
                                      (userNfts.length === 0 && forceRefresh) ||
-                                     (!hasExistingProfile && userNfts.length === 0 && supabaseConnected);
+                                     (!hasExistingProfile && userNfts.length === 0 && supabaseConnected) ||
+                                     (!supabaseConnected && userNfts.length === 0 && (triggerSync || forceRefresh));
             
             if (shouldTriggerSync) {
                 try {
-                    debugLog(`Triggering collection sync - triggerSync: ${triggerSync}, forceRefresh: ${forceRefresh}, hasExistingProfile: ${hasExistingProfile}`);
+                    debugLog(`Triggering collection sync - triggerSync: ${triggerSync}, forceRefresh: ${forceRefresh}, hasExistingProfile: ${hasExistingProfile}, supabaseConnected: ${supabaseConnected}`);
                     await triggerCollectionSync();
                 } catch (syncError) {
-                    console.warn('Collection sync failed, using cache only:', syncError);
+                    console.warn('Collection sync failed:', syncError);
                     if (userNfts.length === 0) {
-                        setStatus("❌ Sync unavailable and no cached data - try refreshing or check connection");
+                        setStatus("❌ All sync methods failed - check network connection");
+                        setTimeout(() => setStatus(''), 5000);
                     }
                 }
             }
@@ -971,6 +974,14 @@ function ProfilePage() {
                     setStatus(`❌ Sync API error: Invalid response format`);
                 }
             } else {
+                // If API is not available (404), fall back to direct blockchain scanning
+                if (response.status === 404) {
+                    console.log('API not available, falling back to direct blockchain scanning...');
+                    setStatus("🔄 API unavailable - scanning blockchain directly...");
+                    await directBlockchainScan();
+                    return;
+                }
+
                 try {
                     const error = JSON.parse(responseText);
                     setStatus(`❌ Sync failed: ${error.error || 'Unknown error'}`);
@@ -979,17 +990,112 @@ function ProfilePage() {
                     console.warn('Sync API returned HTML error:', responseText.substring(0, 200));
                     
                     if (responseText.includes('500') || responseText.includes('Internal Server Error')) {
-                        setStatus(`❌ Sync service temporarily unavailable - using cache only`);
+                        setStatus(`❌ Sync service temporarily unavailable - trying direct scan...`);
+                        await directBlockchainScan();
                     } else if (responseText.includes('404') || responseText.includes('Not Found')) {
-                        setStatus(`❌ Sync service not found - using cache only`);
+                        setStatus(`🔄 API not found - scanning blockchain directly...`);
+                        await directBlockchainScan();
                     } else {
-                        setStatus(`❌ Sync service error - using cache only`);
+                        setStatus(`❌ Sync service error - trying direct scan...`);
+                        await directBlockchainScan();
                     }
                 }
             }
         } catch (error) {
             console.warn('Sync request failed:', error);
-            setStatus(`❌ Sync unavailable - using cache only`);
+            setStatus(`🔄 Network error - falling back to direct blockchain scan...`);
+            await directBlockchainScan();
+        }
+    };
+
+    // Direct blockchain scan as fallback when API is not available
+    const directBlockchainScan = async () => {
+        try {
+            setStatus("🔍 Scanning blockchain for NFTs...");
+            
+            // Simple scan of known NFT contracts
+            const foundNfts = [];
+            
+            for (const contractAddress of KNOWN_NFT_CONTRACTS) {
+                try {
+                    setStatus(`🔍 Checking contract ${contractAddress.slice(0, 8)}...`);
+                    
+                    // Try ERC721 first
+                    try {
+                        const erc721Contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
+                        const balance = await erc721Contract.balanceOf(wallet);
+                        
+                        if (balance > 0) {
+                            setStatus(`Found ${balance} ERC721 NFTs in ${contractAddress.slice(0, 8)}...`);
+                            
+                            // Get first few token IDs (limited to prevent timeouts)
+                            const maxTokens = Math.min(Number(balance), 10);
+                            for (let i = 0; i < maxTokens; i++) {
+                                try {
+                                    const tokenId = await erc721Contract.tokenOfOwnerByIndex(wallet, i);
+                                    let tokenURI = '';
+                                    try {
+                                        tokenURI = await erc721Contract.tokenURI(tokenId);
+                                    } catch (e) { /* tokenURI optional */ }
+                                    
+                                    foundNfts.push({
+                                        contractAddress,
+                                        tokenId: tokenId.toString(),
+                                        type: 'ERC721',
+                                        tokenURI,
+                                        balance: 1
+                                    });
+                                } catch (e) {
+                                    console.warn(`Failed to get token ${i} from ${contractAddress}:`, e.message);
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        // Try ERC1155
+                        try {
+                            const erc1155Contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
+                            // For ERC1155, we would need to know token IDs to check balance
+                            // This is a limitation of the simple fallback
+                            console.log(`ERC1155 contract ${contractAddress} - balance check requires token IDs`);
+                        } catch (e) {
+                            console.warn(`Contract ${contractAddress} is not a standard NFT contract`);
+                        }
+                    }
+                } catch (error) {
+                    console.warn(`Error scanning contract ${contractAddress}:`, error.message);
+                }
+            }
+            
+            if (foundNfts.length > 0) {
+                setStatus(`✅ Direct scan found ${foundNfts.length} NFTs`);
+                setUserNfts(foundNfts);
+                
+                // Fetch metadata for found NFTs
+                await batchFetchMetadata(foundNfts);
+                await fetchContractInfoForNfts(foundNfts);
+                
+                // Cache the results if Supabase is available
+                if (cacheProfileData) {
+                    await cacheProfileData(wallet, { nfts: foundNfts, listings: [], balance: '0' });
+                }
+                
+                setStatus(`✅ Scan complete - found ${foundNfts.length} NFTs`);
+            } else {
+                setStatus("✅ Direct scan completed - no NFTs found in known contracts");
+                setUserNfts([]);
+                
+                // Still cache the empty result if Supabase is available
+                if (cacheProfileData) {
+                    await cacheProfileData(wallet, { nfts: [], listings: [], balance: '0' });
+                }
+            }
+            
+            setTimeout(() => setStatus(''), 3000);
+            
+        } catch (error) {
+            console.error('Direct blockchain scan failed:', error);
+            setStatus(`❌ Direct scan failed: ${error.message}`);
+            setTimeout(() => setStatus(''), 5000);
         }
     };
 
