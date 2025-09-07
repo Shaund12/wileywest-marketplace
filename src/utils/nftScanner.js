@@ -314,8 +314,8 @@ export class NFTScanner {
         }, 5000); // Start after 5 seconds delay
     }
 
-    // USER REQUIREMENT: ALWAYS scan from genesis (block 0) for all NFT discovery 
-    async scanAllNFTs(isBackground = false, scanFromGenesis = true) {
+    // Smart NFT scanning with conservative defaults to prevent infinite loops
+    async scanAllNFTs(isBackground = false, scanFromGenesis = false) {
         try {
             // Start timing for performance tracking
             this.scanStartTime = Date.now();
@@ -326,25 +326,30 @@ export class NFTScanner {
             // Start with known contracts + contract discovery
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
             
-            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) - no more conservative scanning
+            // Use conservative scanning by default to prevent infinite loops
             debugLog(`🔍 DEBUG: scanAllNFTs called with scanFromGenesis=${scanFromGenesis}`);
-            this.updateStatus("🔍 Comprehensive NFT scanning from blockchain genesis (block 0)");
-            debugLog("🌐 Comprehensive NFT discovery from all blockchain history");
-            debugLog("💡 Scanning known contracts + complete blockchain history for maximum coverage");
             
-            // Add contracts from transfer discovery (always from genesis)
-            this.updateStatus("🔍 Discovering NFT contracts from complete blockchain history...");
+            if (scanFromGenesis) {
+                this.updateStatus("🔍 Comprehensive NFT scanning from blockchain genesis (block 0)");
+                debugLog("🌐 Comprehensive NFT discovery from all blockchain history");
+            } else {
+                this.updateStatus("🔍 Smart NFT scanning (recent blocks + known contracts)");
+                debugLog("🌐 Conservative NFT discovery from recent blockchain activity");
+            }
+            
+            // Add contracts from transfer discovery with proper parameter passing
+            this.updateStatus("🔍 Discovering NFT contracts from blockchain activity...");
             
             let recentContracts = [];
             try {
-                // FORCE GENESIS SCANNING: Pass true regardless of input parameter
-                recentContracts = await this.findContractsByRecentTransfers(true);
+                // RESPECT THE PARAMETER: Use actual scanFromGenesis value
+                recentContracts = await this.findContractsByRecentTransfers(scanFromGenesis);
             } catch (error) {
                 debugWarn("Main contract discovery failed, using fallback method:", error);
                 // Fallback to the method that respects scanFromGenesis flag
                 try {
-                    // FORCE GENESIS SCANNING: Pass true regardless of input parameter
-                    recentContracts = await this.findContractsByRecentTransfersFallback(true);
+                    // RESPECT THE PARAMETER: Use actual scanFromGenesis value
+                    recentContracts = await this.findContractsByRecentTransfersFallback(scanFromGenesis);
                 } catch (fallbackError) {
                     criticalError("Fallback contract discovery also failed:", fallbackError);
                     recentContracts = []; // Continue with known contracts only
@@ -363,7 +368,12 @@ export class NFTScanner {
             );
             // Update total for progress tracking
             this.updateProgress({ total: contractsToScan.length });
-            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan - comprehensive genesis approach from block 0`);
+            
+            if (scanFromGenesis) {
+                this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan - comprehensive genesis approach from block 0`);
+            } else {
+                this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan - smart conservative approach`);
+            }
             
             // Save contract cache and known ERC20s periodically
             const saveInterval = setInterval(() => {
@@ -384,8 +394,8 @@ export class NFTScanner {
                     // Process contracts sequentially with comprehensive error handling
                     for (const address of batch) {
                         try {
-                            // FORCE GENESIS SCANNING: Always pass true for comprehensive scanning
-                            const nfts = await this.scanSingleContract(address, true);
+                            // RESPECT THE PARAMETER: Use actual scanFromGenesis value
+                            const nfts = await this.scanSingleContract(address, scanFromGenesis);
                             allNfts.push(...nfts);
                             
                             // Update progress
@@ -402,7 +412,7 @@ export class NFTScanner {
                                 e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                                 // Expected RPC errors - don't log
                             } else {
-                                debugWarn(`Error in comprehensive scan for ${address}:`, e.message);
+                                debugWarn(`Error in smart scan for ${address}:`, e.message);
                             }
                             // Update scanned count even on error
                             this.updateProgress({ scanned: this.progress.scanned + 1 });
@@ -429,10 +439,11 @@ export class NFTScanner {
             }
             
             const scanDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
-            this.updateStatus(`✅ Conservative scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s`);
+            const scanType = scanFromGenesis ? 'comprehensive' : 'smart';
+            this.updateStatus(`✅ ${scanType} scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s`);
             return allNfts;
         } catch (error) {
-            criticalError("Error in conservative NFT scan:", error);
+            criticalError("Error in smart NFT scan:", error);
             this.updateStatus(`❌ Error scanning: ${error.message}`);
             return this.nfts; // Return whatever we found so far
         }
@@ -634,18 +645,24 @@ export class NFTScanner {
         }
     }
 
-    // Find contracts from recent Transfer events (conservative approach)
-    async findContractsByRecentTransfers(scanFromGenesis = true) {
+    // Find contracts from Transfer events with smart block range selection
+    async findContractsByRecentTransfers(scanFromGenesis = false) {
         try {
             const contracts = new Set();
             
-            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) - no more conservative scanning
+            // Smart block range selection based on parameter
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = 0; // FORCE GENESIS: Always start from block 0
+            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 50000); // 50k blocks (~7 days) for conservative approach
             
-            debugLog(`🔍 DEBUG: findContractsByRecentTransfers - FORCING genesis scan from block 0 to ${currentBlock}`);
-            this.updateStatus(`🔍 Comprehensive blockchain scan (block 0 to ${currentBlock}) - scanning all history...`);
-            debugLog(`🌐 Comprehensive blockchain scan: blocks 0 to ${currentBlock} for complete coverage`);
+            debugLog(`🔍 DEBUG: findContractsByRecentTransfers - scanning from block ${fromBlock} to ${currentBlock}`);
+            
+            if (scanFromGenesis) {
+                this.updateStatus(`🔍 Comprehensive blockchain scan (block 0 to ${currentBlock}) - scanning all history...`);
+                debugLog(`🌐 Comprehensive blockchain scan: blocks 0 to ${currentBlock} for complete coverage`);
+            } else {
+                this.updateStatus(`🔍 Smart blockchain scan (block ${fromBlock} to ${currentBlock}) - scanning recent activity...`);
+                debugLog(`🌐 Smart blockchain scan: blocks ${fromBlock} to ${currentBlock} for recent coverage`);
+            }
             
             // Use chunked approach to scan blockchain history
             try {
@@ -668,7 +685,7 @@ export class NFTScanner {
                 !this.knownErc20s.has(addr.toLowerCase())
             );
                 
-            const scanType = scanFromGenesis ? 'comprehensive' : 'conservative';
+            const scanType = scanFromGenesis ? 'comprehensive' : 'smart';
             this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from ${scanType} scan`);
             return filteredContracts;
         } catch (error) {
@@ -677,18 +694,24 @@ export class NFTScanner {
         }
     }
 
-    // Fallback method for when comprehensive scan fails
-    async findContractsByRecentTransfersFallback(scanFromGenesis = true) {
+    // Fallback method for when main scan fails with smart block range selection
+    async findContractsByRecentTransfersFallback(scanFromGenesis = false) {
         try {
             const contracts = new Set();
             
-            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) - no more conservative scanning
+            // Smart block range selection for fallback too
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = 0; // FORCE GENESIS: Always start from block 0
+            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 25000); // 25k blocks for fallback
             
-            debugLog(`🔍 DEBUG: findContractsByRecentTransfersFallback - FORCING genesis scan from block 0 to ${currentBlock}`);
-            this.updateStatus(`🔄 Fallback genesis scan: blocks 0 to ${currentBlock} (using smaller chunks)...`);
-            debugLog(`🔄 Fallback genesis scanning: blocks 0 to ${currentBlock} (comprehensive with smaller chunks)`);
+            debugLog(`🔍 DEBUG: findContractsByRecentTransfersFallback - scanning from block ${fromBlock} to ${currentBlock}`);
+            
+            if (scanFromGenesis) {
+                this.updateStatus(`🔄 Fallback genesis scan: blocks 0 to ${currentBlock} (using smaller chunks)...`);
+                debugLog(`🔄 Fallback genesis scanning: blocks 0 to ${currentBlock} (comprehensive with smaller chunks)`);
+            } else {
+                this.updateStatus(`🔄 Fallback smart scan: blocks ${fromBlock} to ${currentBlock} (using smaller chunks)...`);
+                debugLog(`🔄 Fallback smart scanning: blocks ${fromBlock} to ${currentBlock} (conservative with smaller chunks)`);
+            }
             
             // Scan fallback transfers with error handling - always from genesis
             await this.findTransfersByRecentBlocks(ethers.id("Transfer(address,address,uint256)"), 
@@ -705,7 +728,7 @@ export class NFTScanner {
                 !this.knownErc20s.has(addr.toLowerCase())
             );
                 
-            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from fallback genesis scan`);
+            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from fallback ${scanFromGenesis ? 'genesis' : 'smart'} scan`);
             return filteredContracts;
         } catch (error) {
             criticalError("Error in fallback transfer scanning:", error);
@@ -755,22 +778,27 @@ export class NFTScanner {
         }
     }
     
-    // Find transfers by breaking into smaller chunks (comprehensive approach from genesis)
+    // Find transfers by breaking into smaller chunks with smart block range selection
     async findTransfersByChunks(eventTopic, walletTopic, contracts, fromBlock, toBlock, isErc1155 = false) {
         try {
             const currentBlock = toBlock || await this.provider.getBlockNumber();
-            const startBlock = fromBlock !== undefined ? fromBlock : 0; // USER REQUIREMENT: Default to block 0 if not specified
-            let chunkSize = 25000; // Smaller chunks for comprehensive approach
+            const startBlock = fromBlock !== undefined ? fromBlock : 0; // Only default to 0 if not specified
+            let chunkSize = fromBlock === 0 ? 25000 : 50000; // Smaller chunks for genesis scanning
             let failedAttempts = 0;
             
             debugLog(`🔍 DEBUG: findTransfersByChunks starting from block ${startBlock} to ${currentBlock}`);
             
-            // Comprehensive processing: smaller chunks, thorough scanning from genesis
+            if (startBlock === 0) {
+                this.updateStatus(`Scanning blocks ${startBlock}-${currentBlock} for transfers (comprehensive from genesis)...`);
+            } else {
+                this.updateStatus(`Scanning blocks ${startBlock}-${currentBlock} for transfers (smart recent scan)...`);
+            }
+            // Process blocks in chunks with adaptive chunk sizing
             for (let chunkStart = startBlock; chunkStart < currentBlock; chunkStart += chunkSize) {
                 const chunkEnd = Math.min(chunkStart + chunkSize - 1, currentBlock);
                 
                 try {
-                    this.updateStatus(`Scanning blocks ${chunkStart}-${chunkEnd} for transfers (comprehensive from genesis)...`);
+                    this.updateStatus(`Scanning blocks ${chunkStart}-${chunkEnd} for transfers...`);
                     
                     const filter = isErc1155 ? {
                         topics: [eventTopic, null, null, walletTopic],
@@ -824,7 +852,7 @@ export class NFTScanner {
                     
                     // If multiple consecutive failures, reduce chunk size or skip ahead
                     if (failedAttempts >= 2) {
-                        debugLog(`Multiple RPC failures, reducing scan scope`);
+                        debugLog(`Multiple RPC failures, adjusting scan strategy`);
                         // Reduce chunk size significantly
                         if (chunkSize > 5000) {
                             const newChunkSize = Math.floor(chunkSize / 3);
@@ -839,12 +867,12 @@ export class NFTScanner {
                     }
                 }
                 
-                // Conservative delay between chunks to reduce load
-                await new Promise(resolve => setTimeout(resolve, 300));
+                // Smart delay between chunks based on scan type
+                await new Promise(resolve => setTimeout(resolve, startBlock === 0 ? 500 : 200));
             }
             
         } catch (error) {
-            criticalError("Error in conservative chunked transfer search:", error);
+            criticalError("Error in smart chunked transfer search:", error);
         }
     }
 
@@ -1111,7 +1139,7 @@ export class NFTScanner {
         }
     }
     
-    // Scan ERC721 using Transfer events with COMPREHENSIVE approach (scan from beginning)
+    // Scan ERC721 using Transfer events with smart block range selection
     async scanERC721ByEvents(contractAddress, contract, contractInfo, existingResults = [], scanFromGenesis = false) {
         const results = [];
         
@@ -1119,29 +1147,29 @@ export class NFTScanner {
             // Track token IDs we've already found via enumeration to avoid duplicates
             const foundTokenIds = new Set(existingResults.map(nft => nft.tokenId));
             
-            // Get Transfer events TO this wallet - COMPREHENSIVE COVERAGE (scan from beginning)
+            // Get Transfer events TO this wallet with smart block range selection
             const transferTopic = ethers.id('Transfer(address,address,uint256)');
             const toWalletTopic = ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32);
             
-            // COMPREHENSIVE approach: Scan from the beginning of blockchain for complete coverage
+            // Smart block range selection based on parameter
             try {
                 const currentBlock = await this.provider.getBlockNumber();
-                const comprehensiveStartBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 100000); // Respect the flag
+                const startBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 100000); // 100k blocks for conservative
                 
                 if (scanFromGenesis) {
                     this.updateStatus(`Comprehensive ERC721 scan: blocks 0-${currentBlock} for complete coverage...`);
                     debugLog(`🌐 COMPREHENSIVE ERC721 scan: 0-${currentBlock} blocks for maximum coverage`);
                 } else {
-                    this.updateStatus(`Conservative ERC721 scan: blocks ${comprehensiveStartBlock}-${currentBlock} for recent coverage...`);
-                    debugLog(`🌐 CONSERVATIVE ERC721 scan: ${comprehensiveStartBlock}-${currentBlock} blocks for recent coverage`);
+                    this.updateStatus(`Smart ERC721 scan: blocks ${startBlock}-${currentBlock} for recent coverage...`);
+                    debugLog(`🌐 SMART ERC721 scan: ${startBlock}-${currentBlock} blocks for recent coverage`);
                 }
                 
-                // Use chunked approach for comprehensive scanning to avoid RPC limits
+                // Use chunked approach for scanning to avoid RPC limits
                 const tokenIds = new Set();
                 await this.scanERC721TransfersInChunks(contractAddress, transferTopic, toWalletTopic, 
-                    tokenIds, comprehensiveStartBlock, currentBlock);
+                    tokenIds, startBlock, currentBlock);
                 
-                this.updateStatus(`Found ${tokenIds.size} potential token IDs from comprehensive event scan`);
+                this.updateStatus(`Found ${tokenIds.size} potential token IDs from ${scanFromGenesis ? 'comprehensive' : 'smart'} event scan`);
                 
                 // Check each token ID to see if we still own it (with timeouts and comprehensive error handling)
                 for (const tokenId of tokenIds) {
@@ -1195,14 +1223,14 @@ export class NFTScanner {
                     }
                 }
             } catch (logError) {
-                criticalError(`Error scanning comprehensive transfer events for ${contractAddress}:`, logError);
+                criticalError(`Error scanning ${scanFromGenesis ? 'comprehensive' : 'smart'} transfer events for ${contractAddress}:`, logError);
                 
-                // Fallback to recent blocks if comprehensive scan fails
+                // Fallback to recent blocks if scan fails
                 debugLog("Falling back to recent block scanning for ERC721 transfers...");
                 return await this.scanERC721ByEventsFallback(contractAddress, contract, contractInfo, existingResults, scanFromGenesis);
             }
         } catch (error) {
-            criticalError(`Error in comprehensive event-based scan for ${contractAddress}:`, error);
+            criticalError(`Error in ${scanFromGenesis ? 'comprehensive' : 'smart'} event-based scan for ${contractAddress}:`, error);
         }
         
         return results;
@@ -1536,12 +1564,12 @@ export class NFTScanner {
         }
     }
 
-    // Discover ERC1155 token IDs using COMPREHENSIVE approach (scan from beginning)
+    // Discover ERC1155 token IDs using smart block range selection 
     async discoverERC1155TokenIds(contract, contractAddress, scanFromGenesis = false) {
         try {
             const tokenIds = new Set();
             
-            // Choose approach based on scanFromGenesis flag
+            // Smart block range selection based on parameter
             const currentBlock = await this.provider.getBlockNumber();
             const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 100000);
             const toBlock = 'latest';
@@ -1550,24 +1578,25 @@ export class NFTScanner {
                 this.updateStatus(`Comprehensive ERC1155 scan: blocks 0-${toBlock} for complete coverage...`);
                 debugLog(`🌐 COMPREHENSIVE ERC1155 discovery: 0-${toBlock} blocks for maximum coverage`);
             } else {
-                this.updateStatus(`Conservative ERC1155 scan: blocks ${fromBlock}-${toBlock} for recent coverage...`);
-                debugLog(`🌐 CONSERVATIVE ERC1155 discovery: ${fromBlock}-${toBlock} blocks for recent coverage`);
+                this.updateStatus(`Smart ERC1155 scan: blocks ${fromBlock}-${toBlock} for recent coverage...`);
+                debugLog(`🌐 SMART ERC1155 discovery: ${fromBlock}-${toBlock} blocks for recent coverage`);
             }
             
             try {
-                // Try comprehensive scanning with chunked approach to avoid RPC limits
+                // Try scanning with chunked approach to avoid RPC limits
                 await this.discoverERC1155TokenIdsInChunks(contract, contractAddress, tokenIds, fromBlock, currentBlock);
                 
                 this.updateStatus(`Found ${tokenIds.size} total token IDs including batch events`);
                 
             } catch (error) {
-                debugWarn(`Error getting comprehensive events for ${contractAddress}, using fallback discovery:`, error.message);
+                debugWarn(`Error getting ${scanFromGenesis ? 'comprehensive' : 'smart'} events for ${contractAddress}, using fallback discovery:`, error.message);
                 
-                // Enhanced fallback: More comprehensive than conservative approach
+                // Enhanced fallback: More comprehensive than basic approach
                 this.updateStatus("Using enhanced fallback token ID discovery...");
                 
-                // Check more sequential IDs than conservative approach
-                for (let i = 0; i <= 200; i++) {
+                // Check more sequential IDs for better coverage
+                const maxIds = scanFromGenesis ? 500 : 200;
+                for (let i = 0; i <= maxIds; i++) {
                     tokenIds.add(i.toString());
                 }
                 
@@ -1588,7 +1617,7 @@ export class NFTScanner {
                 }
             }
             
-            debugLog(`🌐 COMPREHENSIVE ERC1155 discovery: ${tokenIds.size} token IDs to check (maximum coverage)`);
+            debugLog(`🌐 ${scanFromGenesis ? 'COMPREHENSIVE' : 'SMART'} ERC1155 discovery: ${tokenIds.size} token IDs to check`);
             return [...tokenIds];
         } catch (error) {
             criticalError(`Error discovering ERC1155 token IDs for ${contractAddress}:`, error);

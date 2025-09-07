@@ -461,7 +461,38 @@ function ProfilePage() {
         }
     };
 
-    // Fetch NFT metadata with improved error handling and multiple retry attempts
+    // Safe SVG URI validation to prevent crashes
+    const isSafeSvgUri = (uri) => {
+        if (!uri || typeof uri !== 'string') return false;
+        
+        // Check for data URIs containing SVG
+        if (uri.startsWith('data:image/svg+xml')) {
+            try {
+                // Decode and check for potential issues
+                const decoded = decodeURIComponent(uri);
+                // Block potentially problematic SVG content
+                if (decoded.includes('<script') || 
+                    decoded.includes('javascript:') || 
+                    decoded.includes('onload=') ||
+                    decoded.includes('onerror=') ||
+                    decoded.length > 100000) { // Limit size to prevent memory issues
+                    return false;
+                }
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+        
+        // Check for .svg files
+        if (uri.toLowerCase().includes('.svg')) {
+            return true; // Let browser handle validation
+        }
+        
+        return true; // Not an SVG, should be safe
+    };
+
+    // Fetch NFT metadata with improved error handling and SVG safety checks
     const fetchNftMetadata = async (contractAddress, tokenId, tokenURI) => {
         const key = `${contractAddress.toLowerCase()}-${tokenId}`;
 
@@ -488,7 +519,7 @@ function ProfilePage() {
                 }
 
                 const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 30000); // Increased to 30s timeout
+                const timeoutId = setTimeout(() => controller.abort(), 15000); // Reduced timeout to prevent hanging
 
                 try {
                     const response = await fetch(resolvedUri, {
@@ -537,10 +568,22 @@ function ProfilePage() {
                                 // Use the first reliable IPFS gateway
                                 imageUrl = `${IPFS_GATEWAYS[0]}${imageUrl.replace('ipfs://', '')}`;
                             }
+                            
+                            // Validate SVG safety
+                            if (!isSafeSvgUri(imageUrl)) {
+                                debugWarn(`Potentially unsafe SVG URI detected for ${tokenId}, using fallback`);
+                                imageUrl = generateFallbackImage(contractAddress, tokenId);
+                            }
                         } else if (metadata.image_url) {
                             imageUrl = metadata.image_url;
+                            if (!isSafeSvgUri(imageUrl)) {
+                                imageUrl = generateFallbackImage(contractAddress, tokenId);
+                            }
                         } else if (metadata.imageUrl) {
                             imageUrl = metadata.imageUrl;
+                            if (!isSafeSvgUri(imageUrl)) {
+                                imageUrl = generateFallbackImage(contractAddress, tokenId);
+                            }
                         }
 
                         const attributes = metadata.attributes || metadata.traits || [];
@@ -932,7 +975,7 @@ function ProfilePage() {
         }
     };
 
-    // Trigger backend collection sync with NFT Scanner fallback
+    // Trigger backend collection sync with smart NFT Scanner fallback
     const triggerCollectionSync = async () => {
         try {
             setStatus("🔄 Triggering collection sync...");
@@ -966,22 +1009,22 @@ function ProfilePage() {
                             }, 1000);
                             return; // Success, no need for fallback
                         } else {
-                            debugLog("Backend sync returned 0 NFTs, trying local scan...");
+                            debugLog("Backend sync returned 0 NFTs, trying smart local scan...");
                         }
                     } catch (jsonError) {
-                        debugWarn('Backend API returned non-JSON response, trying local scan...');
+                        debugWarn('Backend API returned non-JSON response, trying smart local scan...');
                     }
                 } else {
-                    debugWarn('Backend API failed, trying local scan...');
+                    debugWarn('Backend API failed, trying smart local scan...');
                 }
             } catch (apiError) {
-                debugWarn('Backend API unavailable, using local NFT scanner:', apiError.message);
+                debugWarn('Backend API unavailable, using smart NFT scanner:', apiError.message);
             }
             
-            // Fallback to local NFT scanner for complete blockchain scan from block 0
-            setStatus("🔍 Backend unavailable - scanning blockchain directly from genesis (block 0)...");
-            debugLog("🔄 Using NFTScanner fallback for complete blockchain scan from block 0");
-            debugLog("🌐 This scan will find all NFTs from the beginning of the blockchain");
+            // Fallback to smart local NFT scanner (conservative by default, comprehensive only for new profiles)
+            setStatus("🔍 Backend unavailable - using smart blockchain scanning...");
+            debugLog("🔄 Using NFTScanner fallback with smart conservative approach");
+            debugLog("🌐 This will scan recent blockchain activity efficiently");
             
             if (!provider || !wallet) {
                 throw new Error("Provider or wallet not available for scanning");
@@ -992,10 +1035,11 @@ function ProfilePage() {
                 setStatus(statusMsg);
             });
             
-            // Perform comprehensive scan from block 0 for new profiles
-            const foundNfts = await scanner.scanAllNFTs(false, true); // NOT background, scan from genesis
+            // Use conservative scanning by default (only comprehensive for truly new profiles)
+            const isNewProfile = userNfts.length === 0;
+            const foundNfts = await scanner.scanAllNFTs(false, isNewProfile); // Conservative unless new profile
             
-            debugLog(`Local scanner found ${foundNfts.length} NFTs`);
+            debugLog(`Smart scanner found ${foundNfts.length} NFTs`);
             
             // Cache results to Supabase if available for future visits
             if (supabaseConnected && cacheProfileData && foundNfts.length >= 0) {
@@ -1004,7 +1048,7 @@ function ProfilePage() {
                     await cacheProfileData(wallet, {
                         nfts: foundNfts,
                         lastScanBlock: await provider.getBlockNumber(),
-                        scanType: 'comprehensive_genesis',
+                        scanType: isNewProfile ? 'comprehensive_genesis' : 'smart_conservative',
                         timestamp: Date.now()
                     });
                     debugLog("✅ Profile data cached to Supabase");
@@ -1017,13 +1061,14 @@ function ProfilePage() {
             setUserNfts(foundNfts);
             
             if (foundNfts.length > 0) {
-                setStatus(`✅ Direct blockchain scan complete - found ${foundNfts.length} NFTs from genesis`);
+                const scanType = isNewProfile ? 'comprehensive' : 'smart';
+                setStatus(`✅ ${scanType} blockchain scan complete - found ${foundNfts.length} NFTs`);
                 
                 // Fetch metadata for discovered NFTs
                 await batchFetchMetadata(foundNfts);
                 await fetchContractInfoForNfts(foundNfts);
             } else {
-                setStatus(`✅ Blockchain scan complete - no NFTs found but profile created`);
+                setStatus(`✅ Smart scan complete - no NFTs found but profile created`);
             }
             
             // Clear status after delay
@@ -1545,9 +1590,22 @@ function ProfilePage() {
                                     </button>
                                     <button
                                         className="tertiary-button action-button force-refresh-button"
-                                        onClick={() => findAllUserNfts(true, false, true)}
-                                        disabled={false}
-                                        title="Force refresh - clears cache and triggers new sync"
+                                        onClick={() => {
+                                            // Force comprehensive scanning from genesis for maximum coverage
+                                            const scanner = new NFTScanner(provider, wallet, setStatus);
+                                            scanner.scanAllNFTs(false, true).then(nfts => {
+                                                setUserNfts(nfts);
+                                                if (nfts.length > 0) {
+                                                    batchFetchMetadata(nfts);
+                                                    fetchContractInfoForNfts(nfts);
+                                                }
+                                            }).catch(error => {
+                                                criticalError('Force refresh failed:', error);
+                                                setStatus('❌ Force refresh failed - try regular refresh');
+                                            });
+                                        }}
+                                        disabled={isLoading}
+                                        title="Force comprehensive refresh - scans entire blockchain history from genesis (block 0)"
                                     >
                                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
                                             <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
@@ -1910,9 +1968,19 @@ function ProfilePage() {
                                     src={imageUrl}
                                     alt={name}
                                     onError={(e) => {
+                                        // Comprehensive error handling for image loading
                                         e.target.onerror = null;
-                                        e.target.src = fallbackImg;
-                                        e.target.classList.add('fallback');
+                                        const fallbackSrc = generateFallbackImage(nft.contractAddress, nft.tokenId);
+                                        if (e.target.src !== fallbackSrc) {
+                                            e.target.src = fallbackSrc;
+                                            e.target.classList.add('fallback');
+                                        }
+                                    }}
+                                    onLoad={(e) => {
+                                        // Additional safety check for problematic images
+                                        if (e.target.naturalWidth === 0 || e.target.naturalHeight === 0) {
+                                            e.target.onerror(e);
+                                        }
                                     }}
                                 />
                             )}
@@ -1977,9 +2045,19 @@ function ProfilePage() {
                                 src={imageUrl}
                                 alt={name}
                                 onError={(e) => {
+                                    // Comprehensive error handling for image loading
                                     e.target.onerror = null;
-                                    e.target.src = fallbackImg;
-                                    e.target.classList.add('fallback');
+                                    const fallbackSrc = generateFallbackImage(nft.contractAddress, nft.tokenId);
+                                    if (e.target.src !== fallbackSrc) {
+                                        e.target.src = fallbackSrc;
+                                        e.target.classList.add('fallback');
+                                    }
+                                }}
+                                onLoad={(e) => {
+                                    // Additional safety check for problematic images
+                                    if (e.target.naturalWidth === 0 || e.target.naturalHeight === 0) {
+                                        e.target.onerror(e);
+                                    }
                                 }}
                             />
                         )}
@@ -2083,8 +2161,19 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
                         alt={name}
                         className="nft-detail-image"
                         onError={(e) => {
+                            // Comprehensive error handling for detailed view
                             e.target.onerror = null;
-                            e.target.src = generateFallbackImage(nft.contractAddress, nft.tokenId);
+                            const fallbackSrc = generateFallbackImage(nft.contractAddress, nft.tokenId);
+                            if (e.target.src !== fallbackSrc) {
+                                e.target.src = fallbackSrc;
+                                e.target.classList.add('fallback');
+                            }
+                        }}
+                        onLoad={(e) => {
+                            // Additional safety check for problematic images
+                            if (e.target.naturalWidth === 0 || e.target.naturalHeight === 0) {
+                                e.target.onerror(e);
+                            }
                         }}
                     />
                     {nft.type === 'ERC1155' && nft.balance > 1 && (
