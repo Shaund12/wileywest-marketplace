@@ -2,16 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import RevShareNFTTreasuryAbi from '../abi/RevShareNFTTreasury.json';
+import RevShareTreasuryAbi from '../abi/RevShareTreasuryActual.json';
+import RevShareNFTAbi from '../abi/RevShareNFT.json';
 import { debugWarn, criticalError } from '../utils/debugUtils';
 
 const BlockSharePage = () => {
     const { wallet, signer, provider } = useWallet();
 
-    // Use the new combined contract address, fall back to old treasury address if not set
-    const contractAddress = import.meta.env.VITE_REVSHARE_NFT_TREASURY_ADDRESS || import.meta.env.VITE_REVSHARE_TREASURY_ADDRESS;
+    // Check which contract setup to use
+    const newContractAddress = import.meta.env.VITE_REVSHARE_NFT_TREASURY_ADDRESS;
+    const oldTreasuryAddress = import.meta.env.VITE_REVSHARE_TREASURY_ADDRESS;
+    const oldNftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
+    
+    // Use new combined contract if available and not zero address, otherwise fallback to old setup
+    const useNewContract = newContractAddress && newContractAddress !== '0x0000000000000000000000000000000000000000';
+    const contractAddress = useNewContract ? newContractAddress : oldTreasuryAddress;
+    const nftAddress = useNewContract ? newContractAddress : oldNftAddress;
+    
     const DEBUG = import.meta.env.VITE_DEBUG_MODE === 'true';
 
     const [contract, setContract] = useState(null);
+    const [nftContract, setNftContract] = useState(null);  // For old setup, separate NFT contract
 
     const [status, setStatus] = useState('');
     const [contractError, setContractError] = useState('');
@@ -61,16 +72,37 @@ const BlockSharePage = () => {
 
     useEffect(() => {
         if (provider && contractAddress) init();
-    }, [provider, contractAddress]);
+    }, [provider, contractAddress, useNewContract]);
 
     async function init() {
         try {
             setContractError('');
-            const c = new ethers.Contract(contractAddress, (RevShareNFTTreasuryAbi.abi || RevShareNFTTreasuryAbi), provider);
-            const contractCode = await provider.getCode(contractAddress);
-            if (contractCode === '0x') throw new Error('RevShare NFT Treasury not deployed at address');
-            setContract(c);
-            await probeCaps(c);
+            
+            if (useNewContract) {
+                // Use the new combined contract
+                const c = new ethers.Contract(contractAddress, (RevShareNFTTreasuryAbi.abi || RevShareNFTTreasuryAbi), provider);
+                const contractCode = await provider.getCode(contractAddress);
+                if (contractCode === '0x') throw new Error('RevShare NFT Treasury not deployed at address');
+                setContract(c);
+                setNftContract(c); // Same contract for both functions
+                await probeCaps(c, c);
+            } else {
+                // Use the old separate contracts
+                if (!oldNftAddress) throw new Error('NFT contract address not configured');
+                const treasuryContract = new ethers.Contract(contractAddress, (RevShareTreasuryAbi.abi || RevShareTreasuryAbi), provider);
+                const nftContract = new ethers.Contract(nftAddress, (RevShareNFTAbi.abi || RevShareNFTAbi), provider);
+                
+                const [tCode, nCode] = await Promise.all([
+                    provider.getCode(contractAddress), 
+                    provider.getCode(nftAddress)
+                ]);
+                if (tCode === '0x') throw new Error('Treasury not deployed at address');
+                if (nCode === '0x') throw new Error('NFT not deployed at address');
+                
+                setContract(treasuryContract);
+                setNftContract(nftContract);
+                await probeCaps(treasuryContract, nftContract);
+            }
             setDataLoaded(false);
         } catch (e) {
             const msg = `Init failed: ${e.message}`;
@@ -80,28 +112,28 @@ const BlockSharePage = () => {
         }
     }
 
-    async function probeCaps(c) {
+    async function probeCaps(treasuryContract, nftContract) {
         const newCaps = { ...caps };
-        try { c.interface.getFunction('claim'); newCaps.claim = true; } catch { }
-        try { c.interface.getFunction('claimMany'); newCaps.claimMany = true; } catch { }
-        try { await c.claimable(1).catch(() => { }); newCaps.claimable = true; } catch { }
-        try { await c.cumulativePerTokenX18(); newCaps.cumulativePerTokenX18 = true; } catch { }
-        try { await c.claimedPerTokenX18(1); newCaps.claimedPerTokenX18 = true; } catch { }
-        try { await c.pendingBeforeMint(); newCaps.pendingBeforeMint = true; } catch { }
-        try { c.interface.getFunction('allocatePending'); newCaps.allocatePending = true; } catch { }
-        try { c.interface.getFunction('forwardNative'); newCaps.forwardNative = true; } catch { }
-        try { await c.totalSupply(); } catch { }
+        try { treasuryContract.interface.getFunction('claim'); newCaps.claim = true; } catch { }
+        try { treasuryContract.interface.getFunction('claimMany'); newCaps.claimMany = true; } catch { }
+        try { await treasuryContract.claimable(1).catch(() => { }); newCaps.claimable = true; } catch { }
+        try { await treasuryContract.cumulativePerTokenX18(); newCaps.cumulativePerTokenX18 = true; } catch { }
+        try { await treasuryContract.claimedPerTokenX18(1); newCaps.claimedPerTokenX18 = true; } catch { }
+        try { await treasuryContract.pendingBeforeMint(); newCaps.pendingBeforeMint = true; } catch { }
+        try { treasuryContract.interface.getFunction('allocatePending'); newCaps.allocatePending = true; } catch { }
+        try { treasuryContract.interface.getFunction('forwardNative'); newCaps.forwardNative = true; } catch { }
+        try { await nftContract.totalSupply(); } catch { }
         setCaps(newCaps);
     }
 
     useEffect(() => {
-        if (contract && wallet && !dataLoaded) {
+        if (contract && nftContract && wallet && !dataLoaded) {
             (async () => {
                 await refreshAll();
                 setDataLoaded(true);
             })();
         }
-    }, [contract, wallet, dataLoaded]);
+    }, [contract, nftContract, wallet, dataLoaded]);
 
     async function refreshAll() {
         await loadUser();
@@ -110,11 +142,11 @@ const BlockSharePage = () => {
     }
 
     async function loadUser() {
-        if (!wallet || !contract) return;
+        if (!wallet || !nftContract) return;
         setLoading(true);
         try {
             let bal = 0;
-            try { bal = Number((await contract.balanceOf(wallet)).toString()); } catch { }
+            try { bal = Number((await nftContract.balanceOf(wallet)).toString()); } catch { }
             setUserNFTBalance(bal);
             const ids = await getUserTokenIds(wallet, bal);
             setUserTokenIds(ids);
@@ -132,17 +164,17 @@ const BlockSharePage = () => {
         try {
             const out = [];
             for (let i = 0; i < balanceGuess; i++) {
-                const id = await contract.tokenOfOwnerByIndex(addr, i);
+                const id = await nftContract.tokenOfOwnerByIndex(addr, i);
                 out.push(Number(id)); // token IDs may start at 0 or 1
             }
             return out;
         } catch {
             const out = [];
             let supply = 0;
-            try { supply = Number((await contract.totalSupply()).toString()); } catch { supply = 1200; }
+            try { supply = Number((await nftContract.totalSupply()).toString()); } catch { supply = 1200; }
             for (let tokenId = 0; tokenId < supply && out.length < balanceGuess; tokenId++) {
                 try {
-                    const owner = await contract.ownerOf(tokenId);
+                    const owner = await nftContract.ownerOf(tokenId);
                     if (owner.toLowerCase() === addr.toLowerCase()) out.push(tokenId);
                 } catch { }
             }
@@ -207,7 +239,7 @@ const BlockSharePage = () => {
             const totalRevenue = ethers.formatEther(balanceWei);
 
             let totalShares = 0;
-            try { totalShares = Number((await contract.totalSupply()).toString()); } catch { }
+            try { totalShares = Number((await nftContract.totalSupply()).toString()); } catch { }
 
             let pendingRevenue = '0';
             if (caps.pendingBeforeMint) {
