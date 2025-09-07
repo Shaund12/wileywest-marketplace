@@ -172,11 +172,46 @@ const fetchMetadataFromContract = async (contractAddress, tokenId, provider) => 
 
         debugLog(`🌐 Fetching metadata from URI: ${tokenURI}`);
 
-        // If it's a data URI, parse it directly
+        // If it's a data URI, handle it appropriately
         if (tokenURI.startsWith('data:')) {
-            const jsonString = tokenURI.split(',')[1];
-            const decodedData = atob(jsonString);
-            return JSON.parse(decodedData);
+            try {
+                // Check if it's a JSON data URI
+                if (tokenURI.startsWith('data:application/json') || tokenURI.startsWith('data:text/plain') || 
+                    tokenURI.includes('application/json') || (!tokenURI.includes('image/') && !tokenURI.includes('text/html'))) {
+                    const jsonString = tokenURI.split(',')[1];
+                    const decodedData = atob(jsonString);
+                    return JSON.parse(decodedData);
+                }
+                
+                // If it's an image data URI (like SVG, PNG, etc.), create fallback metadata
+                if (tokenURI.includes('image/')) {
+                    debugLog(`📸 Found image data URI, creating fallback metadata`);
+                    return {
+                        name: `NFT #${tokenId}`,
+                        description: `Token #${tokenId} from contract ${contractAddress}`,
+                        image: tokenURI, // Use the data URI directly as the image
+                        attributes: [],
+                        contractAddress: contractAddress,
+                        tokenId: tokenId
+                    };
+                }
+                
+                // For other data URI types, try to parse as JSON first
+                const jsonString = tokenURI.split(',')[1];
+                const decodedData = atob(jsonString);
+                return JSON.parse(decodedData);
+            } catch (parseError) {
+                debugWarn(`Error parsing data URI, creating fallback metadata: ${parseError.message}`);
+                // If parsing fails, create fallback metadata with the URI as potential image
+                return {
+                    name: `NFT #${tokenId}`,
+                    description: `Token #${tokenId} from contract ${contractAddress}`,
+                    image: tokenURI.includes('image/') ? tokenURI : null,
+                    attributes: [],
+                    contractAddress: contractAddress,
+                    tokenId: tokenId
+                };
+            }
         }
 
         // If it's an HTTP/HTTPS URI, fetch directly
