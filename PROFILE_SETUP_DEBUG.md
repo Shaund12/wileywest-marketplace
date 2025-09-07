@@ -40,10 +40,23 @@ With the correct environment variables:
 
 Open browser developer tools (F12) and check the console for debug messages starting with "DEBUG:". This will show you exactly where the profile creation is failing.
 
-## 5. Expected Behavior
+## 5. Common Issue: RLS Policy Error
+
+If you get this error:
+```
+❌ Profile setup failed: Profile creation failed: new row violates row-level security policy for table "profiles"
+```
+
+This means you need to run the RLS policy fix migration. See `RLS_POLICY_FIX.md` for detailed instructions, or quickly fix it by:
+
+1. Go to Supabase Dashboard → SQL Editor
+2. Run the contents of `supabase/migrations/20240907_fix_profile_creation_rls.sql`
+3. Try profile creation again
+
+## 6. Expected Behavior
 
 If tables exist but Edge Functions aren't deployed:
-- ✅ Profile creation should work via fallback
+- ✅ Profile creation should work via fallback (after RLS fix)
 - ✅ Wallet record should be created
 - ⚠️ Background NFT syncing won't work (requires Edge Functions)
 - ✅ You should see "Profile created successfully! Database tables detected and working."

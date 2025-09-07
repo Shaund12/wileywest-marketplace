@@ -288,6 +288,12 @@ export class SupabaseService {
 
       if (profileError) {
         console.error('DEBUG: Profile creation failed:', profileError)
+        
+        // Provide specific guidance for RLS policy errors
+        if (profileError.message.includes('row-level security policy')) {
+          throw new Error(`Profile creation failed: new row violates row-level security policy for table "profiles". This means the database migration "20240907_fix_profile_creation_rls.sql" needs to be run to allow profile creation without Edge Functions. Please run this migration in your Supabase dashboard.`)
+        }
+        
         throw new Error(`Profile creation failed: ${profileError.message}`)
       }
 
