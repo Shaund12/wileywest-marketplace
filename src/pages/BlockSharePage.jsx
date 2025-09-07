@@ -548,7 +548,7 @@ const BlockSharePage = () => {
                             {!perTokenInfo.length && <div>—</div>}
                         </div>
                         <div style={{ marginTop: 10, fontSize: 11, opacity: 0.8 }}>
-                            If Unallocated > 0: press Forward (allocates balance) then Allocate (if pending appears).
+                            If Unallocated &gt; 0: press Forward (allocates balance) then Allocate (if pending appears).
                         </div>
                     </div>
                 </div>
