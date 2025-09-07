@@ -1,0 +1,32 @@
+name: Wallet Sync Cron Job
+
+on:
+  schedule:
+    # Run every 2 minutes during active hours (0-59 minutes, every 2 minutes)
+    - cron: '*/2 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+jobs:
+  sync-wallets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Call Supabase sync_wallet function
+        run: |
+          curl -X POST "${{ secrets.SUPABASE_URL }}/functions/v1/sync_wallet" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 300 \
+            --retry 2 \
+            --retry-delay 10
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+
+      - name: Cleanup old sync queue entries
+        run: |
+          # This is handled automatically by the sync_wallet function
+          echo "Sync queue cleanup is automated"

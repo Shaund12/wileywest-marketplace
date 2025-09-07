@@ -90,6 +90,9 @@ export default function Navigation() {
                         <NavLink to="/my-auctions" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
                             My Auctions
                         </NavLink>
+                        <NavLink to="/my-collections" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
+                            My Collections
+                        </NavLink>
                         <NavLink to="/sell" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
                             Sell NFT
                         </NavLink>

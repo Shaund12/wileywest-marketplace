@@ -7,6 +7,10 @@
     {
       "path": "/api/sync-user-collections",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/wallet-sync-proxy",
+      "schedule": "*/2 * * * *"
     }
   ],
   "rewrites": [

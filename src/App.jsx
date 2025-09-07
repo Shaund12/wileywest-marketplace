@@ -12,6 +12,7 @@ import './layout/Footer.css';
 // Lazy-loaded pages (code-splitting)
 const HomePage = lazy(() => import('./pages/HomePage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const MyCollections = lazy(() => import('./pages/MyCollections'));
 const MarketplacePage = lazy(() => import('./pages/MarketplacePage'));
 const HotListingsPage = lazy(() => import('./pages/HotListingsPage'));
 const TermsPage = lazy(() => import('./pages/TermsPage'));
@@ -262,6 +263,7 @@ function App() {
                                         <Routes>
                                             <Route path="/" element={<HomePage />} />
                                             <Route path="/profile" element={<ProfilePage />} />
+                                            <Route path="/my-collections" element={<MyCollections />} />
                                             <Route path="/marketplace" element={<MarketplacePage />} />
                                             <Route path="/hot-listings" element={<HotListingsPage />} />
                                             <Route path="/sell" element={<SellPage />} />
