@@ -482,6 +482,89 @@ function ProfilePage() {
                     .replace(/{tokenId}/g, tokenId)
                     .replace(/\{id\}/g, tokenId);
 
+                // Handle data URIs locally without fetching
+                if (resolvedUri.startsWith('data:')) {
+                    try {
+                        let metadata;
+                        
+                        // Check if it's a JSON data URI
+                        if (resolvedUri.startsWith('data:application/json') || resolvedUri.startsWith('data:text/plain') || 
+                            resolvedUri.includes('application/json') || (!resolvedUri.includes('image/') && !resolvedUri.includes('text/html'))) {
+                            const jsonString = resolvedUri.split(',')[1];
+                            const decodedData = atob(jsonString);
+                            metadata = JSON.parse(decodedData);
+                        }
+                        // If it's an image data URI (like SVG, PNG, etc.), create fallback metadata
+                        else if (resolvedUri.includes('image/')) {
+                            debugLog(`📸 Found image data URI for token ${tokenId}, creating fallback metadata`);
+                            metadata = {
+                                name: `NFT #${tokenId}`,
+                                description: `Token #${tokenId} from contract ${contractAddress}`,
+                                image: resolvedUri, // Use the data URI directly as the image
+                                attributes: []
+                            };
+                        }
+                        // For other data URI types, try to parse as JSON first
+                        else {
+                            const jsonString = resolvedUri.split(',')[1];
+                            const decodedData = atob(jsonString);
+                            metadata = JSON.parse(decodedData);
+                        }
+
+                        // Process the metadata
+                        let imageUrl = null;
+                        if (metadata.image) {
+                            imageUrl = metadata.image;
+                            if (imageUrl.startsWith('ipfs://')) {
+                                imageUrl = `${IPFS_GATEWAYS[0]}${imageUrl.replace('ipfs://', '')}`;
+                            }
+                        } else if (metadata.image_url) {
+                            imageUrl = metadata.image_url;
+                        } else if (metadata.imageUrl) {
+                            imageUrl = metadata.imageUrl;
+                        }
+
+                        const attributes = metadata.attributes || metadata.traits || [];
+
+                        setNftMetadata(prev => ({
+                            ...prev,
+                            [key]: {
+                                ...metadata,
+                                imageUrl,
+                                attributes,
+                                loaded: true,
+                                loading: false,
+                                hasMetadata: true,
+                                hasImage: !!imageUrl
+                            }
+                        }));
+                        return;
+
+                    } catch (parseError) {
+                        debugWarn(`Error parsing data URI for token ${tokenId}, creating fallback metadata: ${parseError.message}`);
+                        // If parsing fails, create fallback metadata with the URI as potential image
+                        const fallbackMetadata = {
+                            name: `NFT #${tokenId}`,
+                            description: `Token #${tokenId} from contract ${contractAddress}`,
+                            image: resolvedUri.includes('image/') ? resolvedUri : null,
+                            attributes: []
+                        };
+
+                        setNftMetadata(prev => ({
+                            ...prev,
+                            [key]: {
+                                ...fallbackMetadata,
+                                imageUrl: fallbackMetadata.image,
+                                loaded: true,
+                                loading: false,
+                                hasMetadata: true,
+                                hasImage: !!fallbackMetadata.image
+                            }
+                        }));
+                        return;
+                    }
+                }
+
                 if (resolvedUri.startsWith('ipfs://')) {
                     resolvedUri = `${IPFS_GATEWAYS[0]}${resolvedUri.replace('ipfs://', '')}`;
                 }
@@ -508,24 +591,13 @@ function ProfilePage() {
                         const text = await response.text();
                         let metadata;
                         
-                        // Handle data URIs that contain JSON
-                        if (resolvedUri.startsWith('data:application/json,')) {
-                            try {
-                                const jsonData = decodeURIComponent(resolvedUri.split(',')[1]);
-                                metadata = JSON.parse(jsonData);
-                            } catch (dataUriError) {
-                                debugWarn(`Failed to parse data URI JSON for ${tokenId}:`, dataUriError);
-                                throw new Error('Invalid data URI JSON');
-                            }
-                        } else {
-                            // Parse regular JSON response
-                            try {
-                                metadata = JSON.parse(text);
-                            } catch (jsonError) {
-                                debugWarn(`Failed to parse JSON for ${tokenId} from ${resolvedUri}:`, jsonError);
-                                debugWarn(`Response text (first 200 chars):`, text.substring(0, 200));
-                                throw new Error('Invalid JSON response');
-                            }
+                        // Parse regular JSON response
+                        try {
+                            metadata = JSON.parse(text);
+                        } catch (jsonError) {
+                            debugWarn(`Failed to parse JSON for ${tokenId} from ${resolvedUri}:`, jsonError);
+                            debugWarn(`Response text (first 200 chars):`, text.substring(0, 200));
+                            throw new Error('Invalid JSON response');
                         }
 
                         let imageUrl = null;
