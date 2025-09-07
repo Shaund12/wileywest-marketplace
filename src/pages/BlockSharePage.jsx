@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import RevShareTreasuryAbi from '../abi/RevShareTreasuryActual.json';
 import RevShareNFTAbi from '../abi/RevShareNFT.json';
-import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { debugWarn, criticalError } from '../utils/debugUtils';
 
 const BlockSharePage = () => {
     const { wallet, signer, provider } = useWallet();
@@ -29,7 +29,8 @@ const BlockSharePage = () => {
         cumulativePerTokenX18: false,
         claimedPerTokenX18: false,
         allocatePending: false,
-        pendingBeforeMint: false
+        pendingBeforeMint: false,
+        forwardNative: false
     });
 
     const [userTokenIds, setUserTokenIds] = useState([]);
@@ -43,12 +44,14 @@ const BlockSharePage = () => {
         totalRevenue: '0',
         totalShares: 0,
         revenuePerShare: '0',
-        pendingRevenue: '0'
+        pendingRevenue: '0',
+        cumulativeCallSuccess: false,
+        realCumulative: '0',
+        allocatedTotal: '0',
+        unallocatedBalance: '0'
     });
 
     const [analysis, setAnalysis] = useState(null);
-    const [devSimInput, setDevSimInput] = useState('0.5');
-    const [devSimResult, setDevSimResult] = useState('');
 
     const formatVTRU = (v) => {
         const n = parseFloat(v || '0');
@@ -67,14 +70,12 @@ const BlockSharePage = () => {
             setContractError('');
             const t = new ethers.Contract(treasuryAddress, (RevShareTreasuryAbi.abi || RevShareTreasuryAbi), provider);
             const n = new ethers.Contract(nftAddress, (RevShareNFTAbi.abi || RevShareNFTAbi), provider);
-
             const [tCode, nCode] = await Promise.all([provider.getCode(treasuryAddress), provider.getCode(nftAddress)]);
             if (tCode === '0x') throw new Error('Treasury not deployed at address');
             if (nCode === '0x') throw new Error('NFT not deployed at address');
-
             setTreasury(t);
             setNft(n);
-            await probeCapabilities(t, n);
+            await probeCaps(t, n);
             setDataLoaded(false);
         } catch (e) {
             const msg = `Init failed: ${e.message}`;
@@ -84,7 +85,7 @@ const BlockSharePage = () => {
         }
     }
 
-    async function probeCapabilities(t, n) {
+    async function probeCaps(t, n) {
         const c = { ...caps };
         try { t.interface.getFunction('claim'); c.claim = true; } catch { }
         try { t.interface.getFunction('claimMany'); c.claimMany = true; } catch { }
@@ -93,6 +94,7 @@ const BlockSharePage = () => {
         try { await t.claimedPerTokenX18(1); c.claimedPerTokenX18 = true; } catch { }
         try { await t.pendingBeforeMint(); c.pendingBeforeMint = true; } catch { }
         try { t.interface.getFunction('allocatePending'); c.allocatePending = true; } catch { }
+        try { t.interface.getFunction('forwardNative'); c.forwardNative = true; } catch { }
         try { await n.totalSupply(); } catch { }
         setCaps(c);
     }
@@ -136,7 +138,7 @@ const BlockSharePage = () => {
             const out = [];
             for (let i = 0; i < balanceGuess; i++) {
                 const id = await nft.tokenOfOwnerByIndex(addr, i);
-                out.push(Number(id)); // ID may be 0
+                out.push(Number(id)); // token IDs may start at 0 or 1
             }
             return out;
         } catch {
@@ -155,11 +157,7 @@ const BlockSharePage = () => {
 
     async function computePerToken(ids) {
         if (!ids.length) {
-            setPerTokenInfo([]);
-            setClaimableAmount('0');
-            setTotalClaimed('0');
-            setPositiveClaimIds([]);
-            return;
+            setPerTokenInfo([]); setClaimableAmount('0'); setTotalClaimed('0'); setPositiveClaimIds([]); return;
         }
         setCalculating(true);
         try {
@@ -192,7 +190,7 @@ const BlockSharePage = () => {
                     claimed: ethers.formatUnits(claimedX18, 18),
                     cumulativeX18: cumulative.toString(),
                     cumulative: ethers.formatUnits(cumulative, 18),
-                    deltaX18: (claimableX18).toString(),
+                    deltaX18: claimableX18.toString(),
                     delta: ethers.formatUnits(claimableX18, 18)
                 });
             }
@@ -209,28 +207,65 @@ const BlockSharePage = () => {
     async function loadTreasuryStats() {
         if (!treasury) return;
         try {
-            let totalRevenue = '0';
-            try { totalRevenue = ethers.formatEther(await provider.getBalance(treasuryAddress)); } catch { }
+            let balanceWei = 0n;
+            try { balanceWei = await provider.getBalance(treasuryAddress); } catch { }
+            const totalRevenue = ethers.formatEther(balanceWei);
+
             let totalShares = 0;
             try { totalShares = Number((await nft.totalSupply()).toString()); } catch { }
+
             let pendingRevenue = '0';
             if (caps.pendingBeforeMint) {
                 try { pendingRevenue = ethers.formatUnits(await treasury.pendingBeforeMint(), 18); } catch { }
             }
-            let revenuePerShare = '0';
-            if (caps.cumulativePerTokenX18) {
-                try {
+
+            let cumulativeCallSuccess = false;
+            let realCumulative = '0';
+            try {
+                if (caps.cumulativePerTokenX18) {
                     const c = await treasury.cumulativePerTokenX18();
-                    revenuePerShare = ethers.formatUnits(c, 18);
-                } catch { }
+                    realCumulative = ethers.formatUnits(c, 18);
+                    cumulativeCallSuccess = true;
+                }
+            } catch { }
+
+            // If cumulative call failed or returned 0 fallback to naive revenue/share display
+            let revenuePerShare = '0';
+            if (cumulativeCallSuccess) {
+                revenuePerShare = realCumulative;
             } else if (totalShares > 0) {
                 revenuePerShare = (parseFloat(totalRevenue) / totalShares).toString();
             }
+
+            // Compute "allocatedTotal" = realCumulative * totalShares (if we have real cumulative)
+            let allocatedTotal = '0';
+            let unallocatedBalance = '0';
+            if (cumulativeCallSuccess) {
+                try {
+                    const cX18 = ethers.parseUnits(realCumulative, 18);
+                    const allocWei = cX18 * BigInt(totalShares);
+                    allocatedTotal = ethers.formatUnits(allocWei, 18);
+                    // compare to actual balance
+                    const allocNum = parseFloat(allocatedTotal);
+                    const balNum = parseFloat(totalRevenue);
+                    if (balNum > allocNum) {
+                        unallocatedBalance = (balNum - allocNum).toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
+                    }
+                } catch { }
+            } else {
+                // entire balance effectively unallocated in distribution system
+                unallocatedBalance = totalRevenue;
+            }
+
             setTreasuryStats({
                 totalRevenue,
                 totalShares,
                 revenuePerShare,
-                pendingRevenue
+                pendingRevenue,
+                cumulativeCallSuccess,
+                realCumulative,
+                allocatedTotal,
+                unallocatedBalance
             });
         } catch (e) {
             debugWarn('loadTreasuryStats error', e);
@@ -238,10 +273,7 @@ const BlockSharePage = () => {
     }
 
     function analyze() {
-        if (!perTokenInfo.length) {
-            setAnalysis(null);
-            return;
-        }
+        if (!perTokenInfo.length) { setAnalysis(null); return; }
         const t = treasuryStats;
         const anyPositive = positiveClaimIds.length > 0;
         const allZero = perTokenInfo.every(p => big(p.claimableX18) === 0n);
@@ -249,53 +281,56 @@ const BlockSharePage = () => {
         if (anyPositive) {
             reason = 'claimable-positive';
         } else if (allZero) {
-            // Distinguish between: need allocation, minted-after-allocation, or truly no income
             const pending = parseFloat(t.pendingRevenue);
-            const cumulative = perTokenInfo[0]?.cumulative || '0';
-            const cumulativeF = parseFloat(cumulative);
+            const cumulativeF = parseFloat(t.realCumulative || '0');
             const claimedEqualsCumulative = perTokenInfo.every(p => p.cumulativeX18 === p.claimedX18);
-            if (pending > 0) {
+            if (!t.cumulativeCallSuccess) {
+                reason = 'no-allocation-functioning';
+            } else if (pending > 0) {
                 reason = 'needs-allocation';
             } else if (cumulativeF > 0 && claimedEqualsCumulative) {
                 reason = 'minted-after-allocation';
-            } else if (parseFloat(t.totalRevenue) > 0 && cumulativeF === 0) {
-                reason = 'income-buffered-or-not-allocated';
+            } else if (parseFloat(t.unallocatedBalance) > 0 && cumulativeF === 0) {
+                reason = 'unallocated-balance';
             } else {
                 reason = 'no-income';
             }
         }
         setAnalysis({
             reason,
-            summary: classifyReasonLabel(reason),
-            details: buildReasonDetail(reason)
+            summary: classify(reason),
+            details: explain(reason)
         });
     }
 
-    function classifyReasonLabel(r) {
+    function classify(r) {
         switch (r) {
             case 'claimable-positive': return 'You have claimable revenue.';
             case 'needs-allocation': return 'Pending revenue must be allocated.';
-            case 'minted-after-allocation': return 'Token was minted after previous revenue allocation (baseline snapshot).';
-            case 'income-buffered-or-not-allocated': return 'Treasury holds balance but cumulative not updated (needs forward/allocate).';
-            case 'no-income': return 'No revenue has been distributed yet.';
+            case 'minted-after-allocation': return 'Snapshot equals cumulative – wait for NEW income.';
+            case 'unallocated-balance': return 'Balance not yet allocated (call forwardNative / allocate).';
+            case 'no-allocation-functioning': return 'cumulativePerTokenX18 not updating (no allocation executed).';
+            case 'no-income': return 'No distributed revenue after mint.';
             default: return 'Unknown state.';
         }
     }
-
-    function buildReasonDetail(r) {
+    function explain(r) {
+        const t = treasuryStats;
         switch (r) {
+            case 'unallocated-balance':
+                return `Treasury balance ${formatVTRU(t.totalRevenue)} > allocated ${formatVTRU(t.allocatedTotal)}. Call forwardNative() (with small value) then allocatePending() if pending appears.`;
+            case 'no-allocation-functioning':
+                return `cumulativePerTokenX18() call failed or zero while balance = ${formatVTRU(t.totalRevenue)}. Use Forward & Allocate buttons below.`;
             case 'needs-allocation':
-                return 'Call allocatePending() (button shows if available) to push pending into cumulative, then refresh.';
+                return 'pendingBeforeMint > 0. Use Allocate button.';
             case 'minted-after-allocation':
-                return 'All your tokens’ claimedPerTokenX18 equal the current cumulative. You only earn on NEW incoming revenue. Send new native to the treasury (forwardNative) then allocate if needed.';
-            case 'income-buffered-or-not-allocated':
-                return 'Native balance present but not reflected in cumulative. It may be buffered (pendingBeforeMint) or just sitting before any allocation logic.';
+                return 'Your token baseline equals current cumulative. Wait for new income → forwardNative → allocatePending.';
             case 'no-income':
-                return 'Contract has not received nor allocated any revenue after your token existed.';
+                return 'No income processed yet since you minted.';
             case 'claimable-positive':
-                return 'Proceed to claim; tokens have deltas.';
+                return 'Proceed to claim.';
             default:
-                return 'Unable to classify. Provide raw snapshot for deeper analysis.';
+                return 'Provide raw values for deeper help.';
         }
     }
 
@@ -303,44 +338,27 @@ const BlockSharePage = () => {
         if (!error) return 'Unknown';
         if (error.reason) return error.reason;
         if (error.error?.reason) return error.error.reason;
-        try {
-            if (error.data && treasury?.interface) {
-                const errDecoded = treasury.interface.parseError(error.data);
-                return `CustomError(${errDecoded?.name})`;
-            }
-        } catch { }
         return error.message || 'Reverted';
     }
 
     async function handleClaim() {
-        if (!signer || !treasury) {
-            setStatus('Wallet not ready');
-            return;
-        }
-        if (calculating) {
-            setStatus('Still computing claimable…');
-            return;
-        }
-        if (!positiveClaimIds.length) {
-            setStatus('Nothing claimable (see analyzer).');
-            return;
-        }
+        if (!signer || !treasury) { setStatus('Wallet not ready'); return; }
+        if (calculating) { setStatus('Calculating…'); return; }
+        if (!positiveClaimIds.length) { setStatus('Nothing claimable'); return; }
         setClaiming(true);
         try {
             const t = treasury.connect(signer);
             if (positiveClaimIds.length === 1 && caps.claim) {
                 await execSingle(t, positiveClaimIds[0]);
-                await afterClaim();
+                await postClaim();
                 return;
             }
             if (positiveClaimIds.length > 1 && caps.claimMany) {
                 const ok = await staticTry(t, 'claimMany', [positiveClaimIds]);
                 if (ok) {
                     await sendTx(t, 'claimMany', [positiveClaimIds]);
-                    await afterClaim();
+                    await postClaim();
                     return;
-                } else {
-                    debugWarn('claimMany revert static; fallback loop');
                 }
             }
             let success = 0;
@@ -348,43 +366,29 @@ const BlockSharePage = () => {
                 const ok = await execSingle(t, id, true);
                 if (ok) success++;
             }
-            if (success === 0) {
-                setStatus('All claims reverted (likely race or zero).');
-            } else {
-                setStatus(`Claimed ${success}/${positiveClaimIds.length}.`);
-                await afterClaim();
-            }
+            if (success === 0) setStatus('All claim attempts reverted');
+            else { setStatus(`Claimed ${success}/${positiveClaimIds.length}`); await postClaim(); }
         } catch (e) {
             setStatus(`Claim failed: ${decodeRevert(e)}`);
-        } finally {
-            setClaiming(false);
-        }
+        } finally { setClaiming(false); }
     }
 
     async function execSingle(t, tokenId, silent = false) {
         if (!caps.claim) return false;
         const ok = await staticTry(t, 'claim', [tokenId]);
-        if (!ok) {
-            if (!silent) setStatus(`Token ${tokenId} static revert.`);
-            return false;
-        }
-        await sendTx(t, 'claim', [tokenId]);
-        return true;
+        if (!ok) { if (!silent) setStatus(`Token ${tokenId} revert`); return false; }
+        await sendTx(t, 'claim', [tokenId]); return true;
     }
-
     async function staticTry(t, fn, args) {
         try { await t.callStatic[fn](...args); return true; }
-        catch (e) { debugWarn(`Static revert ${fn}`, decodeRevert(e)); return false; }
+        catch (e) { return false; }
     }
-
     async function sendTx(t, fn, args) {
         let gasLimit;
         try {
             const est = await t.estimateGas[fn](...args);
             gasLimit = (est * 12n) / 10n;
-        } catch {
-            gasLimit = 400000n;
-        }
+        } catch { gasLimit = 400000n; }
         setStatus(`Sending ${fn}…`);
         const tx = await t[fn](...args, { gasLimit });
         setStatus('Waiting confirmation…');
@@ -392,8 +396,7 @@ const BlockSharePage = () => {
         if (rc.status !== 1) throw new Error('Execution failed');
         setStatus(`${fn} confirmed`);
     }
-
-    async function afterClaim() {
+    async function postClaim() {
         setStatus('Refreshing…');
         setDataLoaded(false);
         await computePerToken(userTokenIds);
@@ -403,43 +406,46 @@ const BlockSharePage = () => {
         setTimeout(() => setStatus(''), 3000);
     }
 
+    async function handleForward() {
+        if (!signer || !treasury || !caps.forwardNative) return;
+        try {
+            setStatus('Calling forwardNative (0 value)…');
+            const t = treasury.connect(signer);
+            // attempt zero value; if contract needs >0 supply ask user
+            const tx = await t.forwardNative({ value: 0n });
+            await tx.wait();
+            setStatus('forwardNative confirmed. Refreshing…');
+            await refreshAll();
+            setStatus('Done');
+        } catch (e) {
+            setStatus(`forwardNative failed: ${decodeRevert(e)}`);
+        }
+    }
+
+    async function handleForwardAndAllocate() {
+        await handleForward();
+        if (caps.allocatePending) await handleAllocatePending();
+    }
+
     async function handleAllocatePending() {
         if (!signer || !treasury || !caps.allocatePending) return;
         try {
             setStatus('Allocating pending…');
             const t = treasury.connect(signer);
             const ok = await staticTry(t, 'allocatePending', []);
-            if (!ok) throw new Error('allocatePending static revert');
+            if (!ok) { setStatus('allocatePending static revert'); return; }
             await sendTx(t, 'allocatePending', []);
-            await afterClaim();
+            await postClaim();
         } catch (e) {
             setStatus(`Allocation failed: ${decodeRevert(e)}`);
         }
     }
 
-    function simulateHypotheticalDelta() {
-        try {
-            if (!perTokenInfo.length) {
-                setDevSimResult('No tokens.');
-                return;
-            }
-            const add = ethers.parseEther(devSimInput || '0');
-            const supply = BigInt(treasuryStats.totalShares || 1);
-            const perShare = add / supply;
-            const claimableEach = ethers.formatUnits(perShare, 18);
-            setDevSimResult(`If ${devSimInput} VTRU added now, each token would get ≈ ${claimableEach} VTRU claimable.`);
-        } catch (e) {
-            setDevSimResult(`Error: ${e.message}`);
-        }
-    }
-
     if (!provider) {
-        return (
-            <div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
-                <h2>BlockShare Revenue Portal</h2>
-                <p style={{ color: 'var(--hp-muted)' }}>Connect wallet to continue.</p>
-            </div>
-        );
+        return <div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
+            <h2>BlockShare Revenue Portal</h2>
+            <p style={{ color: 'var(--hp-muted)' }}>Connect wallet to continue.</p>
+        </div>;
     }
 
     return (
@@ -453,42 +459,39 @@ const BlockSharePage = () => {
             {status && !contractError && <Msg kind="info">{status}</Msg>}
 
             {wallet && (
-                <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
-                    <button
-                        className="hp-btn hp-btn--secondary"
-                        disabled={loading}
-                        onClick={async () => {
-                            setStatus('Refreshing…');
-                            await refreshAll();
-                            setStatus('');
-                        }}
-                        style={{ marginRight: 12 }}
-                    >
+                <div style={{ textAlign: 'center', marginBottom: '1.2rem', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '0.75rem' }}>
+                    <button className="hp-btn hp-btn--secondary" disabled={loading} onClick={async () => { setStatus('Refreshing…'); await refreshAll(); setStatus(''); }}>
                         {loading ? 'Refreshing…' : '🔄 Refresh'}
                     </button>
-                    {!!caps.allocatePending && parseFloat(treasuryStats.pendingRevenue) > 0 && (
-                        <button
-                            className="hp-btn hp-btn--primary"
-                            onClick={handleAllocatePending}
-                            disabled={claiming}
-                        >
-                            🏦 Allocate {formatVTRU(treasuryStats.pendingRevenue)} VTRU
+                    {caps.forwardNative && (
+                        <button className="hp-btn hp-btn--secondary" onClick={handleForward} disabled={claiming}>
+                            ➡️ Forward (allocate balance)
+                        </button>
+                    )}
+                    {caps.forwardNative && caps.allocatePending && (
+                        <button className="hp-btn hp-btn--primary" onClick={handleForwardAndAllocate} disabled={claiming}>
+                            ⚡ Forward + Allocate
+                        </button>
+                    )}
+                    {caps.allocatePending && parseFloat(treasuryStats.pendingRevenue) > 0 && (
+                        <button className="hp-btn hp-btn--primary" onClick={handleAllocatePending} disabled={claiming}>
+                            🏦 Allocate Pending {formatVTRU(treasuryStats.pendingRevenue)}
                         </button>
                     )}
                 </div>
             )}
 
-            {/* Analyzer */}
             {analysis && (
                 <div style={anBox}>
                     <strong>State Analyzer:</strong> {analysis.summary}
-                    <div style={{ marginTop: 4, fontSize: '0.85rem', opacity: 0.85 }}>
-                        {analysis.details}
+                    <div style={{ marginTop: 4, fontSize: '0.85rem', opacity: 0.85 }}>{analysis.details}</div>
+                    <div style={{ marginTop: 6, fontSize: '0.75rem', opacity: 0.6 }}>
+                        Balance {formatVTRU(treasuryStats.totalRevenue)} | Real Cumulative {treasuryStats.cumulativeCallSuccess ? formatVTRU(treasuryStats.realCumulative) : '—'} |
+                        Allocated {formatVTRU(treasuryStats.allocatedTotal)} | Unallocated {formatVTRU(treasuryStats.unallocatedBalance)}
                     </div>
                 </div>
             )}
 
-            {/* User Stats */}
             <div className="hp-section">
                 <div className="hp-section__head"><h3>Your RevShare Stats</h3></div>
                 <div className="hp-mini">
@@ -498,25 +501,19 @@ const BlockSharePage = () => {
                     <Mini label="Tokens With Delta" value={positiveClaimIds.length} />
                 </div>
                 {wallet && !calculating && positiveClaimIds.length > 0 && (
-                    <div style={{ textAlign: 'center', marginTop: '1.4rem' }}>
-                        <button
-                            className="hp-btn hp-btn--primary"
-                            disabled={claiming}
-                            onClick={handleClaim}
-                            style={{ fontSize: '1.05rem', padding: '0.75rem 2.25rem' }}
-                        >
+                    <div style={{ textAlign: 'center', marginTop: '1.3rem' }}>
+                        <button className="hp-btn hp-btn--primary" disabled={claiming} onClick={handleClaim} style={{ fontSize: '1.05rem', padding: '0.75rem 2.2rem' }}>
                             {claiming ? 'Claiming…' : `Claim ${formatVTRU(claimableAmount)} VTRU`}
                         </button>
                     </div>
                 )}
                 {wallet && !calculating && positiveClaimIds.length === 0 && (
-                    <div style={{ textAlign: 'center', marginTop: '1.2rem', opacity: 0.65, fontStyle: 'italic' }}>
-                        Nothing claimable (see analyzer above).
+                    <div style={{ textAlign: 'center', marginTop: '1.1rem', opacity: 0.65, fontStyle: 'italic' }}>
+                        Nothing claimable (allocate or forward revenue first)
                     </div>
                 )}
             </div>
 
-            {/* Treasury */}
             <div className="hp-section">
                 <div className="hp-section__head"><h3>Treasury</h3></div>
                 <div className="hp-mini">
@@ -529,20 +526,19 @@ const BlockSharePage = () => {
                 </div>
             </div>
 
-            {/* Diagnostics */}
             {DEBUG && (
                 <div className="hp-section">
                     <div className="hp-section__head"><h3>Diagnostics</h3></div>
                     <div style={diagBox}>
                         <div>Token IDs: {userTokenIds.join(', ') || '—'}</div>
-                        <div style={{ marginTop: 6, fontWeight: 600 }}>Per Token Snapshot:</div>
+                        <div style={{ marginTop: 6, fontWeight: 600 }}>Per Token:</div>
                         <div style={{ maxHeight: 240, overflow: 'auto', fontSize: 12, border: '1px solid #222', padding: 6 }}>
                             {perTokenInfo.map(p => {
                                 const zero = big(p.claimableX18) === 0n;
                                 return (
-                                    <div key={p.id} style={{ padding: '3px 0', display: 'flex', gap: 12, color: zero ? '#888' : '#fff' }}>
+                                    <div key={p.id} style={{ padding: '3px 0', display: 'flex', flexWrap: 'wrap', gap: 12, color: zero ? '#888' : '#fff' }}>
                                         <span>#{p.id}</span>
-                                        <span>cumulative={p.cumulative}</span>
+                                        <span>cum={p.cumulative}</span>
                                         <span>claimed={p.claimed}</span>
                                         <span>claimable={p.claimable}</span>
                                         {zero && <span style={{ color: '#ff6363' }}>Δ=0</span>}
@@ -551,31 +547,8 @@ const BlockSharePage = () => {
                             })}
                             {!perTokenInfo.length && <div>—</div>}
                         </div>
-                        <div style={{ marginTop: 10, fontSize: 12 }}>
-                            Dev Simulate New Income (not sending, just math):
-                            <div style={{ marginTop: 4 }}>
-                                <input
-                                    style={{ width: 90, background: '#222', border: '1px solid #444', color: '#fff', padding: 4, fontFamily: 'monospace' }}
-                                    value={devSimInput}
-                                    onChange={(e) => setDevSimInput(e.target.value)}
-                                />
-                                <button
-                                    className="hp-btn hp-btn--secondary"
-                                    style={{ marginLeft: 8, padding: '0.35rem 0.7rem' }}
-                                    onClick={simulateHypotheticalDelta}
-                                >
-                                    Simulate
-                                </button>
-                            </div>
-                            {devSimResult && <div style={{ marginTop: 4, opacity: 0.85 }}>{devSimResult}</div>}
-                        </div>
                         <div style={{ marginTop: 10, fontSize: 11, opacity: 0.8 }}>
-                            Notes:
-                            <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
-                                <li>“Minted after allocation” means you need NEW revenue for deltas.</li>
-                                <li>Allocate pending if pendingRevenue {">"} 0.</li>
-                                <li>If balance {">"} 0 and cumulative == 0, contract logic didn't allocate yet.</li>
-                            </ul>
+                            If Unallocated > 0: press Forward (allocates balance) then Allocate (if pending appears).
                         </div>
                     </div>
                 </div>
@@ -591,19 +564,12 @@ const BlockSharePage = () => {
 };
 
 function Msg({ kind, children }) {
-    const base = {
-        padding: '1rem',
-        marginBottom: '1.25rem',
-        borderRadius: 8,
-        fontSize: '0.95rem',
-        lineHeight: 1.35
-    };
+    const base = { padding: '1rem', marginBottom: '1.25rem', borderRadius: 8, fontSize: '0.95rem', lineHeight: 1.35 };
     const style = kind === 'error'
         ? { ...base, background: 'rgba(220,38,127,0.12)', border: '1px solid rgba(220,38,127,0.45)' }
         : { ...base, background: 'rgba(85,51,255,0.15)', border: '1px solid rgba(85,51,255,0.4)' };
     return <div style={style}>{children}</div>;
 }
-
 function Mini({ label, value, highlight }) {
     return (
         <div className="hp-mini__card" style={highlight ? { borderColor: '#ffeb3b' } : undefined}>
@@ -613,33 +579,8 @@ function Mini({ label, value, highlight }) {
     );
 }
 
-const diagBox = {
-    padding: '1rem',
-    background: '#121212',
-    border: '1px solid #2e2e2e',
-    borderRadius: 8,
-    fontFamily: 'monospace',
-    fontSize: 13
-};
-const anBox = {
-    padding: '0.85rem 1rem',
-    background: 'rgba(0,180,255,0.08)',
-    border: '1px solid rgba(0,180,255,0.35)',
-    borderRadius: 8,
-    marginBottom: '1.25rem',
-    fontSize: '0.9rem'
-};
-const overlay = {
-    position: 'fixed',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%,-50%)',
-    background: 'rgba(0,0,0,0.88)',
-    color: '#fff',
-    padding: '1.5rem 2rem',
-    borderRadius: 10,
-    zIndex: 1000,
-    fontSize: '1.05rem'
-};
+const diagBox = { padding: '1rem', background: '#121212', border: '1px solid #2e2e2e', borderRadius: 8, fontFamily: 'monospace', fontSize: 13 };
+const anBox = { padding: '0.85rem 1rem', background: 'rgba(0,180,255,0.08)', border: '1px solid rgba(0,180,255,0.35)', borderRadius: 8, marginBottom: '1.25rem', fontSize: '0.9rem' };
+const overlay = { position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', background: 'rgba(0,0,0,0.88)', color: '#fff', padding: '1.5rem 2rem', borderRadius: 10, zIndex: 1000, fontSize: '1.05rem' };
 
 export default BlockSharePage;
