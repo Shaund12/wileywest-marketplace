@@ -223,11 +223,15 @@ export class SupabaseService {
   // Ensure profile with fallback when Edge Functions are not available
   async ensureProfileFallback(address: string, chainId: number = 1490): Promise<{ profileId: string | null, syncQueued: boolean, usingFallback: boolean }> {
     if (!this.supabase) {
+      console.log('DEBUG: Supabase client not available')
       return { profileId: null, syncQueued: false, usingFallback: true }
     }
 
+    console.log(`DEBUG: Starting profile creation for wallet ${address}`)
+
     try {
-      // Try to call the Edge Function first
+      // Try to call the Edge Function first (if deployed)
+      console.log('DEBUG: Attempting Edge Function call...')
       const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ensure_profile`, {
         method: 'POST',
         headers: {
@@ -244,35 +248,53 @@ export class SupabaseService {
       
       if (response.ok) {
         const result = await response.json()
+        console.log('DEBUG: Edge Function succeeded:', result)
         return { profileId: result.profileId, syncQueued: result.syncQueued || false, usingFallback: false }
+      } else {
+        console.log(`DEBUG: Edge Function failed with status ${response.status}`)
       }
     } catch (error) {
-      console.warn('Edge Functions not available, using fallback profile creation')
+      console.log('DEBUG: Edge Function call failed:', error.message)
     }
 
     // Fallback: try to create a basic profile record without SIWE verification
+    console.log('DEBUG: Using fallback profile creation (direct database)')
     try {
       // Check if wallet already exists
+      console.log('DEBUG: Checking if wallet already exists...')
       const existingWallet = await this.getWalletProfile(address)
       if (existingWallet) {
+        console.log('DEBUG: Existing wallet found:', existingWallet)
         return { profileId: existingWallet.profile_id || null, syncQueued: false, usingFallback: true }
       }
 
+      console.log('DEBUG: Creating new profile...')
+      // Generate a unique handle for this wallet
+      const handleSuffix = address.toLowerCase().slice(-8)
+      const baseHandle = `user_${handleSuffix}`
+      
       // Create a basic profile entry (if the table exists)
       const { data: profileData, error: profileError } = await this.supabase
         .from('profiles')
         .upsert({
-          handle: address.toLowerCase().slice(0, 42), // Use address as handle
+          handle: baseHandle,
+          display_name: `User ${address.slice(0, 8)}...${address.slice(-6)}`,
+        }, {
+          onConflict: 'handle',
+          ignoreDuplicates: false
         })
         .select()
         .single()
 
       if (profileError) {
-        console.warn('Profile table not available:', profileError.message)
-        return { profileId: null, syncQueued: false, usingFallback: true }
+        console.error('DEBUG: Profile creation failed:', profileError)
+        throw new Error(`Profile creation failed: ${profileError.message}`)
       }
 
+      console.log('DEBUG: Profile created successfully:', profileData)
+
       // Create wallet record
+      console.log('DEBUG: Creating wallet record...')
       const { error: walletError } = await this.supabase
         .from('wallets')
         .upsert({
@@ -282,16 +304,32 @@ export class SupabaseService {
           needs_sync: true,
           sync_status: 'pending',
           nft_count: 0
+        }, {
+          onConflict: 'address',
+          ignoreDuplicates: false
         })
 
       if (walletError) {
-        console.warn('Wallet table not available:', walletError.message)
+        console.error('DEBUG: Wallet creation failed:', walletError)
+        // Don't fail the entire operation if wallet creation fails
+        console.warn('Wallet record creation failed, but profile was created')
+      } else {
+        console.log('DEBUG: Wallet record created successfully')
+      }
+
+      // Try to queue sync (optional)
+      try {
+        console.log('DEBUG: Attempting to queue sync...')
+        await this.requestSync(address, chainId, 1)
+        console.log('DEBUG: Sync queued successfully')
+      } catch (syncError) {
+        console.log('DEBUG: Sync queue failed (this is normal if function not deployed):', syncError.message)
       }
 
       return { profileId: profileData.id, syncQueued: false, usingFallback: true }
     } catch (error) {
-      console.warn('Database tables not available - profile features disabled')
-      return { profileId: null, syncQueued: false, usingFallback: true }
+      console.error('DEBUG: Fallback profile creation failed completely:', error)
+      throw error
     }
   }
 

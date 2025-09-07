@@ -150,78 +150,121 @@ function MyCollections() {
 
   // Ensure profile exists (SIWE + profile creation with fallback)
   const ensureProfile = useCallback(async () => {
-    if (!wallet || !signer || !chainId || !supabaseService.isConnected) return;
+    if (!wallet || !signer || !chainId || !supabaseService.isConnected) {
+      console.log('DEBUG: Missing requirements for profile setup:', {
+        wallet: !!wallet,
+        signer: !!signer,
+        chainId: !!chainId,
+        supabaseConnected: supabaseService.isConnected
+      });
+      return;
+    }
     
     setIsEnsuring(true);
     setStatus('Setting up your profile...');
     
     try {
-      // Try with SIWE first if we have a signer
+      console.log('DEBUG: Starting profile setup for wallet:', wallet);
+      
+      // Skip SIWE for now and go straight to fallback if the URL looks like dummy
+      const isDummySupabase = import.meta.env.VITE_SUPABASE_URL === 'https://dummy.supabase.co';
+      
       let result = null;
       
-      try {
-        // Generate SIWE message and get signature
-        const nonce = generateNonce();
-        const message = generateSiweMessage(wallet, chainId, nonce);
-        
-        setStatus('Please sign the message to verify wallet ownership...');
-        const signature = await signer.signMessage(message);
-        
-        setStatus('Creating profile...');
-        
-        // Call ensure_profile Edge Function
-        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ensure_profile`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-          },
-          body: JSON.stringify({
-            wallet,
-            chainId,
-            message,
-            signature
-          })
-        });
-        
-        if (response.ok) {
-          result = await response.json();
-        } else {
-          throw new Error('Edge Function not available');
+      if (!isDummySupabase) {
+        try {
+          // Generate SIWE message and get signature
+          const nonce = generateNonce();
+          const message = generateSiweMessage(wallet, chainId, nonce);
+          
+          setStatus('Please sign the message to verify wallet ownership...');
+          console.log('DEBUG: Requesting signature for SIWE message');
+          const signature = await signer.signMessage(message);
+          
+          setStatus('Creating profile with Edge Function...');
+          console.log('DEBUG: Calling Edge Function with signature');
+          
+          // Call ensure_profile Edge Function
+          const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ensure_profile`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+            },
+            body: JSON.stringify({
+              wallet,
+              chainId,
+              message,
+              signature
+            })
+          });
+          
+          if (response.ok) {
+            result = await response.json();
+            console.log('DEBUG: Edge Function succeeded:', result);
+          } else {
+            console.log('DEBUG: Edge Function failed with status:', response.status);
+            const errorText = await response.text();
+            console.log('DEBUG: Edge Function error response:', errorText);
+            throw new Error(`Edge Function failed: ${response.status}`);
+          }
+        } catch (edgeFunctionError) {
+          console.log('DEBUG: Edge Function failed, trying fallback:', edgeFunctionError.message);
+          setStatus('Edge Function not available, using direct database...');
+          
+          // Use fallback method
+          result = await supabaseService.ensureProfileFallback(wallet, chainId);
         }
-      } catch (edgeFunctionError) {
-        console.warn('Edge Functions not available, using fallback:', edgeFunctionError.message);
-        setStatus('Creating profile (fallback mode)...');
-        
-        // Use fallback method
-        result = await supabaseService.ensureProfileFallback(wallet, chainId);
+      } else {
+        console.log('DEBUG: Using dummy Supabase, skipping profile creation');
+        setStatus('⚠️ Using test configuration - profile features disabled');
+        return;
       }
       
-      if (result) {
+      console.log('DEBUG: Profile creation result:', result);
+      
+      if (result && result.profileId) {
         setProfileId(result.profileId);
+        console.log('DEBUG: Profile ID set:', result.profileId);
         
         if (result.usingFallback) {
-          setStatus('✅ Profile created (offline mode) - background sync not available');
+          setStatus('✅ Profile created successfully! Database tables detected and working.');
         } else if (result.syncQueued) {
           setStatus('✅ Profile created and sync queued - your NFTs will be updated shortly');
         } else {
           setStatus('✅ Profile created - manually triggering refresh...');
           // If sync wasn't queued, try to request it manually
-          await supabaseService.requestSync(wallet, chainId, 1);
+          try {
+            await supabaseService.requestSync(wallet, chainId, 1);
+            console.log('DEBUG: Manual sync request succeeded');
+          } catch (syncError) {
+            console.log('DEBUG: Manual sync request failed (expected if no functions deployed)');
+          }
         }
       } else {
-        setStatus('✅ Profile ready - some features may be limited without backend services');
+        console.log('DEBUG: No profile ID returned from creation');
+        setStatus('⚠️ Profile creation returned no result - check database configuration');
       }
       
       // Load current holdings (may be empty if no backend)
+      console.log('DEBUG: Loading NFT holdings after profile creation');
       await loadNFTHoldings();
       
     } catch (error) {
-      console.error('Error ensuring profile:', error);
+      console.error('DEBUG: Profile setup error:', error);
       setStatus(`❌ Profile setup failed: ${error.message}`);
+      
+      // Additional error details for debugging
+      if (error.message.includes('PGRST')) {
+        setStatus(`❌ Database error: ${error.message} - Check if Supabase tables are created`);
+      } else if (error.message.includes('CORS')) {
+        setStatus(`❌ CORS error: Check Supabase URL and anon key configuration`);
+      } else if (error.message.includes('fetch')) {
+        setStatus(`❌ Network error: ${error.message}`);
+      }
     } finally {
       setIsEnsuring(false);
-      setTimeout(() => setStatus(''), 8000);
+      setTimeout(() => setStatus(''), 12000); // Extended timeout for debugging
     }
   }, [wallet, signer, chainId, loadNFTHoldings]);
 
