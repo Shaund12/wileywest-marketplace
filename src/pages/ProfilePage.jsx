@@ -9,6 +9,7 @@ import '../profile-page.css';
 import CacheStats from '../components/CacheStats';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { NFTScanner } from '../utils/nftScanner';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -931,65 +932,106 @@ function ProfilePage() {
         }
     };
 
-    // Trigger backend collection sync
+    // Trigger backend collection sync with NFT Scanner fallback
     const triggerCollectionSync = async () => {
         try {
             setStatus("🔄 Triggering collection sync...");
             
-            const response = await fetch('/api/sync-user-collections', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ 
-                    walletAddress: wallet,
-                    immediate: true 
-                })
+            // First try the backend API
+            try {
+                const response = await fetch('/api/sync-user-collections', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ 
+                        walletAddress: wallet,
+                        immediate: true 
+                    })
+                });
+                
+                // Get response text first to handle both JSON and HTML responses
+                const responseText = await response.text();
+                
+                if (response.ok) {
+                    try {
+                        const result = JSON.parse(responseText);
+                        const nftCount = result.stats?.nfts || 0;
+                        
+                        if (nftCount > 0) {
+                            setStatus(`✅ Backend sync completed - found ${nftCount} NFTs`);
+                            // Reload from cache after sync
+                            setTimeout(() => {
+                                findAllUserNfts(false, false, false);
+                            }, 1000);
+                            return; // Success, no need for fallback
+                        } else {
+                            debugLog("Backend sync returned 0 NFTs, trying local scan...");
+                        }
+                    } catch (jsonError) {
+                        debugWarn('Backend API returned non-JSON response, trying local scan...');
+                    }
+                } else {
+                    debugWarn('Backend API failed, trying local scan...');
+                }
+            } catch (apiError) {
+                debugWarn('Backend API unavailable, using local NFT scanner:', apiError.message);
+            }
+            
+            // Fallback to local NFT scanner for complete blockchain scan from block 0
+            setStatus("🔍 Backend unavailable - scanning blockchain directly from genesis (block 0)...");
+            debugLog("Using NFTScanner fallback for complete blockchain scan");
+            
+            if (!provider || !wallet) {
+                throw new Error("Provider or wallet not available for scanning");
+            }
+            
+            // Initialize NFT scanner with proper status updates
+            const scanner = new NFTScanner(provider, wallet, (statusMsg) => {
+                setStatus(statusMsg);
             });
             
-            // Get response text first to handle both JSON and HTML responses
-            const responseText = await response.text();
+            // Perform comprehensive scan from block 0 for new profiles
+            const foundNfts = await scanner.scanAllNFTs(false, true); // NOT background, scan from genesis
             
-            if (response.ok) {
+            debugLog(`Local scanner found ${foundNfts.length} NFTs`);
+            
+            // Cache results to Supabase if available for future visits
+            if (supabaseConnected && cacheProfileData && foundNfts.length >= 0) {
                 try {
-                    const result = JSON.parse(responseText);
-                    const nftCount = result.stats?.nfts || 0;
-                    const message = result.stats?.message || '';
-                    
-                    if (nftCount > 0) {
-                        setStatus(`✅ Sync completed - found ${nftCount} NFTs`);
-                    } else {
-                        setStatus(`✅ Sync completed - no NFTs found but profile created for future updates`);
-                    }
-                    
-                    // Reload from cache after sync, even if 0 NFTs found
-                    setTimeout(() => {
-                        findAllUserNfts(false, false, false);
-                    }, 1000);
-                } catch (jsonError) {
-                    console.warn('Sync API returned non-JSON response:', responseText.substring(0, 200));
-                    setStatus(`❌ Sync API error: Invalid response format`);
-                }
-            } else {
-                try {
-                    const error = JSON.parse(responseText);
-                    setStatus(`❌ Sync failed: ${error.error || 'Unknown error'}`);
-                } catch (jsonError) {
-                    // Response was not JSON (likely HTML error page)
-                    console.warn('Sync API returned HTML error:', responseText.substring(0, 200));
-                    
-                    if (responseText.includes('500') || responseText.includes('Internal Server Error')) {
-                        setStatus(`❌ Sync service temporarily unavailable - using cache only`);
-                    } else if (responseText.includes('404') || responseText.includes('Not Found')) {
-                        setStatus(`❌ Sync service not found - using cache only`);
-                    } else {
-                        setStatus(`❌ Sync service error - using cache only`);
-                    }
+                    setStatus("💾 Caching scan results for faster future loads...");
+                    await cacheProfileData(wallet, {
+                        nfts: foundNfts,
+                        lastScanBlock: await provider.getBlockNumber(),
+                        scanType: 'comprehensive_genesis',
+                        timestamp: Date.now()
+                    });
+                    debugLog("✅ Profile data cached to Supabase");
+                } catch (cacheError) {
+                    debugWarn("Failed to cache profile data:", cacheError);
                 }
             }
+            
+            // Update local state with found NFTs
+            setUserNfts(foundNfts);
+            
+            if (foundNfts.length > 0) {
+                setStatus(`✅ Direct blockchain scan complete - found ${foundNfts.length} NFTs from genesis`);
+                
+                // Fetch metadata for discovered NFTs
+                await batchFetchMetadata(foundNfts);
+                await fetchContractInfoForNfts(foundNfts);
+            } else {
+                setStatus(`✅ Blockchain scan complete - no NFTs found but profile created`);
+            }
+            
+            // Clear status after delay
+            setTimeout(() => setStatus(''), 3000);
+            
         } catch (error) {
-            console.warn('Sync request failed:', error);
-            setStatus(`❌ Sync unavailable - using cache only`);
+            criticalError('Collection sync failed completely:', error);
+            setStatus(`❌ Sync failed: ${error.message}`);
+            setTimeout(() => setStatus(''), 5000);
         }
     };
 
