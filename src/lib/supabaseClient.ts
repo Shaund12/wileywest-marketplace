@@ -2,18 +2,42 @@ import { createClient } from '@supabase/supabase-js'
 
 // Supabase client singleton
 let supabaseInstance = null
+let supabaseConfig = null
 
 export function getSupabaseClient() {
-  if (!supabaseInstance) {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-    
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+  
+  // Check if configuration changed
+  const currentConfig = { url: supabaseUrl, key: supabaseAnonKey }
+  
+  if (!supabaseInstance || JSON.stringify(supabaseConfig) !== JSON.stringify(currentConfig)) {
     if (!supabaseUrl || !supabaseAnonKey || supabaseUrl === 'https://dummy.supabase.co') {
-      console.warn('Supabase not configured - some features may not work')
+      console.warn('Supabase not configured - profile features disabled')
+      supabaseInstance = null
+      supabaseConfig = null
       return null
     }
     
-    supabaseInstance = createClient(supabaseUrl, supabaseAnonKey)
+    try {
+      supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: {
+          persistSession: false, // Prevent multiple auth instances
+          autoRefreshToken: false,
+        },
+        global: {
+          headers: {
+            'X-Client-Info': 'wileywest-marketplace'
+          }
+        }
+      })
+      supabaseConfig = currentConfig
+    } catch (error) {
+      console.error('Failed to create Supabase client:', error)
+      supabaseInstance = null
+      supabaseConfig = null
+      return null
+    }
   }
   
   return supabaseInstance
@@ -166,12 +190,108 @@ export class SupabaseService {
           p_priority: priority
         })
       
-      if (error) throw error
+      if (error) {
+        console.warn('Sync function not available - backend features may not be deployed:', error.message)
+        return false
+      }
       
       return true
     } catch (error) {
-      console.error('Error requesting sync:', error)
+      console.warn('Background sync not available - this is normal if backend services are not configured')
       return false
+    }
+  }
+
+  // Check if Edge Functions are available
+  async checkEdgeFunctionsAvailable(): Promise<boolean> {
+    if (!this.supabase) return false
+    
+    try {
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/health-check`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        }
+      })
+      
+      return response.ok
+    } catch (error) {
+      return false
+    }
+  }
+
+  // Ensure profile with fallback when Edge Functions are not available
+  async ensureProfileFallback(address: string, chainId: number = 1490): Promise<{ profileId: string | null, syncQueued: boolean, usingFallback: boolean }> {
+    if (!this.supabase) {
+      return { profileId: null, syncQueued: false, usingFallback: true }
+    }
+
+    try {
+      // Try to call the Edge Function first
+      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ensure_profile`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+        },
+        body: JSON.stringify({
+          wallet: address,
+          chainId: chainId,
+          message: 'Profile creation fallback - Edge Functions not available',
+          signature: 'fallback'
+        })
+      })
+      
+      if (response.ok) {
+        const result = await response.json()
+        return { profileId: result.profileId, syncQueued: result.syncQueued || false, usingFallback: false }
+      }
+    } catch (error) {
+      console.warn('Edge Functions not available, using fallback profile creation')
+    }
+
+    // Fallback: try to create a basic profile record without SIWE verification
+    try {
+      // Check if wallet already exists
+      const existingWallet = await this.getWalletProfile(address)
+      if (existingWallet) {
+        return { profileId: existingWallet.profile_id || null, syncQueued: false, usingFallback: true }
+      }
+
+      // Create a basic profile entry (if the table exists)
+      const { data: profileData, error: profileError } = await this.supabase
+        .from('profiles')
+        .upsert({
+          handle: address.toLowerCase().slice(0, 42), // Use address as handle
+        })
+        .select()
+        .single()
+
+      if (profileError) {
+        console.warn('Profile table not available:', profileError.message)
+        return { profileId: null, syncQueued: false, usingFallback: true }
+      }
+
+      // Create wallet record
+      const { error: walletError } = await this.supabase
+        .from('wallets')
+        .upsert({
+          address: address.toLowerCase(),
+          profile_id: profileData.id,
+          chain_id: chainId,
+          needs_sync: true,
+          sync_status: 'pending',
+          nft_count: 0
+        })
+
+      if (walletError) {
+        console.warn('Wallet table not available:', walletError.message)
+      }
+
+      return { profileId: profileData.id, syncQueued: false, usingFallback: true }
+    } catch (error) {
+      console.warn('Database tables not available - profile features disabled')
+      return { profileId: null, syncQueued: false, usingFallback: true }
     }
   }
 

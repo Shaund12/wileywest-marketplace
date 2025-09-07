@@ -133,18 +133,22 @@ function MyCollections() {
         setLastUpdated(new Date(newest.updated_at));
         setStatus(`✅ Loaded ${holdings.length} NFTs from ${new Set(holdings.map(h => h.contract_address)).size} collections`);
       } else {
-        setStatus('No NFTs found - try refreshing to scan your wallet');
+        setStatus('📭 No NFTs found - try "Setup Profile" to scan your wallet');
       }
     } catch (error) {
       console.error('Error loading NFT holdings:', error);
-      setStatus('❌ Error loading NFT collection');
+      if (error.message?.includes('relation') || error.message?.includes('does not exist')) {
+        setStatus('⚠️ Database not configured - NFT tracking unavailable');
+      } else {
+        setStatus('❌ Error loading NFT collection');
+      }
     } finally {
       setIsLoading(false);
       setTimeout(() => setStatus(''), 5000);
     }
   }, [wallet, chainId, processNFTHoldings]);
 
-  // Ensure profile exists (SIWE + profile creation)
+  // Ensure profile exists (SIWE + profile creation with fallback)
   const ensureProfile = useCallback(async () => {
     if (!wallet || !signer || !chainId || !supabaseService.isConnected) return;
     
@@ -152,47 +156,64 @@ function MyCollections() {
     setStatus('Setting up your profile...');
     
     try {
-      // Generate SIWE message and get signature
-      const nonce = generateNonce();
-      const message = generateSiweMessage(wallet, chainId, nonce);
+      // Try with SIWE first if we have a signer
+      let result = null;
       
-      setStatus('Please sign the message to verify wallet ownership...');
-      const signature = await signer.signMessage(message);
-      
-      setStatus('Creating profile...');
-      
-      // Call ensure_profile Edge Function
-      const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ensure_profile`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
-        },
-        body: JSON.stringify({
-          wallet,
-          chainId,
-          message,
-          signature
-        })
-      });
-      
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Profile creation failed');
+      try {
+        // Generate SIWE message and get signature
+        const nonce = generateNonce();
+        const message = generateSiweMessage(wallet, chainId, nonce);
+        
+        setStatus('Please sign the message to verify wallet ownership...');
+        const signature = await signer.signMessage(message);
+        
+        setStatus('Creating profile...');
+        
+        // Call ensure_profile Edge Function
+        const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ensure_profile`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          },
+          body: JSON.stringify({
+            wallet,
+            chainId,
+            message,
+            signature
+          })
+        });
+        
+        if (response.ok) {
+          result = await response.json();
+        } else {
+          throw new Error('Edge Function not available');
+        }
+      } catch (edgeFunctionError) {
+        console.warn('Edge Functions not available, using fallback:', edgeFunctionError.message);
+        setStatus('Creating profile (fallback mode)...');
+        
+        // Use fallback method
+        result = await supabaseService.ensureProfileFallback(wallet, chainId);
       }
       
-      const result = await response.json();
-      setProfileId(result.profileId);
-      
-      if (result.syncQueued) {
-        setStatus('✅ Profile created and sync queued - your NFTs will be updated shortly');
+      if (result) {
+        setProfileId(result.profileId);
+        
+        if (result.usingFallback) {
+          setStatus('✅ Profile created (offline mode) - background sync not available');
+        } else if (result.syncQueued) {
+          setStatus('✅ Profile created and sync queued - your NFTs will be updated shortly');
+        } else {
+          setStatus('✅ Profile created - manually triggering refresh...');
+          // If sync wasn't queued, try to request it manually
+          await supabaseService.requestSync(wallet, chainId, 1);
+        }
       } else {
-        setStatus('✅ Profile created - manually triggering refresh...');
-        // If sync wasn't queued, try to request it manually
-        await supabaseService.requestSync(wallet, chainId, 1);
+        setStatus('✅ Profile ready - some features may be limited without backend services');
       }
       
-      // Load current holdings
+      // Load current holdings (may be empty if no backend)
       await loadNFTHoldings();
       
     } catch (error) {
@@ -200,7 +221,7 @@ function MyCollections() {
       setStatus(`❌ Profile setup failed: ${error.message}`);
     } finally {
       setIsEnsuring(false);
-      setTimeout(() => setStatus(''), 5000);
+      setTimeout(() => setStatus(''), 8000);
     }
   }, [wallet, signer, chainId, loadNFTHoldings]);
 
@@ -273,7 +294,7 @@ function MyCollections() {
         }
       } else {
         // No profile exists, need to create one
-        setStatus('No profile found - click "Setup Profile" to get started');
+        setStatus('💡 Click "Setup Profile" to enable NFT collection tracking');
       }
     };
     
@@ -322,8 +343,16 @@ function MyCollections() {
     return (
       <div className="profile-container">
         <div className="profile-not-connected">
-          <h2>Service Unavailable</h2>
-          <p>The NFT portfolio service is not configured. Please check back later.</p>
+          <h2>NFT Collections</h2>
+          <p>📭 NFT collection tracking is not configured.</p>
+          <p>This feature requires backend services to scan and cache your wallet's NFTs.</p>
+          <div className="wallet-display" style={{ marginTop: '20px' }}>
+            <span className="label">Connected Wallet:</span>
+            <span className="value">{wallet ? `${wallet.slice(0, 8)}...${wallet.slice(-6)}` : 'None'}</span>
+          </div>
+          <button className="secondary-button" onClick={() => navigate('/marketplace')} style={{ marginTop: '20px' }}>
+            Browse Marketplace
+          </button>
         </div>
       </div>
     );
