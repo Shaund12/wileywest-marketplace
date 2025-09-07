@@ -139,7 +139,8 @@ function EnvWarningBanner() {
             position: 'fixed', top: 8, left: '50%', transform: 'translateX(-50%)',
             padding: '8px 12px', borderRadius: 8, zIndex: 9998,
             background: 'rgba(255,170,51,.15)', color: '#fff',
-            border: '1px solid rgba(255,255,255,.14)', backdropFilter: 'blur(6px)', fontSize: 13
+            border: '1px solid rgba(255,255,255,.14)', backdropFilter: 'blur(6px)', fontSize: 13,
+            pointerEvents: 'none' // Allow clicks to pass through
         }}>
             Warning: VITE_MARKETPLACE_ADDRESS is not set. Using placeholder address.
         </div>
