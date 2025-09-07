@@ -43,7 +43,7 @@ function MyCollections() {
   const [viewMode, setViewMode] = useState('grid');
   const [expandedCollections, setExpandedCollections] = useState(new Set());
   
-  const subscriptionRef = useRef<any>(null);
+  const subscriptionRef = useRef(null);
 
   // Cleanup subscription on unmount
   useEffect(() => {
