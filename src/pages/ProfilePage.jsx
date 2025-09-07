@@ -980,7 +980,8 @@ function ProfilePage() {
             
             // Fallback to local NFT scanner for complete blockchain scan from block 0
             setStatus("🔍 Backend unavailable - scanning blockchain directly from genesis (block 0)...");
-            debugLog("Using NFTScanner fallback for complete blockchain scan");
+            debugLog("🔄 Using NFTScanner fallback for complete blockchain scan from block 0");
+            debugLog("🌐 This scan will find all NFTs from the beginning of the blockchain");
             
             if (!provider || !wallet) {
                 throw new Error("Provider or wallet not available for scanning");
