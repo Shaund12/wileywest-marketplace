@@ -12,6 +12,29 @@ const BlockSharePage = () => {
     const nftAddress = import.meta.env.VITE_REVSHARE_NFT_ADDRESS;
     const DEBUG = import.meta.env.VITE_DEBUG_MODE === 'true';
 
+    // Validate environment configuration
+    const [configError, setConfigError] = useState('');
+    
+    useEffect(() => {
+        if (!treasuryAddress || treasuryAddress === '0x0000000000000000000000000000000000000000') {
+            setConfigError('VITE_REVSHARE_TREASURY_ADDRESS is not configured properly.');
+            return;
+        }
+        if (!nftAddress || nftAddress === '0x0000000000000000000000000000000000000000') {
+            setConfigError('VITE_REVSHARE_NFT_ADDRESS is not configured properly.');
+            return;
+        }
+        if (!ethers.isAddress(treasuryAddress)) {
+            setConfigError('VITE_REVSHARE_TREASURY_ADDRESS is not a valid Ethereum address.');
+            return;
+        }
+        if (!ethers.isAddress(nftAddress)) {
+            setConfigError('VITE_REVSHARE_NFT_ADDRESS is not a valid Ethereum address.');
+            return;
+        }
+        setConfigError('');
+    }, [treasuryAddress, nftAddress]);
+
     const [treasury, setTreasury] = useState(null);
     const [nft, setNft] = useState(null);
 
@@ -59,28 +82,41 @@ const BlockSharePage = () => {
     const big = (v) => ethers.getBigInt(v);
 
     useEffect(() => {
-        if (provider && treasuryAddress && nftAddress) init();
-    }, [provider, treasuryAddress, nftAddress]);
+        if (provider && treasuryAddress && nftAddress && !configError) init();
+    }, [provider, treasuryAddress, nftAddress, configError]);
 
     async function init() {
         try {
             setContractError('');
+            setStatus('Initializing contracts...');
+            
+            // Check if provider is connected to network
+            try {
+                await provider.getNetwork();
+            } catch (networkError) {
+                throw new Error('Unable to connect to Vitruveo network. Please check your internet connection and try again.');
+            }
+            
             const t = new ethers.Contract(treasuryAddress, (RevShareTreasuryAbi.abi || RevShareTreasuryAbi), provider);
             const n = new ethers.Contract(nftAddress, (RevShareNFTAbi.abi || RevShareNFTAbi), provider);
 
             const [tCode, nCode] = await Promise.all([provider.getCode(treasuryAddress), provider.getCode(nftAddress)]);
-            if (tCode === '0x') throw new Error('Treasury not deployed at address');
-            if (nCode === '0x') throw new Error('NFT not deployed at address');
+            if (tCode === '0x') throw new Error('Treasury contract not found. Please check the contract address.');
+            if (nCode === '0x') throw new Error('RevShare NFT contract not found. Please check the contract address.');
 
             setTreasury(t);
             setNft(n);
             await probeCapabilities(t, n);
             setDataLoaded(false);
+            setStatus('');
         } catch (e) {
-            const msg = `Init failed: ${e.message}`;
+            let msg = e.message;
+            if (msg.includes('Failed to fetch') || msg.includes('fetch')) {
+                msg = 'Unable to connect to blockchain network. Please check your internet connection and try refreshing the page.';
+            }
             setContractError(msg);
             setStatus(msg);
-            criticalError(msg, e);
+            criticalError(`Init failed: ${msg}`, e);
         }
     }
 
@@ -436,8 +472,24 @@ const BlockSharePage = () => {
     if (!provider) {
         return (
             <div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
-                <h2>BlockShare Revenue Portal</h2>
-                <p style={{ color: 'var(--hp-muted)' }}>Connect wallet to continue.</p>
+                <div className="hp-section__head">
+                    <h2>🏛️ BlockShare Revenue Portal</h2>
+                    <p style={{ color: 'var(--hp-muted)' }}>Claim your marketplace revenue share.</p>
+                </div>
+                <Msg kind="info">
+                    <strong>Connect Your Wallet</strong><br/>
+                    To view your RevShare NFTs and claim earnings, please connect your wallet using the "Connect Wallet" button above.
+                    Make sure you're connected to the Vitruveo network.
+                </Msg>
+                <div style={{ textAlign: 'center', marginTop: '2rem' }}>
+                    <button 
+                        className="hp-btn hp-btn--primary"
+                        onClick={() => document.querySelector('[data-wallet-connect]')?.click()}
+                        style={{ fontSize: '1.1rem', padding: '0.75rem 2rem' }}
+                    >
+                        Connect Wallet to Continue
+                    </button>
+                </div>
             </div>
         );
     }
@@ -449,7 +501,36 @@ const BlockSharePage = () => {
                 <p style={{ color: 'var(--hp-muted)' }}>Claim your marketplace revenue share.</p>
             </div>
 
-            {contractError && <Msg kind="error">{contractError}</Msg>}
+            {configError && (
+                <Msg kind="error">
+                    <strong>Configuration Error</strong><br/>
+                    {configError}
+                    <div style={{ marginTop: '0.5rem', fontSize: '0.9rem', opacity: 0.9 }}>
+                        Please contact the administrator to configure the RevShare contract addresses.
+                    </div>
+                </Msg>
+            )}
+            {contractError && !configError && (
+                <div>
+                    <Msg kind="error">
+                        <strong>Connection Error</strong><br/>
+                        {contractError}
+                        <div style={{ marginTop: '0.75rem' }}>
+                            <button 
+                                className="hp-btn hp-btn--secondary"
+                                onClick={async () => {
+                                    setContractError('');
+                                    setStatus('Retrying connection...');
+                                    await init();
+                                }}
+                                style={{ fontSize: '0.9rem', padding: '0.5rem 1rem' }}
+                            >
+                                🔄 Retry Connection
+                            </button>
+                        </div>
+                    </Msg>
+                </div>
+            )}
             {status && !contractError && <Msg kind="info">{status}</Msg>}
 
             {wallet && (
@@ -509,9 +590,25 @@ const BlockSharePage = () => {
                         </button>
                     </div>
                 )}
-                {wallet && !calculating && positiveClaimIds.length === 0 && (
-                    <div style={{ textAlign: 'center', marginTop: '1.2rem', opacity: 0.65, fontStyle: 'italic' }}>
-                        Nothing claimable (see analyzer above).
+                {wallet && !calculating && positiveClaimIds.length === 0 && userNFTBalance === 0 && !contractError && (
+                    <div style={{ textAlign: 'center', marginTop: '1.2rem' }}>
+                        <Msg kind="info">
+                            <strong>No RevShare NFTs Found</strong><br/>
+                            You don't own any BlockDust RevShare NFTs in this wallet. 
+                            RevShare NFTs are required to earn marketplace revenue.
+                            <div style={{ marginTop: '0.5rem', fontSize: '0.9rem' }}>
+                                Contract Address: {nftAddress}
+                            </div>
+                        </Msg>
+                    </div>
+                )}
+                {wallet && !calculating && positiveClaimIds.length === 0 && userNFTBalance > 0 && !contractError && (
+                    <div style={{ textAlign: 'center', marginTop: '1.2rem' }}>
+                        <Msg kind="info">
+                            <strong>No Revenue to Claim</strong><br/>
+                            You own {userNFTBalance} RevShare NFT{userNFTBalance !== 1 ? 's' : ''}, but there's no revenue available to claim yet.
+                            Check the analyzer above for more details.
+                        </Msg>
                     </div>
                 )}
             </div>
