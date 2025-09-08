@@ -42,29 +42,7 @@ const KNOWN_NFT_CONTRACTS = [
     '0xE1A5518CEbd226FE2a3251F93A1F6AAef65d3131', // Skoollz
     '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453', // CrocoDeal 404
     '0x89207A7F75C9cb7C8f95f0c2517b029BE1AE29b8', // NeonKatz
-    '0xf4A2eFf88a408ff4C4550148151c33c93442619e', // ApeCoin
-    '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85', // ENS: Ethereum Name Service
-    '0x23581767a106ae21c074b2276D25e5C3e136a68b', // Moonbirds
-    '0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D', // Bored Ape Yacht Club
-    '0x60E4d786628Fea6478F785A6d7e704777c86a7c6', // Mutant Ape Yacht Club
-    '0xED5AF388653567Af2F388E6224dC7C4b3241C544', // Azuki
-    '0x8a90CAb2b38dba80c64b7734e58Ee1dB38B8992e', // Doodles
-    '0x49cF6f5d44E70224e2E23fDcdd2C053F30aDA28B', // CloneX
-    '0x1A92f7381B9F03921564a437210bB9396471050C', // Cool Cats NFT
-    '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB', // CryptoPunks (wrapped)
-    '0x0cfb5d82be2b949e8fa73a656df91821e2ad99fd', // SuperRare
-    '0x495f947276749Ce646f68AC8c248420045cb7b5e', // OpenSea Shared Storefront
-    '0xa7d8d9ef8D8Ce8992Df33D8b8CF4Aebabd5bD270', // Art Blocks Curated
-    '0x059EDD72Cd353dF5106D2B9cC5ab83a52287aC3a', // Art Blocks Factory
-    '0x34d85c9CDeB23FA97cb08333b511ac86E1C4E258', // Otherdeed for Otherside
-    '0xd1258DB6Ac08eB0e625B75b371C023dA478E94A9', // Sewer Pass
-    '0xba30E5F9Bb24caa003E9f2f0497Ad287FDF95623', // Bored Ape Kennel Club
-    '0x769272677fab02575E84945F03Eca517acc544cc', // The Sandbox LAND
-    '0xF87E31492Faf9A91B02Ee0dEAAd50d51d56D5d4d', // Decentraland LAND
-    '0x4b15a9c28034dC83db40CD810001427d3BD7163D', // Gods Unchained Cards
-    '0x06012c8cf97BEaD5deAe237070F9587f8E7A266d', // CryptoKitties
-    '0xf5b0A3eFB8e8E4c201e2A935F110eAaF3FFEcb8d', // Axie Infinity
-    '0xAaAaAaAAaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa'  // Compound cTokens (as example)
+
 ];
 
 // Known ERC20 tokens to exclude
