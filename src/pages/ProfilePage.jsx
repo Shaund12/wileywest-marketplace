@@ -35,6 +35,7 @@ const ERC1155_ABI = [
 // List of known NFT collections to scan
 const KNOWN_NFT_CONTRACTS = [
     '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
+    '0x89207A7F75C9cb7C8f95f0c2517b029BE1AE29b8', //NeonKatz
 ];
 
 // Multiple IPFS gateways to try for better reliability (ordered by reliability)
