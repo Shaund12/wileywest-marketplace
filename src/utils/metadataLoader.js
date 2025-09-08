@@ -20,39 +20,49 @@ const metadataResultCache = new Map();
  * @returns {Promise<Object>} Normalized metadata object
  */
 export const loadNFTMetadata = async (contractAddress, tokenId, provider, existingMetadata = null) => {
+    console.log(`🔍 [LOAD NFT] Starting loadNFTMetadata for ${contractAddress}:${tokenId}`);
+    
     // Validate inputs
     if (!contractAddress || contractAddress === 'undefined' || contractAddress === 'null') {
+        console.log(`❌ [LOAD NFT] Invalid contract address: ${contractAddress}`);
         return createFallbackMetadata(tokenId, 'Invalid contract address');
     }
 
     if (!tokenId && tokenId !== '0' && tokenId !== 0) {
+        console.log(`❌ [LOAD NFT] Invalid token ID: ${tokenId}`);
         return createFallbackMetadata(tokenId, 'Invalid token ID');
     }
 
     const cacheKey = `${contractAddress.toLowerCase()}-${tokenId}`;
+    console.log(`🔑 [LOAD NFT] Cache key: ${cacheKey}`);
     
     // Check if we already have a result cached (extended cache time for better performance)
     if (metadataResultCache.has(cacheKey)) {
         const cached = metadataResultCache.get(cacheKey);
         // Extended cache time to 2 hours for better performance
         if (Date.now() - cached.timestamp < 2 * 60 * 60 * 1000) {
+            console.log(`✅ [LOAD NFT] Returning cached result for ${cacheKey}`);
             return cached.data;
         } else {
+            console.log(`🕒 [LOAD NFT] Cache expired for ${cacheKey}, removing`);
             metadataResultCache.delete(cacheKey);
         }
     }
 
     // Check if we're already loading this metadata
     if (metadataLoadingCache.has(cacheKey)) {
+        console.log(`⏳ [LOAD NFT] Already loading ${cacheKey}, waiting for existing promise`);
         return await metadataLoadingCache.get(cacheKey);
     }
 
+    console.log(`🚀 [LOAD NFT] Starting fresh load for ${cacheKey}`);
     // Start loading metadata with optimized performance
     const loadingPromise = loadMetadataInternal(contractAddress, tokenId, provider, existingMetadata);
     metadataLoadingCache.set(cacheKey, loadingPromise);
 
     try {
         const result = await loadingPromise;
+        console.log(`✅ [LOAD NFT] Successfully loaded metadata for ${cacheKey}:`, result);
         
         // Cache the result for longer period
         metadataResultCache.set(cacheKey, {
@@ -62,6 +72,7 @@ export const loadNFTMetadata = async (contractAddress, tokenId, provider, existi
         
         return result;
     } catch (error) {
+        console.error(`❌ [LOAD NFT] Failed to load metadata for ${cacheKey}:`, error);
         const fallback = createFallbackMetadata(tokenId, error.message);
         
         // Cache the fallback for shorter period to retry sooner
@@ -138,17 +149,33 @@ const fetchMetadataFromContract = async (contractAddress, tokenId, provider) => 
         // Optimized token URI fetch with Vitruveo-appropriate timeout
         let tokenURI;
         try {
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('tokenURI timeout')), 8000)); // Increased timeout for Vitruveo
-            const uriPromise = contract.tokenURI(tokenId);
-            tokenURI = await Promise.race([uriPromise, timeoutPromise]);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 8000); // Increased timeout for Vitruveo
+            
+            try {
+                const uriPromise = contract.tokenURI(tokenId);
+                tokenURI = await Promise.race([uriPromise, new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('tokenURI timeout')), 8000))]);
+                clearTimeout(timeoutId);
+            } catch (error) {
+                clearTimeout(timeoutId);
+                throw error;
+            }
         } catch {
             // Fallback to ERC1155
             try {
-                const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('uri timeout')), 8000));
-                const uriPromise = contract.uri(tokenId);
-                tokenURI = await Promise.race([uriPromise, timeoutPromise]);
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+                
+                try {
+                    const uriPromise = contract.uri(tokenId);
+                    tokenURI = await Promise.race([uriPromise, new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('uri timeout')), 8000))]);
+                    clearTimeout(timeoutId);
+                } catch (error) {
+                    clearTimeout(timeoutId);
+                    throw error;
+                }
             } catch {
                 throw new Error('No URI method available');
             }
@@ -179,17 +206,27 @@ const fastFetchMetadata = async (tokenURI) => {
 
     // For HTTP URLs, try direct fetch with short timeout
     if (tokenURI.startsWith('http://') || tokenURI.startsWith('https://')) {
-        const response = await fetch(tokenURI, {
-            method: 'GET',
-            headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(10000) // Increased timeout for Vitruveo blockchain
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
         
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+        try {
+            const response = await fetch(tokenURI, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                signal: controller.signal
+            });
+            
+            clearTimeout(timeoutId);
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
+            return await response.json();
+        } catch (error) {
+            clearTimeout(timeoutId);
+            throw error;
         }
-        
-        return await response.json();
     }
 
     // For IPFS, try only the first 2 fastest gateways for speed
@@ -208,14 +245,24 @@ const fastFetchMetadata = async (tokenURI) => {
 
         for (const gateway of reliableGateways) {
             try {
-                const response = await fetch(`${gateway}${hash}`, {
-                    method: 'GET',
-                    headers: { 'Accept': 'application/json' },
-                    signal: AbortSignal.timeout(10000) // Increased timeout for better reliability
-                });
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 10000);
                 
-                if (response.ok) {
-                    return await response.json();
+                try {
+                    const response = await fetch(`${gateway}${hash}`, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/json' },
+                        signal: controller.signal
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (response.ok) {
+                        return await response.json();
+                    }
+                } catch (fetchError) {
+                    clearTimeout(timeoutId);
+                    throw fetchError;
                 }
             } catch {
                 continue; // Try next gateway
@@ -320,21 +367,28 @@ const createFallbackMetadata = (tokenId, errorMessage) => {
  * @returns {Promise<Array>} Array of NFTs with loaded metadata
  */
 export const batchLoadMetadata = async (nfts, provider, batchSize = 20) => {
-    if (!nfts || nfts.length === 0) return [];
+    console.log(`📦 [BATCH LOAD] Starting batchLoadMetadata with ${nfts.length} NFTs, batchSize: ${batchSize}`);
+    
+    if (!nfts || nfts.length === 0) {
+        console.log('❌ [BATCH LOAD] No NFTs provided, returning empty array');
+        return [];
+    }
 
     const results = [];
     
     // Process in optimized batches for Vitruveo blockchain
     for (let i = 0; i < nfts.length; i += batchSize) {
         const batch = nfts.slice(i, i + batchSize);
+        console.log(`📋 [BATCH LOAD] Processing batch ${Math.floor(i/batchSize) + 1}/${Math.ceil(nfts.length/batchSize)} with ${batch.length} NFTs`);
         
         // Process all NFTs in the batch in parallel with increased timeout for Vitruveo
-        const batchPromises = batch.map(async (nft) => {
+        const batchPromises = batch.map(async (nft, index) => {
+            console.log(`🔍 [BATCH LOAD] Processing NFT ${i + index + 1}/${nfts.length}: ${nft.contractAddress}:${nft.tokenId}`);
+            
             try {
-                // Increased timeout for Vitruveo blockchain stability
-                const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Metadata load timeout')), 12000) // Increased to 12s
-                );
+                // Create controller for this specific NFT
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 12000); // Increased to 12s
                 
                 const metadataPromise = loadNFTMetadata(
                     nft.contractAddress, 
@@ -343,13 +397,26 @@ export const batchLoadMetadata = async (nfts, provider, batchSize = 20) => {
                     nft.metadata || null
                 );
                 
-                const metadata = await Promise.race([metadataPromise, timeoutPromise]);
-                
-                return {
-                    ...nft,
-                    metadata: metadata
-                };
+                try {
+                    const metadata = await Promise.race([
+                        metadataPromise,
+                        new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('Metadata load timeout')), 12000))
+                    ]);
+                    
+                    clearTimeout(timeoutId);
+                    console.log(`✅ [BATCH LOAD] Successfully loaded metadata for ${nft.contractAddress}:${nft.tokenId}`);
+                    
+                    return {
+                        ...nft,
+                        metadata: metadata
+                    };
+                } catch (error) {
+                    clearTimeout(timeoutId);
+                    throw error;
+                }
             } catch (error) {
+                console.error(`❌ [BATCH LOAD] Failed to load metadata for ${nft.contractAddress}:${nft.tokenId}:`, error);
                 // Return NFT with fallback metadata instead of failing
                 return {
                     ...nft,
@@ -359,21 +426,29 @@ export const batchLoadMetadata = async (nfts, provider, batchSize = 20) => {
         });
         
         // Wait for all in the batch to complete
+        console.log(`⏳ [BATCH LOAD] Waiting for batch ${Math.floor(i/batchSize) + 1} to complete...`);
         const batchResults = await Promise.allSettled(batchPromises);
         
         // Add successful results
-        batchResults.forEach(result => {
+        batchResults.forEach((result, index) => {
             if (result.status === 'fulfilled') {
                 results.push(result.value);
+                console.log(`✅ [BATCH LOAD] Added result for NFT ${i + index + 1}`);
+            } else {
+                console.error(`❌ [BATCH LOAD] Failed result for NFT ${i + index + 1}:`, result.reason);
             }
         });
         
+        console.log(`📊 [BATCH LOAD] Batch ${Math.floor(i/batchSize) + 1} completed, ${results.length} total results so far`);
+        
         // Longer delay between batches for Vitruveo blockchain stability
         if (i + batchSize < nfts.length) {
+            console.log(`⏸️ [BATCH LOAD] Waiting 200ms before next batch...`);
             await new Promise(resolve => setTimeout(resolve, 200)); // Increased delay
         }
     }
     
+    console.log(`🎉 [BATCH LOAD] Completed processing all batches, returning ${results.length} results`);
     return results;
 };
 
@@ -391,12 +466,21 @@ export const resolveImageUrl = async (imageUrl, retryCount = 0) => {
     // If it's already an HTTP URL, test if it works with fast timeout
     if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
         try {
-            const response = await fetch(imageUrl, { 
-                method: 'HEAD',
-                signal: AbortSignal.timeout(3000) // Fast timeout for better performance
-            });
-            if (response.ok) {
-                return imageUrl;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 3000);
+            
+            try {
+                const response = await fetch(imageUrl, { 
+                    method: 'HEAD',
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+                if (response.ok) {
+                    return imageUrl;
+                }
+            } catch (fetchError) {
+                clearTimeout(timeoutId);
+                throw fetchError;
             }
         } catch {
             // Continue to IPFS resolution if HTTP fails
@@ -426,14 +510,24 @@ export const resolveImageUrl = async (imageUrl, retryCount = 0) => {
                 const resolvedUrl = `${gateway}${hash}`;
 
                 // Test if the URL works with fast timeout
-                const response = await fetch(resolvedUrl, { 
-                    method: 'HEAD',
-                    signal: AbortSignal.timeout(3000) // Fast timeout
-                });
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000);
+                
+                try {
+                    const response = await fetch(resolvedUrl, { 
+                        method: 'HEAD',
+                        signal: controller.signal
+                    });
 
-                if (response.ok) {
-                    debugLog(`✅ Image resolved via ${gateway.split('/')[2]}`);
-                    return resolvedUrl;
+                    clearTimeout(timeoutId);
+
+                    if (response.ok) {
+                        debugLog(`✅ Image resolved via ${gateway.split('/')[2]}`);
+                        return resolvedUrl;
+                    }
+                } catch (fetchError) {
+                    clearTimeout(timeoutId);
+                    throw fetchError;
                 }
             } catch (error) {
                 debugWarn(`Gateway ${i + 1} failed for image: ${error.message}`);

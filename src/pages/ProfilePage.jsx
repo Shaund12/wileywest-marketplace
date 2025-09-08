@@ -588,33 +588,48 @@ function ProfilePage() {
 
     // Ultra-fast batch metadata loading using optimized loader
     const batchFetchMetadata = async (nfts) => {
+        console.log('🚀 [BATCH FETCH] Starting batchFetchMetadata with', nfts.length, 'NFTs');
+        console.log('📋 [BATCH FETCH] NFTs to process:', nfts);
+        
         const nftsToFetch = nfts.filter(nft => {
             const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
             return !nftMetadata[key]?.loaded;
         });
 
-        if (nftsToFetch.length === 0) return;
+        console.log(`🔍 [BATCH FETCH] Filtered to ${nftsToFetch.length} NFTs that need fetching`);
+
+        if (nftsToFetch.length === 0) {
+            console.log('✅ [BATCH FETCH] No NFTs need fetching, all already loaded');
+            return;
+        }
 
         setStatus(`Fast loading metadata for ${nftsToFetch.length} NFTs...`);
+        console.log(`⚡ [BATCH FETCH] Starting metadata loading for ${nftsToFetch.length} NFTs...`);
 
         try {
             // Use the optimized batch loader for maximum speed on Vitruveo
+            console.log('📡 [BATCH FETCH] Calling batchLoadMetadata from metadataLoader...');
             const nftsWithMetadata = await batchLoadMetadata(nftsToFetch, provider, 15); // Optimized for Vitruveo
+            console.log(`✅ [BATCH FETCH] batchLoadMetadata returned ${nftsWithMetadata.length} results`);
             
             // Update state with all loaded metadata at once
             const newMetadata = {};
             nftsWithMetadata.forEach(nft => {
                 const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
                 newMetadata[key] = nft.metadata;
+                console.log(`📝 [BATCH FETCH] Processing metadata for ${key}:`, nft.metadata);
             });
             
+            console.log(`💾 [BATCH FETCH] Updating state with ${Object.keys(newMetadata).length} metadata entries`);
             setNftMetadata(prev => ({
                 ...prev,
                 ...newMetadata
             }));
 
             setStatus(`Loaded metadata for ${nftsWithMetadata.length} NFTs`);
+            console.log(`🎉 [BATCH FETCH] Successfully completed metadata loading for ${nftsWithMetadata.length} NFTs`);
         } catch (error) {
+            console.error('❌ [BATCH FETCH] Batch metadata loading failed:', error);
             debugWarn('Batch metadata loading failed:', error);
             setStatus(`Error loading metadata: ${error.message}`);
         }
@@ -895,9 +910,22 @@ function ProfilePage() {
                                 setTimeout(() => {
                                     if (!currentAbortController.signal.aborted) {
                                         setStatus(`🔄 Enhancing metadata for ${nftsNeedingMetadata.length} NFTs...`);
-                                        batchFetchMetadata(nftsNeedingMetadata).then(() => {
+                                        batchLoadMetadata(nftsNeedingMetadata, provider, 15).then((nftsWithMetadata) => {
                                             if (!currentAbortController.signal.aborted) {
+                                                // Update metadata state with loaded data
+                                                const newMetadata = {};
+                                                nftsWithMetadata.forEach(nft => {
+                                                    const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                                                    newMetadata[key] = nft.metadata;
+                                                });
+                                                setNftMetadata(prev => ({ ...prev, ...newMetadata }));
+                                                
                                                 setStatus(`✅ Collection ready - ${totalNfts} NFTs with enhanced metadata`);
+                                                setTimeout(() => setStatus(''), 3000);
+                                            }
+                                        }).catch(error => {
+                                            if (!currentAbortController.signal.aborted) {
+                                                setStatus(`❌ Metadata enhancement failed: ${error.message}`);
                                                 setTimeout(() => setStatus(''), 3000);
                                             }
                                         });
@@ -1063,7 +1091,21 @@ function ProfilePage() {
                     // OPTIMIZED: Start metadata fetching in background
                     setTimeout(() => {
                         if (!abortSignal?.aborted) {
-                            batchFetchMetadata(ownedNfts);
+                            batchLoadMetadata(ownedNfts, provider, 15).then((nftsWithMetadata) => {
+                                if (!abortSignal?.aborted) {
+                                    // Update metadata state with loaded data
+                                    const newMetadata = {};
+                                    nftsWithMetadata.forEach(nft => {
+                                        const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                                        newMetadata[key] = nft.metadata;
+                                    });
+                                    setNftMetadata(prev => ({ ...prev, ...newMetadata }));
+                                }
+                            }).catch(error => {
+                                if (!abortSignal?.aborted) {
+                                    debugWarn('Background metadata loading failed:', error);
+                                }
+                            });
                             fetchContractInfoForNfts(ownedNfts);
                         }
                     }, 100);
@@ -1095,7 +1137,10 @@ function ProfilePage() {
 
     // Retry metadata loading for NFTs that don't have metadata
     const retryMissingMetadata = async () => {
+        console.log('🔄 [METADATA RETRY] Button clicked - starting metadata retry...');
+        
         if (!userNfts.length) {
+            console.log('❌ [METADATA RETRY] No NFTs to retry metadata for');
             setStatus("No NFTs to retry metadata for");
             return;
         }
@@ -1107,13 +1152,17 @@ function ProfilePage() {
             return !metadata?.hasMetadata || !metadata?.hasImage;
         });
 
+        console.log(`🔍 [METADATA RETRY] Found ${nftsWithoutMetadata.length} NFTs needing metadata out of ${userNfts.length} total`);
+
         if (nftsWithoutMetadata.length === 0) {
+            console.log('✅ [METADATA RETRY] All NFTs already have metadata loaded');
             setStatus("All NFTs already have metadata loaded");
             setTimeout(() => setStatus(''), 2000);
             return;
         }
 
         setStatus(`🔄 Retrying metadata for ${nftsWithoutMetadata.length} NFTs...`);
+        console.log(`🚀 [METADATA RETRY] Starting retry for ${nftsWithoutMetadata.length} NFTs...`);
 
         // Trigger metadata fetch for NFTs without metadata
         const nftList = nftsWithoutMetadata.map(nft => ({
@@ -1123,11 +1172,16 @@ function ProfilePage() {
             type: nft.type
         }));
 
+        console.log('📋 [METADATA RETRY] NFT list prepared:', nftList);
+
         try {
+            console.log('⚡ [METADATA RETRY] Calling batchFetchMetadata...');
             await batchFetchMetadata(nftList);
+            console.log('✅ [METADATA RETRY] batchFetchMetadata completed successfully');
             setStatus(`✅ Metadata retry completed for ${nftsWithoutMetadata.length} NFTs`);
             setTimeout(() => setStatus(''), 3000);
         } catch (error) {
+            console.error('❌ [METADATA RETRY] batchFetchMetadata failed:', error);
             setStatus(`❌ Metadata retry failed: ${error.message}`);
             setTimeout(() => setStatus(''), 3000);
         }
