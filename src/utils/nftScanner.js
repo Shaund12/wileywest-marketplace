@@ -34,14 +34,37 @@ const EXTENDED_ERC1155_ABI = [
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ];
 
-// Add well-known NFT contracts to force-scan
+// Add well-known NFT contracts to force-scan - EXPANDED LIST for comprehensive coverage
 const KNOWN_NFT_CONTRACTS = [
     '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
-    '0x0BE8E03C7cf2F880cD6968E355feae724aB9b5AE', //VMonsters
-    '0x0e4a2D78658aF51800852ca67181B57Bac401F13', //vdex v3
-    '0xE1A5518CEbd226FE2a3251F93A1F6AAef65d3131', //Skoollz
-    '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453' //CrocoDeal 404
-
+    '0x0BE8E03C7cf2F880cD6968E355feae724aB9b5AE', // VMonsters
+    '0x0e4a2D78658aF51800852ca67181B57Bac401F13', // vdex v3
+    '0xE1A5518CEbd226FE2a3251F93A1F6AAef65d3131', // Skoollz
+    '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453', // CrocoDeal 404
+    '0x89207A7F75C9cb7C8f95f0c2517b029BE1AE29b8', // NeonKatz
+    '0xf4A2eFf88a408ff4C4550148151c33c93442619e', // ApeCoin
+    '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85', // ENS: Ethereum Name Service
+    '0x23581767a106ae21c074b2276D25e5C3e136a68b', // Moonbirds
+    '0xBC4CA0EdA7647A8aB7C2061c2E118A18a936f13D', // Bored Ape Yacht Club
+    '0x60E4d786628Fea6478F785A6d7e704777c86a7c6', // Mutant Ape Yacht Club
+    '0xED5AF388653567Af2F388E6224dC7C4b3241C544', // Azuki
+    '0x8a90CAb2b38dba80c64b7734e58Ee1dB38B8992e', // Doodles
+    '0x49cF6f5d44E70224e2E23fDcdd2C053F30aDA28B', // CloneX
+    '0x1A92f7381B9F03921564a437210bB9396471050C', // Cool Cats NFT
+    '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB', // CryptoPunks (wrapped)
+    '0x0cfb5d82be2b949e8fa73a656df91821e2ad99fd', // SuperRare
+    '0x495f947276749Ce646f68AC8c248420045cb7b5e', // OpenSea Shared Storefront
+    '0xa7d8d9ef8D8Ce8992Df33D8b8CF4Aebabd5bD270', // Art Blocks Curated
+    '0x059EDD72Cd353dF5106D2B9cC5ab83a52287aC3a', // Art Blocks Factory
+    '0x34d85c9CDeB23FA97cb08333b511ac86E1C4E258', // Otherdeed for Otherside
+    '0xd1258DB6Ac08eB0e625B75b371C023dA478E94A9', // Sewer Pass
+    '0xba30E5F9Bb24caa003E9f2f0497Ad287FDF95623', // Bored Ape Kennel Club
+    '0x769272677fab02575E84945F03Eca517acc544cc', // The Sandbox LAND
+    '0xF87E31492Faf9A91B02Ee0dEAAd50d51d56D5d4d', // Decentraland LAND
+    '0x4b15a9c28034dC83db40CD810001427d3BD7163D', // Gods Unchained Cards
+    '0x06012c8cf97BEaD5deAe237070F9587f8E7A266d', // CryptoKitties
+    '0xf5b0A3eFB8e8E4c201e2A935F110eAaF3FFEcb8d', // Axie Infinity
+    '0xAaAaAaAAaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa'  // Compound cTokens (as example)
 ];
 
 // Known ERC20 tokens to exclude
@@ -275,6 +298,215 @@ export class NFTScanner {
         
         return nfts;
     }
+
+    // NEW: Enhanced contract discovery through marketplace and popular NFT platform interactions
+    async discoverNFTContractsThroughMarketplaces(scanFromGenensis = false) {
+        const discoveredContracts = new Set();
+        
+        try {
+            const currentBlock = await this.provider.getBlockNumber();
+            const fromBlock = scanFromGenensis ? 0 : Math.max(0, currentBlock - 150000); // Look at last 150k blocks for marketplace activity
+            
+            this.updateStatus(`🔍 Discovering NFT contracts through marketplace interactions...`);
+            
+            // Common marketplace contract addresses (OpenSea, LooksRare, etc.)
+            const MARKETPLACE_CONTRACTS = [
+                '0x00000000006c3852cbEf3e08E8dF289169EdE581', // OpenSea Seaport
+                '0x7Be8076f4EA4A4AD08075C2508e481d6C946D12b', // OpenSea Legacy
+                '0x495f947276749Ce646f68AC8c248420045cb7b5e', // OpenSea Shared Storefront
+                '0x59728544B08AB483533076417FbBB2fD0B17CE3a', // LooksRare
+                '0x74312363e45DCaBA76c59ec49a7Aa8A65a67EeD3', // X2Y2
+                '0x5B3256965e7C3cF26E11FCAf296DfC8807C01073', // Foundation
+                '0x8c9f364bf7a56Ed058fc63Ef81c6Cf09c833e656', // SuperRare Marketplace
+                process.env.VITE_MARKETPLACE_ADDRESS // Our own marketplace
+            ].filter(addr => addr && addr !== '0x0000000000000000000000000000000000000000');
+
+            // Look for OrderFulfilled, Sale, and similar events from marketplaces
+            const MARKETPLACE_EVENT_TOPICS = [
+                ethers.id('OrderFulfilled(bytes32,address,address,address,(uint8,address,uint256,uint256)[],(uint8,address,uint256,uint256,address)[])'), // Seaport
+                ethers.id('MatchEvent(address,address,address,uint256,uint256,bytes32)'), // OpenSea Legacy
+                ethers.id('Sale(address,uint256,address,uint256,address)'), // Generic Sale
+                ethers.id('TakerAsk(bytes32,uint256,address,address,address,address,uint256,uint256)'), // LooksRare
+                ethers.id('TakerBid(bytes32,uint256,address,address,address,address,uint256,uint256)'), // LooksRare
+                ethers.id('EvInventory(address,uint256,address,uint256)'), // X2Y2
+                ethers.id('Transfer(address,address,uint256)') // Generic Transfer events around marketplace addresses
+            ];
+
+            // Scan marketplace contracts for NFT-related events
+            for (const marketplaceAddr of MARKETPLACE_CONTRACTS) {
+                if (!marketplaceAddr) continue;
+                
+                try {
+                    // Look for events involving our wallet address in recent marketplace activity
+                    for (const eventTopic of MARKETPLACE_EVENT_TOPICS) {
+                        try {
+                            const filter = {
+                                address: marketplaceAddr,
+                                topics: [eventTopic],
+                                fromBlock: fromBlock,
+                                toBlock: 'latest'
+                            };
+
+                            const logs = await this.provider.getLogs(filter);
+                            
+                            // Parse logs to extract NFT contract addresses
+                            for (const log of logs) {
+                                // Check if our wallet address is mentioned in the event
+                                const walletInLog = log.topics.some(topic => 
+                                    topic.toLowerCase().includes(this.walletAddress.toLowerCase().slice(2))
+                                ) || log.data.toLowerCase().includes(this.walletAddress.toLowerCase().slice(2));
+
+                                if (walletInLog) {
+                                    // This event involved our wallet, check for NFT contract references
+                                    // Look for contract addresses in the data and topics
+                                    const dataStr = log.data + log.topics.join('');
+                                    const addressMatches = dataStr.match(/0x[a-fA-F0-9]{40}/g) || [];
+                                    
+                                    for (const addr of addressMatches) {
+                                        if (addr.toLowerCase() !== this.walletAddress.toLowerCase() && 
+                                            addr.toLowerCase() !== marketplaceAddr.toLowerCase() &&
+                                            !this.knownErc20s.has(addr.toLowerCase())) {
+                                            discoveredContracts.add(addr.toLowerCase());
+                                        }
+                                    }
+                                }
+                            }
+                            
+                        } catch (eventError) {
+                            // Skip problematic events - they may not exist on this marketplace
+                            if (!eventError.message.includes('execution reverted')) {
+                                debugLog(`Could not scan ${eventTopic} on ${marketplaceAddr}: ${eventError.message}`);
+                            }
+                        }
+                    }
+                } catch (marketplaceError) {
+                    debugLog(`Error scanning marketplace ${marketplaceAddr}: ${marketplaceError.message}`);
+                }
+                
+                // Small delay between marketplace scans
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            // Also look for ERC721/ERC1155 approval events (ApprovalForAll) involving marketplaces
+            try {
+                const approvalTopic = ethers.id('ApprovalForAll(address,address,bool)');
+                const walletTopic = ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32);
+                
+                const approvalFilter = {
+                    topics: [approvalTopic, walletTopic], // Events where our wallet approved someone
+                    fromBlock: fromBlock,
+                    toBlock: 'latest'
+                };
+
+                const approvalLogs = await this.provider.getLogs(approvalFilter);
+                
+                // The contract address of these events are NFT contracts we've interacted with
+                for (const log of approvalLogs) {
+                    if (!this.knownErc20s.has(log.address.toLowerCase())) {
+                        discoveredContracts.add(log.address.toLowerCase());
+                    }
+                }
+                
+            } catch (approvalError) {
+                debugLog(`Error scanning approval events: ${approvalError.message}`);
+            }
+            
+            const contractsArray = Array.from(discoveredContracts);
+            this.updateStatus(`🎯 Discovered ${contractsArray.length} potential NFT contracts through marketplace activity`);
+            
+            return contractsArray;
+            
+        } catch (error) {
+            debugWarn(`Error in marketplace contract discovery: ${error.message}`);
+            return [];
+        }
+    }
+
+    // NEW: Final ownership verification to ensure we only return currently owned NFTs
+    async verifyNFTOwnership(nfts) {
+        const verifiedNfts = [];
+        const totalToVerify = nfts.length;
+        let verified = 0;
+        
+        this.updateStatus(`🔒 Verifying ownership of ${totalToVerify} NFTs...`);
+        
+        // Process in batches to avoid overwhelming the RPC
+        const batchSize = 15;
+        for (let i = 0; i < nfts.length; i += batchSize) {
+            const batch = nfts.slice(i, i + batchSize);
+            
+            const verificationPromises = batch.map(async (nft) => {
+                try {
+                    const { contractAddress, tokenId, type } = nft;
+                    
+                    if (type === 'ERC721') {
+                        // For ERC721, check ownerOf
+                        const contract = new ethers.Contract(contractAddress, EXTENDED_ERC721_ABI, this.provider);
+                        const ownerPromise = contract.ownerOf(tokenId);
+                        const timeoutPromise = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('ownerOf timeout')), 8000)
+                        );
+                        
+                        const owner = await Promise.race([ownerPromise, timeoutPromise]);
+                        if (owner.toLowerCase() === this.walletAddress.toLowerCase()) {
+                            return nft; // We still own this NFT
+                        }
+                    } else if (type === 'ERC1155') {
+                        // For ERC1155, check balanceOf
+                        const contract = new ethers.Contract(contractAddress, EXTENDED_ERC1155_ABI, this.provider);
+                        const balancePromise = contract.balanceOf(this.walletAddress, tokenId);
+                        const timeoutPromise = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('balanceOf timeout')), 8000)
+                        );
+                        
+                        const balance = await Promise.race([balancePromise, timeoutPromise]);
+                        if (Number(balance) > 0) {
+                            // Update the balance in case it changed
+                            return { ...nft, balance: balance.toString() };
+                        }
+                    }
+                    
+                    // If we get here, we don't own this NFT anymore
+                    return null;
+                    
+                } catch (error) {
+                    // If verification fails, assume we don't own it (safer approach)
+                    if (!error.message.includes('execution reverted') && 
+                        !error.message.includes('timeout')) {
+                        debugLog(`Ownership verification failed for ${nft.contractAddress}:${nft.tokenId} - ${error.message}`);
+                    }
+                    return null;
+                }
+            });
+            
+            const batchResults = await Promise.allSettled(verificationPromises);
+            
+            for (const result of batchResults) {
+                if (result.status === 'fulfilled' && result.value) {
+                    verifiedNfts.push(result.value);
+                }
+                verified++;
+            }
+            
+            // Update progress
+            this.updateStatus(`🔒 Verified ownership: ${verified}/${totalToVerify} NFTs (${verifiedNfts.length} confirmed owned)`);
+            
+            // Small delay between batches
+            if (i + batchSize < nfts.length) {
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+        
+        const removedCount = totalToVerify - verifiedNfts.length;
+        if (removedCount > 0) {
+            this.updateStatus(`✅ Ownership verified: ${verifiedNfts.length} NFTs confirmed (${removedCount} no longer owned)`);
+            debugLog(`🔒 Removed ${removedCount} NFTs that are no longer owned`);
+        } else {
+            this.updateStatus(`✅ All ${verifiedNfts.length} NFTs confirmed as currently owned`);
+        }
+        
+        return verifiedNfts;
+    }
     
     // Smart background scan with rate limiting for production use
     startBackgroundScan() {
@@ -363,6 +595,18 @@ export class NFTScanner {
                 }
             }
             contractsToScan.push(...recentContracts);
+
+            // NEW: Add marketplace-based contract discovery for enhanced coverage
+            let marketplaceContracts = [];
+            try {
+                this.updateStatus("🎯 Discovering NFT contracts through marketplace interactions...");
+                marketplaceContracts = await this.discoverNFTContractsThroughMarketplaces(scanFromGenesis);
+                contractsToScan.push(...marketplaceContracts);
+                debugLog(`🎯 Added ${marketplaceContracts.length} contracts from marketplace discovery`);
+            } catch (marketplaceError) {
+                debugWarn("Marketplace contract discovery failed:", marketplaceError);
+                // Continue without marketplace discovery
+            }
             
             // Remove duplicates and invalid addresses
             contractsToScan = [...new Set(contractsToScan)]
@@ -444,6 +688,16 @@ export class NFTScanner {
             
             const scanDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
             this.updateStatus(`✅ ${scanType} scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s`);
+            
+            // NEW: Final ownership verification to ensure accuracy
+            if (allNfts.length > 0) {
+                this.updateStatus(`🔒 Performing final ownership verification...`);
+                const verifiedNfts = await this.verifyNFTOwnership(allNfts);
+                const finalDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
+                this.updateStatus(`✅ Scan complete! ${verifiedNfts.length} verified NFTs in ${finalDuration}s`);
+                return verifiedNfts;
+            }
+            
             return allNfts;
         } catch (error) {
             criticalError("Error in conservative NFT scan:", error);
@@ -656,7 +910,7 @@ export class NFTScanner {
             // Smart scanning approach based on flag
             const currentBlock = await this.provider.getBlockNumber();
             // FIXED: Smart selection based on scanFromGenesis flag
-            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 50000); // 50k recent blocks for smart scanning
+            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 200000); // 200k recent blocks for smart scanning (increased for better coverage)
             
             if (scanFromGenesis) {
                 debugLog(`🔍 DEBUG: findContractsByRecentTransfers - comprehensive genesis scan from block 0 to ${currentBlock}`);
@@ -706,7 +960,7 @@ export class NFTScanner {
             // Smart fallback approach based on flag
             const currentBlock = await this.provider.getBlockNumber();
             // FIXED: Smart selection based on scanFromGenesis flag
-            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 100000); // 100k blocks for fallback
+            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 300000); // 300k blocks for fallback (increased coverage)
             
             if (scanFromGenesis) {
                 debugLog(`🔍 DEBUG: findContractsByRecentTransfersFallback - comprehensive genesis scan from block 0 to ${currentBlock}`);
@@ -1159,7 +1413,7 @@ export class NFTScanner {
             // COMPREHENSIVE approach: Scan from the beginning of blockchain for complete coverage
             try {
                 const currentBlock = await this.provider.getBlockNumber();
-                const comprehensiveStartBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 100000); // Respect the flag
+                const comprehensiveStartBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 250000); // Increased to 250k blocks for better coverage
                 
                 if (scanFromGenesis) {
                     this.updateStatus(`Comprehensive ERC721 scan: blocks 0-${currentBlock} for complete coverage...`);
