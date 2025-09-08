@@ -440,6 +440,52 @@ function ProfilePage() {
         return uri;
     };
 
+    // Optimized image URL resolution with fast timeouts and minimal gateway attempts
+    const resolveImageUrl = async (imageUri, timeoutMs = 3000) => {
+        if (!imageUri) return null;
+        
+        // Direct HTTP/HTTPS URLs - return as-is
+        if (imageUri.startsWith('http://') || imageUri.startsWith('https://')) {
+            return imageUri;
+        }
+        
+        // Data URIs - validate and return
+        if (imageUri.startsWith('data:')) {
+            return isSafeSvgUri(imageUri) ? imageUri : null;
+        }
+        
+        // IPFS URIs - try top 2 gateways only for speed
+        if (imageUri.startsWith('ipfs://')) {
+            const hash = imageUri.replace('ipfs://', '');
+            const topGateways = IPFS_GATEWAYS.slice(0, 2); // Only try top 2 for speed
+            
+            for (const gateway of topGateways) {
+                try {
+                    const url = `${gateway}${hash}`;
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+                    
+                    const response = await fetch(url, { 
+                        method: 'HEAD',
+                        signal: controller.signal 
+                    });
+                    
+                    clearTimeout(timeoutId);
+                    
+                    if (response.ok) {
+                        return url;
+                    }
+                } catch (error) {
+                    // Continue to next gateway
+                    continue;
+                }
+            }
+        }
+        
+        // If all else fails, return the original URI
+        return imageUri;
+    };
+
     // Generate a custom LP-style placeholder SVG for NFTs
     const generateFallbackImage = (contractAddress, tokenId) => {
         try {
@@ -706,7 +752,8 @@ function ProfilePage() {
         setIsLoading(true);
 
         // Create abort controller for this scan
-        abortController.current = new AbortController();
+        const currentAbortController = new AbortController();
+        abortController.current = currentAbortController;
 
         try {
             // Track if we have an existing cached profile
@@ -717,7 +764,7 @@ function ProfilePage() {
                 setStatus("⚡ Loading collection from cache...");
                 try {
                     const cachedProfile = await getCachedProfile(wallet);
-                    if (cachedProfile && !abortController.current.signal.aborted) {
+                    if (cachedProfile && !currentAbortController.signal.aborted) {
                         // Profile exists, regardless of NFT count
                         hasExistingProfile = true;
                         
@@ -765,13 +812,13 @@ function ProfilePage() {
                                 return !meta?.hasMetadata || !meta?.hasImage;
                             });
                             
-                            if (nftsNeedingMetadata.length > 0 && !abortController.current.signal.aborted) {
+                            if (nftsNeedingMetadata.length > 0 && !currentAbortController.signal.aborted) {
                                 // Start background metadata loading
                                 setTimeout(() => {
-                                    if (!abortController.current.signal.aborted) {
+                                    if (!currentAbortController.signal.aborted) {
                                         setStatus(`🔄 Enhancing metadata for ${nftsNeedingMetadata.length} NFTs...`);
                                         batchFetchMetadata(nftsNeedingMetadata).then(() => {
-                                            if (!abortController.current.signal.aborted) {
+                                            if (!currentAbortController.signal.aborted) {
                                                 setStatus(`✅ Collection ready - ${totalNfts} NFTs with enhanced metadata`);
                                                 setTimeout(() => setStatus(''), 3000);
                                             }
@@ -804,24 +851,24 @@ function ProfilePage() {
                                      (userNfts.length === 0 && forceRefresh) ||
                                      (!hasExistingProfile && userNfts.length === 0);
             
-            if (shouldTriggerSync && !abortController.current.signal.aborted) {
+            if (shouldTriggerSync && !currentAbortController.signal.aborted) {
                 try {
                     debugLog(`Triggering smart collection sync - triggerSync: ${triggerSync}, forceRefresh: ${forceRefresh}, hasExistingProfile: ${hasExistingProfile}`);
-                    await triggerCollectionSync();
+                    await triggerCollectionSync(currentAbortController);
                 } catch (syncError) {
                     console.warn('Collection sync failed, using cache only:', syncError);
-                    if (userNfts.length === 0 && !abortController.current.signal.aborted) {
+                    if (userNfts.length === 0 && !currentAbortController.signal.aborted) {
                         setStatus("❌ Sync unavailable and no cached data - try force refresh");
                     }
                 }
             }
 
         } catch (error) {
-            if (!abortController.current.signal.aborted) {
+            if (!currentAbortController.signal.aborted) {
                 setStatus(`Error loading NFTs: ${error.message}`);
             }
         } finally {
-            if (!abortController.current.signal.aborted) {
+            if (!currentAbortController.signal.aborted) {
                 setIsLoading(false);
             }
             resetScanningState();
@@ -829,7 +876,10 @@ function ProfilePage() {
     }, [wallet, provider, supabaseConnected, getCachedProfile]);
 
     // OPTIMIZED: Smart backend collection sync with NFT Scanner fallback
-    const triggerCollectionSync = async () => {
+    const triggerCollectionSync = async (currentAbortController = null) => {
+        // Use provided controller or create a new one if none provided
+        const abortSignal = currentAbortController?.signal || abortController.current?.signal;
+        
         try {
             setStatus("🔄 Starting smart collection sync...");
             
@@ -858,7 +908,7 @@ function ProfilePage() {
                             setStatus(`✅ Backend sync completed - found ${nftCount} NFTs`);
                             // Reload from cache after sync
                             setTimeout(() => {
-                                if (!abortController.current?.signal.aborted) {
+                                if (!abortSignal?.aborted) {
                                     findAllUserNfts(false, false, false);
                                 }
                             }, 1000);
@@ -887,7 +937,7 @@ function ProfilePage() {
             
             // Initialize NFT scanner with proper status updates
             const scanner = new NFTScanner(provider, wallet, (statusMsg) => {
-                if (!abortController.current?.signal.aborted) {
+                if (!abortSignal?.aborted) {
                     setStatus(statusMsg);
                 }
             });
@@ -900,7 +950,7 @@ function ProfilePage() {
             debugLog(`Smart scanner found ${foundNfts.length} NFTs`);
             
             // Cache results to Supabase if available for future visits
-            if (supabaseConnected && cacheProfileData && foundNfts.length >= 0 && !abortController.current?.signal.aborted) {
+            if (supabaseConnected && cacheProfileData && foundNfts.length >= 0 && !abortSignal?.aborted) {
                 try {
                     setStatus("💾 Caching scan results for faster future loads...");
                     await cacheProfileData(wallet, {
@@ -916,7 +966,7 @@ function ProfilePage() {
             }
             
             // Update local state with found NFTs
-            if (!abortController.current?.signal.aborted) {
+            if (!abortSignal?.aborted) {
                 setUserNfts(foundNfts);
                 
                 if (foundNfts.length > 0) {
@@ -925,7 +975,7 @@ function ProfilePage() {
                     
                     // OPTIMIZED: Start metadata fetching in background
                     setTimeout(() => {
-                        if (!abortController.current?.signal.aborted) {
+                        if (!abortSignal?.aborted) {
                             batchFetchMetadata(foundNfts);
                             fetchContractInfoForNfts(foundNfts);
                         }
@@ -936,18 +986,18 @@ function ProfilePage() {
                 
                 // Clear status after delay
                 setTimeout(() => {
-                    if (!abortController.current?.signal.aborted) {
+                    if (!abortSignal?.aborted) {
                         setStatus('');
                     }
                 }, 3000);
             }
             
         } catch (error) {
-            if (!abortController.current?.signal.aborted) {
+            if (!abortSignal?.aborted) {
                 criticalError('Collection sync failed completely:', error);
                 setStatus(`❌ Sync failed: ${error.message}`);
                 setTimeout(() => {
-                    if (!abortController.current?.signal.aborted) {
+                    if (!abortSignal?.aborted) {
                         setStatus('');
                     }
                 }, 5000);
