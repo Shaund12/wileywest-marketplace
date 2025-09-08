@@ -376,6 +376,82 @@ export const batchLoadMetadata = async (nfts, provider, batchSize = 15) => {
 };
 
 /**
+ * Ultra-fast image URL resolution optimized for Vitruveo blockchain
+ * @param {string} imageUrl - Image URL to resolve
+ * @param {number} retryCount - Number of retries attempted (for gateway rotation)
+ * @returns {Promise<string>} Resolved image URL or fallback
+ */
+export const resolveImageUrl = async (imageUrl, retryCount = 0) => {
+    if (!imageUrl || typeof imageUrl !== 'string') {
+        return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+    }
+
+    // If it's already an HTTP URL, test if it works with fast timeout
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+        try {
+            const response = await fetch(imageUrl, { 
+                method: 'HEAD',
+                signal: AbortSignal.timeout(3000) // Fast timeout for better performance
+            });
+            if (response.ok) {
+                return imageUrl;
+            }
+        } catch {
+            // Continue to IPFS resolution if HTTP fails
+        }
+    }
+
+    // Handle IPFS URLs with minimal gateway attempts for speed
+    if (imageUrl.startsWith('ipfs://') || imageUrl.includes('/ipfs/')) {
+        // Use only top 2 fastest gateways for performance (same as fastResolveIPFS)
+        const fastGateways = [
+            'https://ipfs.io/ipfs/',
+            'https://dweb.link/ipfs/'
+        ];
+        
+        const maxRetries = Math.min(retryCount + 1, fastGateways.length);
+
+        for (let i = 0; i < maxRetries; i++) {
+            try {
+                let hash = imageUrl;
+                if (imageUrl.startsWith('ipfs://')) {
+                    hash = imageUrl.replace('ipfs://', '');
+                } else if (imageUrl.includes('/ipfs/')) {
+                    hash = imageUrl.split('/ipfs/')[1];
+                }
+
+                const gateway = fastGateways[i];
+                const resolvedUrl = `${gateway}${hash}`;
+
+                // Test if the URL works with fast timeout
+                const response = await fetch(resolvedUrl, { 
+                    method: 'HEAD',
+                    signal: AbortSignal.timeout(3000) // Fast timeout
+                });
+
+                if (response.ok) {
+                    debugLog(`✅ Image resolved via ${gateway.split('/')[2]}`);
+                    return resolvedUrl;
+                }
+            } catch (error) {
+                debugWarn(`Gateway ${i + 1} failed for image: ${error.message}`);
+                continue;
+            }
+        }
+    }
+
+    // Handle Arweave URLs
+    if (imageUrl.startsWith('ar://')) {
+        const hash = imageUrl.replace('ar://', '');
+        return `https://arweave.net/${hash}`;
+    }
+
+    // If all else fails, return placeholder
+    debugWarn(`Could not resolve image URL: ${imageUrl}, using placeholder`);
+    return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+};
+
+/**
  * Cleanup old cache entries to prevent memory leaks
  */
 export const cleanupMetadataCache = () => {

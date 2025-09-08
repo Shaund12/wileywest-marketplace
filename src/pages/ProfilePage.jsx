@@ -239,10 +239,13 @@ function ProfilePage() {
     // OPTIMIZED: Load user's NFT collection when collection tab is selected
     useEffect(() => {
         if (activeTab === 'collection' && wallet && provider && !isLoading) {
-            // Load collection data immediately when tab is selected
-            findAllUserNfts(false, false, false); // Load from cache first
+            // Use a timeout to prevent immediate re-triggering
+            const timer = setTimeout(() => {
+                findAllUserNfts(false, false, false); // Load from cache first
+            }, 0);
+            return () => clearTimeout(timer);
         }
-    }, [activeTab, wallet, provider]); // Removed isLoading to prevent loops
+    }, [activeTab, wallet, provider]); // Keep simple dependencies only
 
     // OPTIMIZED: Build activity timeline from multiple sources with performance optimization
     const activities = useMemo(() => {
@@ -686,7 +689,7 @@ function ProfilePage() {
         setIsLoading(false);
     };
     
-    const findAllUserNfts = async (forceRefresh = false, allowBackgroundUpdate = false, triggerSync = false) => {
+    const findAllUserNfts = useCallback(async (forceRefresh = false, allowBackgroundUpdate = false, triggerSync = false) => {
         if (!wallet || !provider) return;
 
         // Prevent multiple simultaneous scans
@@ -823,7 +826,7 @@ function ProfilePage() {
             }
             resetScanningState();
         }
-    };
+    }, [wallet, provider, supabaseConnected, getCachedProfile]);
 
     // OPTIMIZED: Smart backend collection sync with NFT Scanner fallback
     const triggerCollectionSync = async () => {
