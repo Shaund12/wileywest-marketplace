@@ -135,18 +135,18 @@ const fetchMetadataFromContract = async (contractAddress, tokenId, provider) => 
     try {
         const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
         
-        // Ultra-fast token URI fetch with aggressive timeout
+        // Optimized token URI fetch with Vitruveo-appropriate timeout
         let tokenURI;
         try {
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('tokenURI timeout')), 3000)); // Super fast timeout
+                setTimeout(() => reject(new Error('tokenURI timeout')), 8000)); // Increased timeout for Vitruveo
             const uriPromise = contract.tokenURI(tokenId);
             tokenURI = await Promise.race([uriPromise, timeoutPromise]);
         } catch {
-            // Quick fallback to ERC1155
+            // Fallback to ERC1155
             try {
                 const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('uri timeout')), 3000));
+                    setTimeout(() => reject(new Error('uri timeout')), 8000));
                 const uriPromise = contract.uri(tokenId);
                 tokenURI = await Promise.race([uriPromise, timeoutPromise]);
             } catch {
@@ -182,7 +182,7 @@ const fastFetchMetadata = async (tokenURI) => {
         const response = await fetch(tokenURI, {
             method: 'GET',
             headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(4000) // Super fast timeout
+            signal: AbortSignal.timeout(10000) // Increased timeout for Vitruveo blockchain
         });
         
         if (!response.ok) {
@@ -198,18 +198,20 @@ const fastFetchMetadata = async (tokenURI) => {
             ? tokenURI.replace('ipfs://', '') 
             : tokenURI.split('/ipfs/')[1];
 
-        // Only try top 2 fastest gateways for performance
-        const fastGateways = [
+        // Use more reliable IPFS gateways for better success rate
+        const reliableGateways = [
             'https://ipfs.io/ipfs/',
-            'https://dweb.link/ipfs/'
+            'https://dweb.link/ipfs/',
+            'https://gateway.pinata.cloud/ipfs/',
+            'https://cloudflare-ipfs.com/ipfs/'
         ];
 
-        for (const gateway of fastGateways) {
+        for (const gateway of reliableGateways) {
             try {
                 const response = await fetch(`${gateway}${hash}`, {
                     method: 'GET',
                     headers: { 'Accept': 'application/json' },
-                    signal: AbortSignal.timeout(4000) // Fast timeout
+                    signal: AbortSignal.timeout(10000) // Increased timeout for better reliability
                 });
                 
                 if (response.ok) {
@@ -317,21 +319,21 @@ const createFallbackMetadata = (tokenId, errorMessage) => {
  * @param {number} batchSize - Number of NFTs to process in parallel (increased for speed)
  * @returns {Promise<Array>} Array of NFTs with loaded metadata
  */
-export const batchLoadMetadata = async (nfts, provider, batchSize = 15) => {
+export const batchLoadMetadata = async (nfts, provider, batchSize = 20) => {
     if (!nfts || nfts.length === 0) return [];
 
     const results = [];
     
-    // Process in larger batches for better performance
+    // Process in optimized batches for Vitruveo blockchain
     for (let i = 0; i < nfts.length; i += batchSize) {
         const batch = nfts.slice(i, i + batchSize);
         
-        // Process all NFTs in the batch in parallel with timeout protection
+        // Process all NFTs in the batch in parallel with increased timeout for Vitruveo
         const batchPromises = batch.map(async (nft) => {
             try {
-                // Set a timeout for each metadata load to prevent hanging
+                // Increased timeout for Vitruveo blockchain stability
                 const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Metadata load timeout')), 5000)
+                    setTimeout(() => reject(new Error('Metadata load timeout')), 12000) // Increased to 12s
                 );
                 
                 const metadataPromise = loadNFTMetadata(
@@ -366,9 +368,9 @@ export const batchLoadMetadata = async (nfts, provider, batchSize = 15) => {
             }
         });
         
-        // Small delay between batches to prevent overwhelming the network
+        // Longer delay between batches for Vitruveo blockchain stability
         if (i + batchSize < nfts.length) {
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 200)); // Increased delay
         }
     }
     

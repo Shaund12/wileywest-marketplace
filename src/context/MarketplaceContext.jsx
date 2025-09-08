@@ -30,6 +30,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         getCachedListings, 
         cacheSalesHistory,
         getCachedSalesHistory,
+        removeSoldListings,
         subscribeToListings,
         isConnected: supabaseConnected 
     } = useSupabase();
@@ -203,6 +204,18 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             debugLog(`💾 Smart caching ${salesHistory.length} sales (within safe limit)...`);
                             await cacheSalesHistory(salesHistory);
                             debugLog(`✅ Successfully cached sales history`);
+                            
+                            // Remove sold listings from marketplace and profiles
+                            if (removeSoldListings && salesHistory.length > 0) {
+                                try {
+                                    debugLog(`🧹 Removing ${salesHistory.length} sold listings from marketplace...`);
+                                    await removeSoldListings(salesHistory);
+                                    debugLog(`✅ Successfully removed sold listings`);
+                                } catch (removeError) {
+                                    debugWarn("❌ Failed to remove sold listings:", removeError);
+                                }
+                            }
+                            
                         } catch (cacheError) {
                             debugWarn("❌ Failed to cache sales history:", cacheError);
                         }

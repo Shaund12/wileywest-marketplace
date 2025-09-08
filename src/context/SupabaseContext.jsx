@@ -408,6 +408,139 @@ export function SupabaseProvider({ children }) {
         [supabase]
     );
 
+    // ========== SOLD LISTING CLEANUP ==========
+    const removeSoldListings = useCallback(
+        async (salesHistory) => {
+            if (!supabase || !Array.isArray(salesHistory) || salesHistory.length === 0) {
+                return;
+            }
+
+            try {
+                debugLog(`🧹 Removing ${salesHistory.length} sold listings from marketplace...`);
+
+                // Get listing IDs from sales
+                const soldListingIds = salesHistory.map(sale => sale.listingId).filter(Boolean);
+                
+                if (soldListingIds.length === 0) {
+                    debugLog('⚠️ No valid listing IDs found in sales history');
+                    return;
+                }
+
+                // Mark sold listings as inactive in Supabase
+                const { data, error } = await supabase
+                    .from('marketplace_listings')
+                    .update({ 
+                        active: false, 
+                        sale_status: 'sold',
+                        updated_at: new Date().toISOString() 
+                    })
+                    .in('listing_id', soldListingIds)
+                    .select();
+
+                if (error) {
+                    debugWarn('❌ Error removing sold listings:', error);
+                    updateCacheStats('errors');
+                } else {
+                    debugLog(`✅ Marked ${data?.length || 0} listings as sold in database`);
+                    
+                    // Update in-memory cache - remove sold listings
+                    soldListingIds.forEach(listingId => {
+                        const key = getCacheKey('listing', listingId);
+                        cache.current.delete(key);
+                    });
+                    
+                    // Invalidate 'all_listings' cache to force refresh
+                    cache.current.delete('all_listings');
+                    
+                    updateCacheStats('updates');
+                }
+
+                // Also update user profiles to remove sold NFTs
+                await updateUserProfilesAfterSales(salesHistory);
+
+            } catch (error) {
+                debugWarn('❌ Error in removeSoldListings:', error);
+                updateCacheStats('errors');
+            }
+        },
+        [supabase]
+    );
+
+    // Update user profiles after sales to remove sold NFTs
+    const updateUserProfilesAfterSales = useCallback(
+        async (salesHistory) => {
+            if (!supabase || !Array.isArray(salesHistory)) return;
+
+            try {
+                // Group sales by seller to batch profile updates
+                const sellerSales = {};
+                salesHistory.forEach(sale => {
+                    if (sale.seller) {
+                        const seller = sale.seller.toLowerCase();
+                        if (!sellerSales[seller]) {
+                            sellerSales[seller] = [];
+                        }
+                        sellerSales[seller].push(sale);
+                    }
+                });
+
+                // Update each seller's profile
+                for (const [seller, sales] of Object.entries(sellerSales)) {
+                    try {
+                        // Get current profile
+                        const { data: profileData, error: fetchError } = await supabase
+                            .from('user_profiles')
+                            .select('*')
+                            .eq('wallet_address', seller)
+                            .maybeSingle();
+
+                        if (fetchError) {
+                            debugWarn(`Error fetching profile for ${seller}:`, fetchError);
+                            continue;
+                        }
+
+                        if (!profileData) {
+                            debugLog(`No profile found for seller ${seller}`);
+                            continue;
+                        }
+
+                        // Remove sold NFTs from listings
+                        const soldListingIds = new Set(sales.map(sale => sale.listingId));
+                        const updatedListings = (profileData.listings || []).filter(
+                            listing => !soldListingIds.has(listing.id?.toString())
+                        );
+
+                        // Update profile with cleaned listings
+                        const { error: updateError } = await supabase
+                            .from('user_profiles')
+                            .update({
+                                listings: updatedListings,
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq('wallet_address', seller);
+
+                        if (updateError) {
+                            debugWarn(`Error updating profile for ${seller}:`, updateError);
+                        } else {
+                            debugLog(`✅ Updated profile for seller ${seller} - removed ${sales.length} sold items`);
+                            
+                            // Clear cached profile to force refresh
+                            const profileKey = getCacheKey('profile', seller);
+                            cache.current.delete(profileKey);
+                        }
+
+                    } catch (profileError) {
+                        debugWarn(`Error processing profile update for ${seller}:`, profileError);
+                    }
+                }
+
+            } catch (error) {
+                debugWarn('❌ Error updating user profiles after sales:', error);
+            }
+        },
+        [supabase]
+    );
+
     // ========== SALES CACHE ==========
     const cacheSalesHistory = useCallback(
         async (salesHistory) => {
@@ -1082,6 +1215,7 @@ export function SupabaseProvider({ children }) {
         getCachedProfile,
         cacheSalesHistory,
         getCachedSalesHistory,
+        removeSoldListings,
 
         // Auction ops
         cacheAuctions,

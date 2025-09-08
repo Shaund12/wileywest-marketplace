@@ -440,8 +440,8 @@ function ProfilePage() {
         return uri;
     };
 
-    // Optimized image URL resolution with fast timeouts and minimal gateway attempts
-    const resolveImageUrl = async (imageUri, timeoutMs = 3000) => {
+    // Optimized image URL resolution with Vitruveo-appropriate timeouts
+    const resolveImageUrl = async (imageUri, timeoutMs = 8000) => {
         if (!imageUri) return null;
         
         // Direct HTTP/HTTPS URLs - return as-is
@@ -454,12 +454,12 @@ function ProfilePage() {
             return isSafeSvgUri(imageUri) ? imageUri : null;
         }
         
-        // IPFS URIs - try top 2 gateways only for speed
+        // IPFS URIs - try more gateways for better reliability
         if (imageUri.startsWith('ipfs://')) {
             const hash = imageUri.replace('ipfs://', '');
-            const topGateways = IPFS_GATEWAYS.slice(0, 2); // Only try top 2 for speed
+            const reliableGateways = IPFS_GATEWAYS.slice(0, 4); // Try top 4 gateways for better success
             
-            for (const gateway of topGateways) {
+            for (const gateway of reliableGateways) {
                 try {
                     const url = `${gateway}${hash}`;
                     const controller = new AbortController();
@@ -598,8 +598,8 @@ function ProfilePage() {
         setStatus(`Fast loading metadata for ${nftsToFetch.length} NFTs...`);
 
         try {
-            // Use the optimized batch loader for maximum speed
-            const nftsWithMetadata = await batchLoadMetadata(nftsToFetch, provider, 20); // High concurrency
+            // Use the optimized batch loader for maximum speed on Vitruveo
+            const nftsWithMetadata = await batchLoadMetadata(nftsToFetch, provider, 15); // Optimized for Vitruveo
             
             // Update state with all loaded metadata at once
             const newMetadata = {};
@@ -716,6 +716,75 @@ function ProfilePage() {
         }
     };
 
+    // Verify NFT ownership to ensure user still owns the NFT
+    const verifyNFTOwnership = async (nft, userAddress) => {
+        if (!provider || !userAddress || !nft.contractAddress || !nft.tokenId) {
+            return false;
+        }
+
+        try {
+            let isOwner = false;
+            
+            if (nft.type === 'ERC1155') {
+                // For ERC1155, check balance
+                const contract = new ethers.Contract(nft.contractAddress, ERC1155_ABI, provider);
+                const balance = await contract.balanceOf(userAddress, nft.tokenId);
+                isOwner = balance > 0;
+            } else {
+                // For ERC721, check owner
+                const contract = new ethers.Contract(nft.contractAddress, ERC721_ABI, provider);
+                try {
+                    const owner = await contract.ownerOf(nft.tokenId);
+                    isOwner = owner.toLowerCase() === userAddress.toLowerCase();
+                } catch (ownerError) {
+                    // Token might not exist or might be ERC1155
+                    debugWarn(`Failed to get owner for ${nft.contractAddress}:${nft.tokenId}`, ownerError);
+                    isOwner = false;
+                }
+            }
+
+            return isOwner;
+        } catch (error) {
+            debugWarn(`Ownership verification failed for ${nft.contractAddress}:${nft.tokenId}`, error);
+            return false;
+        }
+    };
+
+    // Filter out NFTs that are no longer owned by the user
+    const filterOwnedNFTs = async (nfts, userAddress) => {
+        if (!nfts || nfts.length === 0 || !userAddress) {
+            return [];
+        }
+
+        debugLog(`🔍 Verifying ownership of ${nfts.length} NFTs...`);
+        
+        // Verify ownership in batches for better performance
+        const batchSize = 10;
+        const ownedNFTs = [];
+        
+        for (let i = 0; i < nfts.length; i += batchSize) {
+            const batch = nfts.slice(i, i + batchSize);
+            const verificationPromises = batch.map(async (nft) => {
+                const isOwned = await verifyNFTOwnership(nft, userAddress);
+                return isOwned ? nft : null;
+            });
+            
+            const batchResults = await Promise.all(verificationPromises);
+            const ownedInBatch = batchResults.filter(nft => nft !== null);
+            ownedNFTs.push(...ownedInBatch);
+            
+            // Progress update
+            setStatus(`Verifying ownership ${Math.min(i + batchSize, nfts.length)}/${nfts.length}...`);
+        }
+
+        const removedCount = nfts.length - ownedNFTs.length;
+        if (removedCount > 0) {
+            debugLog(`🧹 Removed ${removedCount} NFTs that are no longer owned by user`);
+        }
+
+        return ownedNFTs;
+    };
+
     // Load user NFTs with OPTIMIZED cache-first approach and smart scanning
     const scanningInProgress = useRef(false);
     const abortController = useRef(null);
@@ -769,13 +838,22 @@ function ProfilePage() {
                         hasExistingProfile = true;
                         
                         if (cachedProfile.nfts && cachedProfile.nfts.length > 0) {
-                            setUserNfts(cachedProfile.nfts);
+                            // Verify ownership of cached NFTs to ensure they weren't sold
+                            setStatus(`🔍 Verifying ownership of ${cachedProfile.nfts.length} cached NFTs...`);
+                            const ownedCachedNfts = await filterOwnedNFTs(cachedProfile.nfts, wallet);
                             
-                            // OPTIMIZED: Build metadata from cached NFTs efficiently
+                            const removedCount = cachedProfile.nfts.length - ownedCachedNfts.length;
+                            if (removedCount > 0) {
+                                debugLog(`🧹 Removed ${removedCount} sold NFTs from cached profile`);
+                            }
+                            
+                            setUserNfts(ownedCachedNfts);
+                            
+                            // OPTIMIZED: Build metadata from owned cached NFTs efficiently
                             const metadata = {};
                             let metadataLoaded = 0;
                             
-                            cachedProfile.nfts.forEach(nft => {
+                            ownedCachedNfts.forEach(nft => {
                                 const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
                                 
                                 // Create metadata entry efficiently
@@ -799,11 +877,11 @@ function ProfilePage() {
                             
                             setNftMetadata(metadata);
                             
-                            const totalNfts = cachedProfile.nfts.length;
+                            const totalNfts = ownedCachedNfts.length;
                             const successRate = totalNfts > 0 ? Math.round((metadataLoaded / totalNfts) * 100) : 0;
                             
-                            setStatus(`✅ Loaded ${totalNfts} NFTs from cache (${successRate}% with metadata)`);
-                            await fetchContractInfoForNfts(cachedProfile.nfts);
+                            setStatus(`✅ Loaded ${totalNfts} owned NFTs from cache${removedCount > 0 ? ` (${removedCount} removed)` : ''} (${successRate}% with metadata)`);
+                            await fetchContractInfoForNfts(ownedCachedNfts);
                             
                             // OPTIMIZED: Start metadata fetching in background for missing metadata
                             const nftsNeedingMetadata = cachedProfile.nfts.filter(nft => {
@@ -965,22 +1043,32 @@ function ProfilePage() {
                 }
             }
             
-            // Update local state with found NFTs
+            // Update local state with found NFTs - verify ownership first
             if (!abortSignal?.aborted) {
-                setUserNfts(foundNfts);
-                
                 if (foundNfts.length > 0) {
+                    // Verify ownership of all NFTs to ensure they weren't sold
+                    setStatus(`🔍 Verifying ownership of ${foundNfts.length} NFTs...`);
+                    const ownedNfts = await filterOwnedNFTs(foundNfts, wallet);
+                    
+                    const removedCount = foundNfts.length - ownedNfts.length;
+                    if (removedCount > 0) {
+                        debugLog(`🧹 Filtered out ${removedCount} NFTs that are no longer owned`);
+                    }
+                    
+                    setUserNfts(ownedNfts);
+                    
                     const scanType = useComprehensiveScan ? 'comprehensive' : 'smart';
-                    setStatus(`✅ ${scanType} blockchain scan complete - found ${foundNfts.length} NFTs`);
+                    setStatus(`✅ ${scanType} scan complete - ${ownedNfts.length} owned NFTs${removedCount > 0 ? ` (${removedCount} removed)` : ''}`);
                     
                     // OPTIMIZED: Start metadata fetching in background
                     setTimeout(() => {
                         if (!abortSignal?.aborted) {
-                            batchFetchMetadata(foundNfts);
-                            fetchContractInfoForNfts(foundNfts);
+                            batchFetchMetadata(ownedNfts);
+                            fetchContractInfoForNfts(ownedNfts);
                         }
                     }, 100);
                 } else {
+                    setUserNfts(foundNfts);
                     setStatus(`✅ Smart scan complete - no NFTs found but profile created`);
                 }
                 
