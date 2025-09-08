@@ -10,6 +10,7 @@ import CacheStats from '../components/CacheStats';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { NFTScanner } from '../utils/nftScanner';
+import { loadNFTMetadata, batchLoadMetadata } from '../utils/metadataLoader';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -492,7 +493,7 @@ function ProfilePage() {
         return true; // Not an SVG, should be safe
     };
 
-    // Fetch NFT metadata with improved error handling and SVG safety checks - OPTIMIZED
+    // Ultra-fast NFT metadata loading optimized for custom blockchain
     const fetchNftMetadata = async (contractAddress, tokenId, tokenURI) => {
         const key = `${contractAddress.toLowerCase()}-${tokenId}`;
 
@@ -508,238 +509,67 @@ function ProfilePage() {
         }));
 
         try {
-            if (tokenURI) {
-                let resolvedUri = tokenURI;
-                resolvedUri = resolvedUri.replace(/{id}/g, tokenId)
-                    .replace(/{tokenId}/g, tokenId)
-                    .replace(/\{id\}/g, tokenId);
+            // Use the optimized metadata loader
+            const metadata = await loadNFTMetadata(contractAddress, tokenId, provider, 
+                tokenURI ? { tokenURI } : null);
 
-                if (resolvedUri.startsWith('ipfs://')) {
-                    resolvedUri = `${IPFS_GATEWAYS[0]}${resolvedUri.replace('ipfs://', '')}`;
-                }
+            setNftMetadata(prev => ({
+                ...prev,
+                [key]: metadata
+            }));
 
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 8000); // OPTIMIZED: Reduced timeout from 15s to 8s
-
-                try {
-                    const response = await fetch(resolvedUri, {
-                        signal: controller.signal,
-                        headers: {
-                            'Accept': 'application/json'
-                        }
-                    });
-                    clearTimeout(timeoutId);
-
-                    if (response.ok) {
-                        // Check content type for better error handling
-                        const contentType = response.headers.get('content-type');
-                        if (contentType && !contentType.includes('application/json') && !contentType.includes('text/')) {
-                            debugWarn(`Unexpected content type for ${tokenId}: ${contentType}`);
-                        }
-                        
-                        const text = await response.text();
-                        let metadata;
-                        
-                        // Handle data URIs that contain JSON
-                        if (resolvedUri.startsWith('data:application/json,')) {
-                            try {
-                                const jsonData = decodeURIComponent(resolvedUri.split(',')[1]);
-                                metadata = JSON.parse(jsonData);
-                            } catch (dataUriError) {
-                                debugWarn(`Failed to parse data URI JSON for ${tokenId}:`, dataUriError);
-                                throw new Error('Invalid data URI JSON');
-                            }
-                        } else {
-                            // Parse regular JSON response
-                            try {
-                                metadata = JSON.parse(text);
-                            } catch (jsonError) {
-                                debugWarn(`Failed to parse JSON for ${tokenId} from ${resolvedUri}:`, jsonError);
-                                debugWarn(`Response text (first 200 chars):`, text.substring(0, 200));
-                                throw new Error('Invalid JSON response');
-                            }
-                        }
-
-                        let imageUrl = null;
-
-                        if (metadata.image) {
-                            imageUrl = metadata.image;
-                            if (imageUrl.startsWith('ipfs://')) {
-                                // Use the first reliable IPFS gateway
-                                imageUrl = `${IPFS_GATEWAYS[0]}${imageUrl.replace('ipfs://', '')}`;
-                            }
-                            
-                            // Validate SVG safety
-                            if (!isSafeSvgUri(imageUrl)) {
-                                debugWarn(`Potentially unsafe SVG URI detected for ${tokenId}, using fallback`);
-                                imageUrl = generateFallbackImage(contractAddress, tokenId);
-                            }
-                        } else if (metadata.image_url) {
-                            imageUrl = metadata.image_url;
-                            if (!isSafeSvgUri(imageUrl)) {
-                                imageUrl = generateFallbackImage(contractAddress, tokenId);
-                            }
-                        } else if (metadata.imageUrl) {
-                            imageUrl = metadata.imageUrl;
-                            if (!isSafeSvgUri(imageUrl)) {
-                                imageUrl = generateFallbackImage(contractAddress, tokenId);
-                            }
-                        }
-
-                        const attributes = metadata.attributes || metadata.traits || [];
-
-                        setNftMetadata(prev => ({
-                            ...prev,
-                            [key]: {
-                                ...metadata,
-                                imageUrl,
-                                attributes,
-                                loaded: true,
-                                loading: false,
-                                error: null
-                            }
-                        }));
-                        return;
-                    }
-                } catch (fetchError) {
-                    clearTimeout(timeoutId);
-
-                    // OPTIMIZED: Only try 2 IPFS gateways instead of all of them for speed
-                    if (tokenURI.startsWith('ipfs://')) {
-                        const gatewaysToTry = IPFS_GATEWAYS.slice(1, 3); // Try 2 alternative gateways
-                        
-                        for (const gateway of gatewaysToTry) {
-                            try {
-                                const altUri = `${gateway}${tokenURI.replace('ipfs://', '')}`;
-                                const gatewayController = new AbortController();
-                                let gatewayTimeout = setTimeout(() => gatewayController.abort(), 6000); // OPTIMIZED: Reduced from 15s to 6s
-                                
-                                const altResponse = await fetch(altUri, { 
-                                    signal: gatewayController.signal,
-                                    headers: { 'Accept': 'application/json' }
-                                });
-                                clearTimeout(gatewayTimeout);
-                                gatewayTimeout = null;
-                                if (altResponse.ok) {
-                                    const text = await altResponse.text();
-                                    let metadata;
-                                    
-                                    try {
-                                        metadata = JSON.parse(text);
-                                    } catch (jsonError) {
-                                        debugWarn(`Failed to parse JSON from gateway ${gateway} for ${tokenId}:`, jsonError);
-                                        continue; // Try next gateway
-                                    }
-
-                                    let imageUrl = null;
-                                    if (metadata.image) {
-                                        imageUrl = metadata.image;
-                                        if (imageUrl.startsWith('ipfs://')) {
-                                            imageUrl = `${gateway}${imageUrl.replace('ipfs://', '')}`;
-                                        }
-                                    } else if (metadata.image_url) {
-                                        imageUrl = metadata.image_url;
-                                    }
-
-                                    const attributes = metadata.attributes || metadata.traits || [];
-
-                                    setNftMetadata(prev => ({
-                                        ...prev,
-                                        [key]: {
-                                            ...metadata,
-                                            imageUrl,
-                                            attributes,
-                                            loaded: true,
-                                            loading: false,
-                                            error: null
-                                        }
-                                    }));
-                                    return;
-                                }
-                            } catch (gatewayError) { 
-                                // Clear timeout on error
-                                if (gatewayTimeout) clearTimeout(gatewayTimeout);
-                                debugWarn(`Gateway ${gateway} failed for ${tokenId}:`, gatewayError.message);
-                                /* continue to next gateway */ 
-                            }
-                        }
-                    }
-                }
-            }
-
+        } catch (error) {
+            debugWarn(`Failed to load metadata for ${contractAddress}:${tokenId}`, error);
+            
             const fallbackImg = generateFallbackImage(contractAddress, tokenId);
-
             setNftMetadata(prev => ({
                 ...prev,
                 [key]: {
                     name: `NFT #${tokenId}`,
                     description: 'Metadata unavailable',
+                    imageUrl: fallbackImg,
+                    attributes: [],
                     loaded: true,
                     loading: false,
-                    error: 'Could not fetch metadata',
-                    imageUrl: fallbackImg,
-                    attributes: []
-                }
-            }));
-
-        } catch (error) {
-            const fallbackImg = generateFallbackImage(contractAddress, tokenId);
-
-            setNftMetadata(prev => ({
-                ...prev,
-                [key]: {
-                    name: `NFT #${tokenId}`,
-                    description: 'Error loading metadata',
-                    loaded: true,
-                    loading: false,
-                    error: error.message || 'Error loading metadata',
-                    imageUrl: fallbackImg,
-                    attributes: []
+                    error: error.message
                 }
             }));
         }
     };
 
-    // Optimized batch fetching function with maximum parallelism - MUCH FASTER
+    // Ultra-fast batch metadata loading using optimized loader
     const batchFetchMetadata = async (nfts) => {
         const nftsToFetch = nfts.filter(nft => {
             const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
-            return !nftMetadata[key]?.loaded && (nft.tokenURI || nft.metadata?.tokenURI);
+            return !nftMetadata[key]?.loaded;
         });
 
         if (nftsToFetch.length === 0) return;
 
-        setStatus(`Fetching metadata for ${nftsToFetch.length} NFTs...`);
+        setStatus(`Fast loading metadata for ${nftsToFetch.length} NFTs...`);
 
-        // OPTIMIZED: Process all metadata in parallel with higher concurrency for speed
-        const concurrencyLimit = 25; // Increased from 15 to 25 for faster loading
-        const chunks = [];
-
-        for (let i = 0; i < nftsToFetch.length; i += concurrencyLimit) {
-            chunks.push(nftsToFetch.slice(i, i + concurrencyLimit));
-        }
-
-        for (let i = 0; i < chunks.length; i++) {
-            const chunk = chunks[i];
-            setStatus(`Fetching metadata chunk ${i + 1}/${chunks.length} (${chunk.length} NFTs)...`);
-
-            // OPTIMIZED: Process entire chunk in parallel for maximum speed
-            await Promise.allSettled( // Use allSettled to prevent one failure from stopping all
-                chunk.map(nft => {
-                    const tokenURI = nft.tokenURI || nft.metadata?.tokenURI;
-                    return fetchNftMetadata(nft.contractAddress, nft.tokenId, tokenURI)
-                        .catch(err => criticalError(`Error fetching metadata for ${nft.tokenId}:`, err));
-                })
-            );
+        try {
+            // Use the optimized batch loader for maximum speed
+            const nftsWithMetadata = await batchLoadMetadata(nftsToFetch, provider, 20); // High concurrency
             
-            // OPTIMIZED: Reduced delay between chunks for faster overall loading
-            if (i + 1 < chunks.length) {
-                await new Promise(r => setTimeout(r, 100)); // Reduced from 200ms to 100ms
-            }
-        }
+            // Update state with all loaded metadata at once
+            const newMetadata = {};
+            nftsWithMetadata.forEach(nft => {
+                const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                newMetadata[key] = nft.metadata;
+            });
+            
+            setNftMetadata(prev => ({
+                ...prev,
+                ...newMetadata
+            }));
 
-        setStatus(`Finished loading metadata for ${nftsToFetch.length} NFTs`);
-    }
+            setStatus(`Loaded metadata for ${nftsWithMetadata.length} NFTs`);
+        } catch (error) {
+            debugWarn('Batch metadata loading failed:', error);
+            setStatus(`Error loading metadata: ${error.message}`);
+        }
+    };
 
     // Try to detect if contract is ERC721 or ERC1155
     const detectNftStandard = async (contractAddress) => {

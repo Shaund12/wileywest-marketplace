@@ -277,95 +277,60 @@ export class NFTScanner {
         return nfts;
     }
 
-    // NEW: Enhanced contract discovery through marketplace and popular NFT platform interactions
-    async discoverNFTContractsThroughMarketplaces(scanFromGenensis = false) {
+    // NEW: Enhanced contract discovery for Vitruveo blockchain
+    async discoverNFTContractsForVitruveoBlockchain(scanFromGenensis = false) {
         const discoveredContracts = new Set();
         
         try {
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = scanFromGenensis ? 0 : Math.max(0, currentBlock - 150000); // Look at last 150k blocks for marketplace activity
+            const fromBlock = scanFromGenensis ? 0 : Math.max(0, currentBlock - 200000); // 200k blocks for good coverage
             
-            this.updateStatus(`🔍 Discovering NFT contracts through marketplace interactions...`);
+            this.updateStatus(`🔍 Discovering NFT contracts on Vitruveo blockchain...`);
             
-            // Common marketplace contract addresses (OpenSea, LooksRare, etc.)
-            const MARKETPLACE_CONTRACTS = [
-                '0x00000000006c3852cbEf3e08E8dF289169EdE581', // OpenSea Seaport
-                '0x7Be8076f4EA4A4AD08075C2508e481d6C946D12b', // OpenSea Legacy
-                '0x495f947276749Ce646f68AC8c248420045cb7b5e', // OpenSea Shared Storefront
-                '0x59728544B08AB483533076417FbBB2fD0B17CE3a', // LooksRare
-                '0x74312363e45DCaBA76c59ec49a7Aa8A65a67EeD3', // X2Y2
-                '0x5B3256965e7C3cF26E11FCAf296DfC8807C01073', // Foundation
-                '0x8c9f364bf7a56Ed058fc63Ef81c6Cf09c833e656', // SuperRare Marketplace
-                process.env.VITE_MARKETPLACE_ADDRESS // Our own marketplace
+            // Focus on Vitruveo marketplace and local contracts
+            const VITRUVEO_MARKETPLACE_CONTRACTS = [
+                process.env.VITE_MARKETPLACE_ADDRESS, // Our own marketplace
+                // Add other known Vitruveo marketplace contracts here as they're discovered
             ].filter(addr => addr && addr !== '0x0000000000000000000000000000000000000000');
 
-            // Look for OrderFulfilled, Sale, and similar events from marketplaces
-            const MARKETPLACE_EVENT_TOPICS = [
-                ethers.id('OrderFulfilled(bytes32,address,address,address,(uint8,address,uint256,uint256)[],(uint8,address,uint256,uint256,address)[])'), // Seaport
-                ethers.id('MatchEvent(address,address,address,uint256,uint256,bytes32)'), // OpenSea Legacy
-                ethers.id('Sale(address,uint256,address,uint256,address)'), // Generic Sale
-                ethers.id('TakerAsk(bytes32,uint256,address,address,address,address,uint256,uint256)'), // LooksRare
-                ethers.id('TakerBid(bytes32,uint256,address,address,address,address,uint256,uint256)'), // LooksRare
-                ethers.id('EvInventory(address,uint256,address,uint256)'), // X2Y2
-                ethers.id('Transfer(address,address,uint256)') // Generic Transfer events around marketplace addresses
-            ];
-
-            // Scan marketplace contracts for NFT-related events
-            for (const marketplaceAddr of MARKETPLACE_CONTRACTS) {
+            // Scan our own marketplace for NFT contract activity
+            for (const marketplaceAddr of VITRUVEO_MARKETPLACE_CONTRACTS) {
                 if (!marketplaceAddr) continue;
                 
                 try {
-                    // Look for events involving our wallet address in recent marketplace activity
-                    for (const eventTopic of MARKETPLACE_EVENT_TOPICS) {
-                        try {
-                            const filter = {
-                                address: marketplaceAddr,
-                                topics: [eventTopic],
-                                fromBlock: fromBlock,
-                                toBlock: 'latest'
-                            };
+                    // Look for Transfer events from/to our wallet around marketplace activity
+                    const transferTopic = ethers.id('Transfer(address,address,uint256)');
+                    const walletTopic = ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32);
+                    
+                    const filter = {
+                        topics: [transferTopic, null, walletTopic], // Transfers TO our wallet
+                        fromBlock: fromBlock,
+                        toBlock: 'latest'
+                    };
 
-                            const logs = await this.provider.getLogs(filter);
-                            
-                            // Parse logs to extract NFT contract addresses
-                            for (const log of logs) {
-                                // Check if our wallet address is mentioned in the event
-                                const walletInLog = log.topics.some(topic => 
-                                    topic.toLowerCase().includes(this.walletAddress.toLowerCase().slice(2))
-                                ) || log.data.toLowerCase().includes(this.walletAddress.toLowerCase().slice(2));
-
-                                if (walletInLog) {
-                                    // This event involved our wallet, check for NFT contract references
-                                    // Look for contract addresses in the data and topics
-                                    const dataStr = log.data + log.topics.join('');
-                                    const addressMatches = dataStr.match(/0x[a-fA-F0-9]{40}/g) || [];
-                                    
-                                    for (const addr of addressMatches) {
-                                        if (addr.toLowerCase() !== this.walletAddress.toLowerCase() && 
-                                            addr.toLowerCase() !== marketplaceAddr.toLowerCase() &&
-                                            !this.knownErc20s.has(addr.toLowerCase())) {
-                                            discoveredContracts.add(addr.toLowerCase());
-                                        }
-                                    }
-                                }
-                            }
-                            
-                        } catch (eventError) {
-                            // Skip problematic events - they may not exist on this marketplace
-                            if (!eventError.message.includes('execution reverted')) {
-                                debugLog(`Could not scan ${eventTopic} on ${marketplaceAddr}: ${eventError.message}`);
-                            }
+                    const logs = await this.provider.getLogs(filter);
+                    
+                    // Parse logs to extract NFT contract addresses
+                    for (const log of logs) {
+                        // The contract address of the transfer is likely an NFT contract
+                        const contractAddr = log.address.toLowerCase();
+                        
+                        // Skip known ERC20s and the marketplace itself
+                        if (!this.knownErc20s.has(contractAddr) && 
+                            contractAddr !== marketplaceAddr.toLowerCase()) {
+                            discoveredContracts.add(contractAddr);
                         }
                     }
+                    
                 } catch (marketplaceError) {
-                    debugLog(`Error scanning marketplace ${marketplaceAddr}: ${marketplaceError.message}`);
+                    debugLog(`Error scanning Vitruveo marketplace ${marketplaceAddr}: ${marketplaceError.message}`);
                 }
                 
                 // Small delay between marketplace scans
                 await new Promise(r => setTimeout(r, 100));
             }
 
-            // Also look for ERC721/ERC1155 approval events (ApprovalForAll) involving marketplaces
+            // Also look for ERC721/ERC1155 approval events (ApprovalForAll) 
             try {
                 const approvalTopic = ethers.id('ApprovalForAll(address,address,bool)');
                 const walletTopic = ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32);
@@ -390,12 +355,12 @@ export class NFTScanner {
             }
             
             const contractsArray = Array.from(discoveredContracts);
-            this.updateStatus(`🎯 Discovered ${contractsArray.length} potential NFT contracts through marketplace activity`);
+            this.updateStatus(`🎯 Discovered ${contractsArray.length} potential NFT contracts on Vitruveo blockchain`);
             
             return contractsArray;
             
         } catch (error) {
-            debugWarn(`Error in marketplace contract discovery: ${error.message}`);
+            debugWarn(`Error in Vitruveo contract discovery: ${error.message}`);
             return [];
         }
     }
@@ -574,16 +539,16 @@ export class NFTScanner {
             }
             contractsToScan.push(...recentContracts);
 
-            // NEW: Add marketplace-based contract discovery for enhanced coverage
-            let marketplaceContracts = [];
+            // NEW: Add Vitruveo blockchain contract discovery for enhanced coverage
+            let vitruveoContracts = [];
             try {
-                this.updateStatus("🎯 Discovering NFT contracts through marketplace interactions...");
-                marketplaceContracts = await this.discoverNFTContractsThroughMarketplaces(scanFromGenesis);
-                contractsToScan.push(...marketplaceContracts);
-                debugLog(`🎯 Added ${marketplaceContracts.length} contracts from marketplace discovery`);
-            } catch (marketplaceError) {
-                debugWarn("Marketplace contract discovery failed:", marketplaceError);
-                // Continue without marketplace discovery
+                this.updateStatus("🎯 Discovering NFT contracts on Vitruveo blockchain...");
+                vitruveoContracts = await this.discoverNFTContractsForVitruveoBlockchain(scanFromGenesis);
+                contractsToScan.push(...vitruveoContracts);
+                debugLog(`🎯 Added ${vitruveoContracts.length} contracts from Vitruveo discovery`);
+            } catch (vitruveoError) {
+                debugWarn("Vitruveo contract discovery failed:", vitruveoError);
+                // Continue without additional discovery
             }
             
             // Remove duplicates and invalid addresses

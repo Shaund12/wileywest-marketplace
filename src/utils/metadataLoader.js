@@ -12,7 +12,7 @@ const metadataLoadingCache = new Map();
 const metadataResultCache = new Map();
 
 /**
- * Enhanced metadata loader with comprehensive fallback strategies
+ * Ultra-fast metadata loader optimized for custom blockchain performance
  * @param {string} contractAddress - NFT contract address
  * @param {string} tokenId - Token ID
  * @param {Object} provider - Ethers provider
@@ -22,23 +22,20 @@ const metadataResultCache = new Map();
 export const loadNFTMetadata = async (contractAddress, tokenId, provider, existingMetadata = null) => {
     // Validate inputs
     if (!contractAddress || contractAddress === 'undefined' || contractAddress === 'null') {
-        debugWarn('Invalid contract address provided to loadNFTMetadata');
         return createFallbackMetadata(tokenId, 'Invalid contract address');
     }
 
     if (!tokenId && tokenId !== '0' && tokenId !== 0) {
-        debugWarn('Invalid token ID provided to loadNFTMetadata');
         return createFallbackMetadata(tokenId, 'Invalid token ID');
     }
 
     const cacheKey = `${contractAddress.toLowerCase()}-${tokenId}`;
     
-    // Check if we already have a result cached
+    // Check if we already have a result cached (extended cache time for better performance)
     if (metadataResultCache.has(cacheKey)) {
         const cached = metadataResultCache.get(cacheKey);
-        // Check if cache is still valid (30 minutes)
-        if (Date.now() - cached.timestamp < 30 * 60 * 1000) {
-            debugLog(`📦 Using cached metadata for ${contractAddress}:${tokenId}`);
+        // Extended cache time to 2 hours for better performance
+        if (Date.now() - cached.timestamp < 2 * 60 * 60 * 1000) {
             return cached.data;
         } else {
             metadataResultCache.delete(cacheKey);
@@ -47,18 +44,17 @@ export const loadNFTMetadata = async (contractAddress, tokenId, provider, existi
 
     // Check if we're already loading this metadata
     if (metadataLoadingCache.has(cacheKey)) {
-        debugLog(`⏳ Metadata loading in progress for ${contractAddress}:${tokenId}, waiting...`);
         return await metadataLoadingCache.get(cacheKey);
     }
 
-    // Start loading metadata
+    // Start loading metadata with optimized performance
     const loadingPromise = loadMetadataInternal(contractAddress, tokenId, provider, existingMetadata);
     metadataLoadingCache.set(cacheKey, loadingPromise);
 
     try {
         const result = await loadingPromise;
         
-        // Cache the result
+        // Cache the result for longer period
         metadataResultCache.set(cacheKey, {
             data: result,
             timestamp: Date.now()
@@ -66,13 +62,12 @@ export const loadNFTMetadata = async (contractAddress, tokenId, provider, existi
         
         return result;
     } catch (error) {
-        criticalError(`Failed to load metadata for ${contractAddress}:${tokenId}`, error);
         const fallback = createFallbackMetadata(tokenId, error.message);
         
-        // Cache the fallback briefly to prevent repeated failures
+        // Cache the fallback for shorter period to retry sooner
         metadataResultCache.set(cacheKey, {
             data: fallback,
-            timestamp: Date.now()
+            timestamp: Date.now() - (60 * 60 * 1000) // Cache for only 1 hour to retry sooner
         });
         
         return fallback;
@@ -82,65 +77,52 @@ export const loadNFTMetadata = async (contractAddress, tokenId, provider, existi
 };
 
 /**
- * Internal metadata loading logic with multiple strategies
+ * Ultra-fast internal metadata loading optimized for custom blockchain
  */
 const loadMetadataInternal = async (contractAddress, tokenId, provider, existingMetadata) => {
-    debugLog(`🔍 Loading metadata for ${contractAddress}:${tokenId}`);
-
     let metadata = null;
     let loadingStrategy = 'unknown';
 
     try {
-        // Strategy 1: Use existing metadata if provided and valid
-        if (existingMetadata && typeof existingMetadata === 'object') {
-            debugLog(`📋 Using provided metadata for ${contractAddress}:${tokenId}`);
+        // Strategy 1: Use existing metadata if provided and complete
+        if (existingMetadata?.name && existingMetadata?.image) {
             metadata = existingMetadata;
             loadingStrategy = 'provided';
         }
         
-        // Strategy 2: Try to fetch from contract if no existing metadata or metadata is incomplete
-        if (!metadata || !metadata.name || !metadata.image) {
+        // Strategy 2: Fast contract fetch with aggressive timeout (only if no existing metadata)
+        else if (!metadata) {
             try {
-                debugLog(`🔗 Fetching metadata from contract for ${contractAddress}:${tokenId}`);
                 metadata = await fetchMetadataFromContract(contractAddress, tokenId, provider);
                 loadingStrategy = 'contract';
-                debugLog(`✅ Successfully fetched metadata from contract`);
             } catch (contractError) {
-                debugWarn(`Contract metadata fetch failed: ${contractError.message}`);
-                
-                // If we have partial existing metadata, use it
-                if (existingMetadata && typeof existingMetadata === 'object') {
-                    metadata = existingMetadata;
-                    loadingStrategy = 'partial';
-                }
+                // Quick fallback to basic metadata
+                metadata = createBasicMetadata(contractAddress, tokenId);
+                loadingStrategy = 'fallback';
             }
         }
 
-        // Strategy 3: If still no metadata, create basic fallback
+        // Strategy 3: Final fallback if nothing else worked
         if (!metadata) {
-            debugLog(`📝 Creating fallback metadata for ${contractAddress}:${tokenId}`);
             metadata = createBasicMetadata(contractAddress, tokenId);
-            loadingStrategy = 'fallback';
+            loadingStrategy = 'emergency_fallback';
         }
 
-        // Normalize and enhance the metadata
-        const normalized = normalizeNFTMetadata(metadata, contractAddress, tokenId);
-        
-        // Add loading strategy info for debugging
+        // Fast normalize without extensive processing
+        const normalized = fastNormalizeMetadata(metadata, contractAddress, tokenId);
         normalized.loadingStrategy = loadingStrategy;
         normalized.loadedAt = Date.now();
 
-        debugLog(`✅ Metadata loaded successfully using ${loadingStrategy} strategy for ${contractAddress}:${tokenId}`);
         return normalized;
 
     } catch (error) {
-        criticalError(`Error in metadata loading for ${contractAddress}:${tokenId}:`, error);
-        throw error;
+        // Emergency fallback - don't throw errors for metadata loading
+        return createFallbackMetadata(tokenId, error.message);
     }
 };
 
 /**
- * Fetch metadata directly from NFT contract
+ * Ultra-fast metadata fetch from contract with aggressive timeouts
  */
 const fetchMetadataFromContract = async (contractAddress, tokenId, provider) => {
     const ERC721_ABI = [
@@ -153,16 +135,22 @@ const fetchMetadataFromContract = async (contractAddress, tokenId, provider) => 
     try {
         const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
         
-        // Try to get token URI
+        // Ultra-fast token URI fetch with aggressive timeout
         let tokenURI;
         try {
-            tokenURI = await contract.tokenURI(tokenId);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('tokenURI timeout')), 3000)); // Super fast timeout
+            const uriPromise = contract.tokenURI(tokenId);
+            tokenURI = await Promise.race([uriPromise, timeoutPromise]);
         } catch {
-            // Fallback to ERC1155 URI method
+            // Quick fallback to ERC1155
             try {
-                tokenURI = await contract.uri(tokenId);
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('uri timeout')), 3000));
+                const uriPromise = contract.uri(tokenId);
+                tokenURI = await Promise.race([uriPromise, timeoutPromise]);
             } catch {
-                throw new Error('No tokenURI or uri method available');
+                throw new Error('No URI method available');
             }
         }
 
@@ -170,41 +158,117 @@ const fetchMetadataFromContract = async (contractAddress, tokenId, provider) => 
             throw new Error('Empty tokenURI returned');
         }
 
-        debugLog(`🌐 Fetching metadata from URI: ${tokenURI}`);
-
-        // If it's a data URI, parse it directly
-        if (tokenURI.startsWith('data:')) {
-            const jsonString = tokenURI.split(',')[1];
-            const decodedData = atob(jsonString);
-            return JSON.parse(decodedData);
-        }
-
-        // If it's an HTTP/HTTPS URI, fetch directly
-        if (tokenURI.startsWith('http://') || tokenURI.startsWith('https://')) {
-            const response = await fetch(tokenURI, {
-                method: 'GET',
-                headers: { 'Accept': 'application/json' },
-                signal: AbortSignal.timeout(MARKETPLACE_CONFIG.METADATA_FETCH_TIMEOUT)
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            
-            return await response.json();
-        }
-
-        // If it's an IPFS URI, use our enhanced fetcher with fallbacks
-        if (tokenURI.startsWith('ipfs://') || tokenURI.includes('/ipfs/')) {
-            return await fetchMetadataWithFallback(tokenURI);
-        }
-
-        throw new Error(`Unsupported URI format: ${tokenURI}`);
+        // Fast metadata fetch with aggressive timeout
+        return await fastFetchMetadata(tokenURI);
 
     } catch (error) {
-        debugWarn(`Contract metadata fetch failed for ${contractAddress}:${tokenId}: ${error.message}`);
         throw error;
     }
+};
+
+/**
+ * Ultra-fast metadata fetch with minimal fallback attempts
+ */
+const fastFetchMetadata = async (tokenURI) => {
+    // Handle data URIs instantly
+    if (tokenURI.startsWith('data:')) {
+        const jsonString = tokenURI.split(',')[1];
+        const decodedData = atob(jsonString);
+        return JSON.parse(decodedData);
+    }
+
+    // For HTTP URLs, try direct fetch with short timeout
+    if (tokenURI.startsWith('http://') || tokenURI.startsWith('https://')) {
+        const response = await fetch(tokenURI, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout(4000) // Super fast timeout
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        return await response.json();
+    }
+
+    // For IPFS, try only the first 2 fastest gateways for speed
+    if (tokenURI.startsWith('ipfs://') || tokenURI.includes('/ipfs/')) {
+        const hash = tokenURI.startsWith('ipfs://') 
+            ? tokenURI.replace('ipfs://', '') 
+            : tokenURI.split('/ipfs/')[1];
+
+        // Only try top 2 fastest gateways for performance
+        const fastGateways = [
+            'https://ipfs.io/ipfs/',
+            'https://dweb.link/ipfs/'
+        ];
+
+        for (const gateway of fastGateways) {
+            try {
+                const response = await fetch(`${gateway}${hash}`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' },
+                    signal: AbortSignal.timeout(4000) // Fast timeout
+                });
+                
+                if (response.ok) {
+                    return await response.json();
+                }
+            } catch {
+                continue; // Try next gateway
+            }
+        }
+        
+        throw new Error('IPFS fetch failed');
+    }
+
+    throw new Error(`Unsupported URI format: ${tokenURI}`);
+};
+
+/**
+ * Ultra-fast metadata normalization without heavy processing
+ */
+const fastNormalizeMetadata = (metadata, contractAddress, tokenId) => {
+    // Quick validation and normalization
+    const normalized = {
+        name: metadata?.name || `NFT #${tokenId}`,
+        description: metadata?.description || '',
+        image: metadata?.image || metadata?.imageUrl || MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
+        imageUrl: metadata?.image || metadata?.imageUrl || MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
+        attributes: metadata?.attributes || metadata?.traits || [],
+        contractAddress: contractAddress,
+        tokenId: tokenId,
+        loaded: true,
+        loading: false,
+        error: null,
+        timestamp: Date.now()
+    };
+
+    // Quick IPFS resolution for images (only if needed)
+    if (normalized.image && (normalized.image.startsWith('ipfs://') || normalized.image.includes('/ipfs/'))) {
+        normalized.image = fastResolveIPFS(normalized.image);
+        normalized.imageUrl = normalized.image;
+    }
+
+    return normalized;
+};
+
+/**
+ * Ultra-fast IPFS resolution using only the fastest gateway
+ */
+const fastResolveIPFS = (ipfsUrl) => {
+    if (!ipfsUrl) return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+    
+    let hash = ipfsUrl;
+    if (ipfsUrl.startsWith('ipfs://')) {
+        hash = ipfsUrl.replace('ipfs://', '');
+    } else if (ipfsUrl.includes('/ipfs/')) {
+        hash = ipfsUrl.split('/ipfs/')[1];
+    }
+    
+    // Use only the fastest gateway for immediate display
+    return `https://ipfs.io/ipfs/${hash}`;
 };
 
 /**
@@ -215,9 +279,13 @@ const createBasicMetadata = (contractAddress, tokenId) => {
         name: `NFT #${tokenId}`,
         description: `Token #${tokenId} from contract ${contractAddress}`,
         image: MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
+        imageUrl: MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
         attributes: [],
         contractAddress: contractAddress,
-        tokenId: tokenId
+        tokenId: tokenId,
+        loaded: true,
+        loading: false,
+        error: null
     };
 };
 
@@ -243,74 +311,68 @@ const createFallbackMetadata = (tokenId, errorMessage) => {
 };
 
 /**
- * Enhanced image URL resolver with multiple fallback strategies
- * @param {string} imageUrl - Original image URL
- * @param {number} retryCount - Current retry attempt
- * @returns {Promise<string>} Working image URL or placeholder
+ * Ultra-fast parallel metadata loading for multiple NFTs
+ * @param {Array} nfts - Array of NFT objects to load metadata for
+ * @param {Object} provider - Ethers provider
+ * @param {number} batchSize - Number of NFTs to process in parallel (increased for speed)
+ * @returns {Promise<Array>} Array of NFTs with loaded metadata
  */
-export const resolveImageUrl = async (imageUrl, retryCount = 0) => {
-    if (!imageUrl || typeof imageUrl !== 'string') {
-        return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
-    }
+export const batchLoadMetadata = async (nfts, provider, batchSize = 15) => {
+    if (!nfts || nfts.length === 0) return [];
 
-    // If it's already an HTTP URL, test if it works
-    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-        try {
-            const response = await fetch(imageUrl, { 
-                method: 'HEAD',
-                signal: AbortSignal.timeout(5000)
-            });
-            if (response.ok) {
-                return imageUrl;
-            }
-        } catch {
-            // Continue to IPFS resolution if HTTP fails
-        }
-    }
-
-    // Handle IPFS URLs with gateway rotation
-    if (imageUrl.startsWith('ipfs://') || imageUrl.includes('/ipfs/')) {
-        const gateways = MARKETPLACE_CONFIG.IPFS_GATEWAYS;
-        const maxRetries = Math.min(retryCount + 1, gateways.length);
-
-        for (let i = 0; i < maxRetries; i++) {
+    const results = [];
+    
+    // Process in larger batches for better performance
+    for (let i = 0; i < nfts.length; i += batchSize) {
+        const batch = nfts.slice(i, i + batchSize);
+        
+        // Process all NFTs in the batch in parallel with timeout protection
+        const batchPromises = batch.map(async (nft) => {
             try {
-                let hash = imageUrl;
-                if (imageUrl.startsWith('ipfs://')) {
-                    hash = imageUrl.replace('ipfs://', '');
-                } else if (imageUrl.includes('/ipfs/')) {
-                    hash = imageUrl.split('/ipfs/')[1];
-                }
-
-                const gateway = gateways[i];
-                const resolvedUrl = `${gateway}${hash}`;
-
-                // Test if the URL works
-                const response = await fetch(resolvedUrl, { 
-                    method: 'HEAD',
-                    signal: AbortSignal.timeout(5000)
-                });
-
-                if (response.ok) {
-                    debugLog(`✅ Image resolved via ${gateway.split('/')[2]}`);
-                    return resolvedUrl;
-                }
+                // Set a timeout for each metadata load to prevent hanging
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Metadata load timeout')), 5000)
+                );
+                
+                const metadataPromise = loadNFTMetadata(
+                    nft.contractAddress, 
+                    nft.tokenId, 
+                    provider, 
+                    nft.metadata || null
+                );
+                
+                const metadata = await Promise.race([metadataPromise, timeoutPromise]);
+                
+                return {
+                    ...nft,
+                    metadata: metadata
+                };
             } catch (error) {
-                debugWarn(`Gateway ${i + 1} failed for image: ${error.message}`);
-                continue;
+                // Return NFT with fallback metadata instead of failing
+                return {
+                    ...nft,
+                    metadata: createFallbackMetadata(nft.tokenId, error.message)
+                };
             }
+        });
+        
+        // Wait for all in the batch to complete
+        const batchResults = await Promise.allSettled(batchPromises);
+        
+        // Add successful results
+        batchResults.forEach(result => {
+            if (result.status === 'fulfilled') {
+                results.push(result.value);
+            }
+        });
+        
+        // Small delay between batches to prevent overwhelming the network
+        if (i + batchSize < nfts.length) {
+            await new Promise(resolve => setTimeout(resolve, 100));
         }
     }
-
-    // Handle Arweave URLs
-    if (imageUrl.startsWith('ar://')) {
-        const hash = imageUrl.replace('ar://', '');
-        return `https://arweave.net/${hash}`;
-    }
-
-    // If all else fails, return placeholder
-    debugWarn(`Could not resolve image URL: ${imageUrl}, using placeholder`);
-    return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+    
+    return results;
 };
 
 /**
