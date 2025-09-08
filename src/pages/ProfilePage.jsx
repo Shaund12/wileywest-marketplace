@@ -7,10 +7,12 @@ import { ethers } from 'ethers';
 import ListingCard from '../components/ListingCard';
 import '../profile-page.css';
 import CacheStats from '../components/CacheStats';
+import EdgeCacheMonitor from '../components/EdgeCacheMonitor';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { NFTScanner } from '../utils/nftScanner';
 import { loadNFTMetadata, batchLoadMetadata } from '../utils/metadataLoader';
+import { getCachedMetadata, getProxyImageUrl, batchPrewarm } from '../utils/edgeCacheUtils';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -116,6 +118,7 @@ function ProfilePage() {
     const [groupByCollection, setGroupByCollection] = useState(true); // Default to grouped by collection
     const [currentView, setCurrentView] = useState('grid'); // 'grid' or 'list'
     const [selectedNft, setSelectedNft] = useState(null);
+    const [showCacheMonitor, setShowCacheMonitor] = useState(false); // Edge cache monitor visibility
     const [showNftModal, setShowNftModal] = useState(false);
     const [showStatsModal, setShowStatsModal] = useState(false);
     const [collectionStats, setCollectionStats] = useState({});
@@ -247,11 +250,11 @@ function ProfilePage() {
         }
     }, [activeTab, wallet, provider]); // Keep simple dependencies only
 
-    // AUTOMATIC METADATA LOADING: Trigger metadata loading when userNfts changes
+    // ENHANCED AUTOMATIC METADATA LOADING with edge cache: Trigger metadata loading when userNfts changes
     useEffect(() => {
         if (userNfts.length > 0 && !isLoading) {
             // Debounce metadata loading to prevent multiple rapid calls
-            const timer = setTimeout(() => {
+            const timer = setTimeout(async () => {
                 console.log('🚀 [AUTO METADATA] Checking if metadata loading needed for', userNfts.length, 'NFTs');
                 
                 // Check if any NFTs need metadata loading
@@ -272,7 +275,13 @@ function ProfilePage() {
                 
                 if (nftsNeedingMetadata.length > 0) {
                     console.log('⚡ [AUTO METADATA] Auto-loading metadata for', nftsNeedingMetadata.length, 'NFTs');
-                    batchFetchMetadata(nftsNeedingMetadata);
+                    
+                    // First, try batch pre-warming for instant cache population
+                    console.log('🔥 [AUTO METADATA] Pre-warming cache for instant loading...');
+                    await batchPrewarm(nftsNeedingMetadata);
+                    
+                    // Then load with cache-first approach
+                    batchFetchMetadataWithCache(nftsNeedingMetadata);
                 } else {
                     console.log('✅ [AUTO METADATA] All NFTs already have metadata loaded');
                 }
@@ -618,6 +627,102 @@ function ProfilePage() {
                     error: error.message
                 }
             }));
+        }
+    };
+
+    // Enhanced batch metadata loading with edge cache-first approach
+    const batchFetchMetadataWithCache = async (nfts) => {
+        console.log('🚀 [CACHE BATCH] Starting cache-first metadata loading for', nfts.length, 'NFTs');
+        
+        if (!nfts || nfts.length === 0) {
+            console.log('❌ [CACHE BATCH] No NFTs provided');
+            return;
+        }
+
+        setStatus(`Loading metadata using edge cache for ${nfts.length} NFTs...`);
+
+        // Process NFTs with edge cache first
+        const metadataPromises = nfts.map(async (nft, index) => {
+            const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+            
+            try {
+                console.log(`🔍 [CACHE BATCH] ${index + 1}/${nfts.length}: Loading ${key} via edge cache`);
+                
+                // Try edge cache first
+                const metadata = await getCachedMetadata(nft.contractAddress, nft.tokenId);
+                
+                if (metadata && metadata.name && metadata.name !== `NFT #${nft.tokenId}`) {
+                    console.log(`✅ [CACHE BATCH] Edge cache success for ${key} (source: ${metadata.source})`);
+                    
+                    // Process image URL through proxy
+                    if (metadata.image) {
+                        const proxyImageUrl = await getProxyImageUrl(metadata.image);
+                        metadata.imageUrl = proxyImageUrl;
+                        metadata.image = proxyImageUrl;
+                    }
+                    
+                    return { key, metadata };
+                } else {
+                    console.log(`⚠️ [CACHE BATCH] Edge cache returned basic metadata for ${key}, trying fallback`);
+                    
+                    // Fallback to legacy loader
+                    const fallbackMetadata = await loadNFTMetadata(
+                        nft.contractAddress, 
+                        nft.tokenId, 
+                        provider
+                    );
+                    
+                    return { key, metadata: fallbackMetadata };
+                }
+                
+            } catch (error) {
+                console.error(`❌ [CACHE BATCH] Failed to load metadata for ${key}:`, error);
+                
+                // Return fallback metadata to prevent crashes
+                return {
+                    key,
+                    metadata: {
+                        name: `NFT #${nft.tokenId}`,
+                        description: 'Metadata unavailable',
+                        image: 'https://via.placeholder.com/300x300/1a1a1a/fff?text=NFT',
+                        imageUrl: 'https://via.placeholder.com/300x300/1a1a1a/fff?text=NFT',
+                        error: error.message,
+                        loaded: true,
+                        loading: false
+                    }
+                };
+            }
+        });
+
+        try {
+            console.log('⏳ [CACHE BATCH] Waiting for all metadata requests to complete...');
+            const results = await Promise.all(metadataPromises);
+            
+            // Update state with all loaded metadata at once
+            const newMetadata = {};
+            let successCount = 0;
+            
+            results.forEach(({ key, metadata }) => {
+                if (metadata) {
+                    newMetadata[key] = metadata;
+                    if (metadata.loaded && !metadata.error) {
+                        successCount++;
+                    }
+                }
+            });
+            
+            console.log(`💾 [CACHE BATCH] Updating state with ${Object.keys(newMetadata).length} metadata entries`);
+            setNftMetadata(prev => ({
+                ...prev,
+                ...newMetadata
+            }));
+
+            setStatus(`Loaded metadata for ${successCount}/${nfts.length} NFTs using edge cache`);
+            console.log(`🎉 [CACHE BATCH] Successfully completed cache-first metadata loading: ${successCount}/${nfts.length} successful`);
+            
+        } catch (error) {
+            console.error('❌ [CACHE BATCH] Batch metadata loading failed:', error);
+            setStatus(`Error loading metadata: ${error.message}`);
         }
     };
 
@@ -1253,15 +1358,29 @@ function ProfilePage() {
         console.log('📋 [METADATA RETRY] NFT list prepared:', nftList);
 
         try {
-            console.log('⚡ [METADATA RETRY] Calling batchFetchMetadata...');
-            await batchFetchMetadata(nftList);
-            console.log('✅ [METADATA RETRY] batchFetchMetadata completed successfully');
-            setStatus(`✅ Metadata retry completed for ${nftsWithoutMetadata.length} NFTs`);
+            console.log('🔥 [METADATA RETRY] Pre-warming cache first...');
+            await batchPrewarm(nftList);
+            
+            console.log('⚡ [METADATA RETRY] Calling batchFetchMetadataWithCache...');
+            await batchFetchMetadataWithCache(nftList);
+            console.log('✅ [METADATA RETRY] Edge cache retry completed successfully');
+            setStatus(`✅ Metadata retry completed for ${nftsWithoutMetadata.length} NFTs using edge cache`);
             setTimeout(() => setStatus(''), 3000);
         } catch (error) {
-            console.error('❌ [METADATA RETRY] batchFetchMetadata failed:', error);
-            setStatus(`❌ Metadata retry failed: ${error.message}`);
-            setTimeout(() => setStatus(''), 3000);
+            console.error('❌ [METADATA RETRY] Edge cache retry failed, trying legacy method:', error);
+            
+            // Fallback to legacy method
+            try {
+                console.log('🔄 [METADATA RETRY] Falling back to legacy batchFetchMetadata...');
+                await batchFetchMetadata(nftList);
+                console.log('✅ [METADATA RETRY] Legacy fallback completed successfully');
+                setStatus(`✅ Metadata retry completed for ${nftsWithoutMetadata.length} NFTs (legacy method)`);
+                setTimeout(() => setStatus(''), 3000);
+            } catch (fallbackError) {
+                console.error('❌ [METADATA RETRY] Legacy fallback also failed:', fallbackError);
+                setStatus(`❌ Metadata retry failed: ${fallbackError.message}`);
+                setTimeout(() => setStatus(''), 3000);
+            }
         }
     };
 
@@ -1733,6 +1852,16 @@ function ProfilePage() {
                                         Retry Metadata
                                     </button>
                                     <button
+                                        className="tertiary-button action-button cache-monitor-button"
+                                        onClick={() => setShowCacheMonitor(!showCacheMonitor)}
+                                        title="Toggle edge cache performance monitor"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                            <path fill="currentColor" d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm2 4v-2H3c0 1.1.89 2 2 2zM3 9h2V7H3v2zm12 12h2v-2h-2v2zm4-18H9c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 12H9V5h10v10zm-8-2h2v-2h-2v2zm0-4h2V9h-2v2z"/>
+                                        </svg>
+                                        {showCacheMonitor ? 'Hide' : 'Show'} Cache Monitor
+                                    </button>
+                                    <button
                                         className="tertiary-button action-button force-refresh-button"
                                         onClick={async () => {
                                             if (isLoading) return;
@@ -2019,6 +2148,9 @@ function ProfilePage() {
                     </div>
                 )}
             </div>
+
+            {/* Edge Cache Performance Monitor */}
+            <EdgeCacheMonitor isVisible={showCacheMonitor} />
 
             {/* NFT Detail Modal */}
             {showNftModal && selectedNft && (

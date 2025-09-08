@@ -7,8 +7,26 @@
     {
       "path": "/api/sync-user-collections",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/prewarm-cache",
+      "schedule": "*/2 * * * *"
     }
   ],
+  "functions": {
+    "api/image-proxy.js": {
+      "maxDuration": 30
+    },
+    "api/metadata-cache.js": {
+      "maxDuration": 25
+    },
+    "api/prewarm-cache.js": {
+      "maxDuration": 60
+    },
+    "api/cache-metrics.js": {
+      "maxDuration": 10
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",
@@ -22,6 +40,40 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/api/image-proxy",
+      "headers": [
+        {
+          "key": "Cache-Control", 
+          "value": "public, max-age=86400, s-maxage=31536000"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods", 
+          "value": "GET, OPTIONS"
+        }
+      ]
+    },
+    {
+      "source": "/api/metadata-cache",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, s-maxage=86400"
+        },
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Access-Control-Allow-Methods",
+          "value": "GET, OPTIONS"
         }
       ]
     }
