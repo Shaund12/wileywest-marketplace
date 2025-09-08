@@ -593,7 +593,26 @@ function ProfilePage() {
         
         const nftsToFetch = nfts.filter(nft => {
             const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
-            return !nftMetadata[key]?.loaded;
+            const metadata = nftMetadata[key];
+            
+            // NFT needs fetching if:
+            // 1. No metadata exists at all
+            // 2. Metadata exists but has no actual content (no image and no metadata)
+            // 3. Metadata is currently loading
+            const needsFetching = !metadata || 
+                                 metadata.loading || 
+                                 (!metadata.hasImage && !metadata.hasMetadata) ||
+                                 (!metadata.imageUrl && !metadata.name);
+            
+            console.log(`🔍 [BATCH FETCH] NFT ${nft.contractAddress}:${nft.tokenId} - needs fetching: ${needsFetching}`, {
+                hasMetadata: metadata?.hasMetadata,
+                hasImage: metadata?.hasImage,
+                loaded: metadata?.loaded,
+                imageUrl: metadata?.imageUrl,
+                name: metadata?.name
+            });
+            
+            return needsFetching;
         });
 
         console.log(`🔍 [BATCH FETCH] Filtered to ${nftsToFetch.length} NFTs that need fetching`);
@@ -872,19 +891,22 @@ function ProfilePage() {
                                 const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
                                 
                                 // Create metadata entry efficiently
+                                const hasValidMetadata = !!(nft.metadata && Object.keys(nft.metadata).length > 0);
+                                const hasValidImage = !!(nft.image || nft.metadata?.image);
+                                
                                 metadata[key] = {
                                     name: nft.name || nft.metadata?.name || `NFT #${nft.tokenId}`,
                                     imageUrl: nft.image || nft.metadata?.image || null,
                                     description: nft.metadata?.description || null,
                                     attributes: nft.metadata?.attributes || [],
-                                    loaded: true,
+                                    loaded: hasValidMetadata || hasValidImage, // Only mark as loaded if we have real content
                                     loading: false,
-                                    hasMetadata: !!(nft.metadata && Object.keys(nft.metadata).length > 0),
-                                    hasImage: !!(nft.image || nft.metadata?.image)
+                                    hasMetadata: hasValidMetadata,
+                                    hasImage: hasValidImage
                                 };
                                 
                                 // Include all metadata if available
-                                if (nft.metadata && Object.keys(nft.metadata).length > 0) {
+                                if (hasValidMetadata) {
                                     metadata[key] = { ...metadata[key], ...nft.metadata };
                                     metadataLoaded++;
                                 }
@@ -899,10 +921,10 @@ function ProfilePage() {
                             await fetchContractInfoForNfts(ownedCachedNfts);
                             
                             // OPTIMIZED: Start metadata fetching in background for missing metadata
-                            const nftsNeedingMetadata = cachedProfile.nfts.filter(nft => {
+                            const nftsNeedingMetadata = ownedCachedNfts.filter(nft => {
                                 const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
                                 const meta = metadata[key];
-                                return !meta?.hasMetadata || !meta?.hasImage;
+                                return !meta?.hasMetadata || !meta?.hasImage || !meta?.loaded;
                             });
                             
                             if (nftsNeedingMetadata.length > 0 && !currentAbortController.signal.aborted) {
@@ -1145,11 +1167,32 @@ function ProfilePage() {
             return;
         }
 
-        // Find NFTs without metadata
+        // Find NFTs without metadata - improved filtering logic
         const nftsWithoutMetadata = userNfts.filter(nft => {
             const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
             const metadata = nftMetadata[key];
-            return !metadata?.hasMetadata || !metadata?.hasImage;
+            
+            // NFT needs metadata if:
+            // 1. No metadata exists at all
+            // 2. Metadata exists but has no actual content (no image and no metadata)
+            // 3. Metadata is loading/failed
+            const needsMetadata = !metadata || 
+                                 metadata.loading || 
+                                 metadata.error ||
+                                 (!metadata.hasImage && !metadata.hasMetadata) ||
+                                 (!metadata.imageUrl && !metadata.name);
+            
+            console.log(`🔍 [METADATA RETRY] NFT ${nft.contractAddress}:${nft.tokenId} - needs metadata: ${needsMetadata}`, {
+                hasMetadata: metadata?.hasMetadata,
+                hasImage: metadata?.hasImage,
+                loaded: metadata?.loaded,
+                loading: metadata?.loading,
+                error: metadata?.error,
+                imageUrl: metadata?.imageUrl,
+                name: metadata?.name
+            });
+            
+            return needsMetadata;
         });
 
         console.log(`🔍 [METADATA RETRY] Found ${nftsWithoutMetadata.length} NFTs needing metadata out of ${userNfts.length} total`);
