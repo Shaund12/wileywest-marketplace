@@ -247,6 +247,41 @@ function ProfilePage() {
         }
     }, [activeTab, wallet, provider]); // Keep simple dependencies only
 
+    // AUTOMATIC METADATA LOADING: Trigger metadata loading when userNfts changes
+    useEffect(() => {
+        if (userNfts.length > 0 && !isLoading) {
+            // Debounce metadata loading to prevent multiple rapid calls
+            const timer = setTimeout(() => {
+                console.log('🚀 [AUTO METADATA] Checking if metadata loading needed for', userNfts.length, 'NFTs');
+                
+                // Check if any NFTs need metadata loading
+                const nftsNeedingMetadata = userNfts.filter(nft => {
+                    const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
+                    const metadata = nftMetadata[key];
+                    
+                    // NFT needs metadata if:
+                    // 1. No metadata entry exists
+                    // 2. Metadata exists but is not loaded and not currently loading
+                    // 3. Metadata exists but has no actual content (no image and no description)
+                    const needsMetadata = !metadata || 
+                                        (!metadata.loaded && !metadata.loading) ||
+                                        (metadata.loaded && !metadata.imageUrl && !metadata.description);
+                    
+                    return needsMetadata;
+                });
+                
+                if (nftsNeedingMetadata.length > 0) {
+                    console.log('⚡ [AUTO METADATA] Auto-loading metadata for', nftsNeedingMetadata.length, 'NFTs');
+                    batchFetchMetadata(nftsNeedingMetadata);
+                } else {
+                    console.log('✅ [AUTO METADATA] All NFTs already have metadata loaded');
+                }
+            }, 500); // 500ms debounce
+            
+            return () => clearTimeout(timer);
+        }
+    }, [userNfts, nftMetadata, isLoading]); // Trigger when userNfts or metadata state changes
+
     // OPTIMIZED: Build activity timeline from multiple sources with performance optimization
     const activities = useMemo(() => {
         if (!wallet) return [];
