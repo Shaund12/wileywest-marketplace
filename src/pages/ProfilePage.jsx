@@ -5,6 +5,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { ethers } from 'ethers';
 import ListingCard from '../components/ListingCard';
+import LazyNftGrid from '../components/LazyNftGrid';
 import '../profile-page.css';
 import CacheStats from '../components/CacheStats';
 import EdgeCacheMonitor from '../components/EdgeCacheMonitor';
@@ -124,19 +125,15 @@ function ProfilePage() {
     const [collectionStats, setCollectionStats] = useState({});
     const [sortOption, setSortOption] = useState('default');
     const [collapsedCollections, setCollapsedCollections] = useState({});
-    const [currentPage, setCurrentPage] = useState(1);
-    const [itemsPerPage, setItemsPerPage] = useState(12);
+    // Pagination removed - using lazy loading instead
+    // const [currentPage, setCurrentPage] = useState(1);
+    // const [itemsPerPage, setItemsPerPage] = useState(12);
     const modalRef = useRef(null);
 
     // NEW: Activity + auctions state
     const [userAuctions, setUserAuctions] = useState([]);
     const [isAuctionsLoading, setIsAuctionsLoading] = useState(false);
     const [activityFilter, setActivityFilter] = useState('all'); // all | listings | sales | purchases | auctions
-
-    // Reset pagination when filters change
-    useEffect(() => {
-        setCurrentPage(1);
-    }, [nftFilter, showOnlyListable, sortOption, groupByCollection]);
 
     // Calculate collection stats
     useEffect(() => {
@@ -1512,22 +1509,8 @@ function ProfilePage() {
     // Get filtered and processed NFTs
     const processedNfts = processNfts();
 
-    // Pagination logic
-    const paginateItems = (items) => {
-        if (!groupByCollection) {
-            const startIdx = (currentPage - 1) * itemsPerPage;
-            const endIdx = startIdx + itemsPerPage;
-            return items.slice(startIdx, endIdx);
-        }
-        return items; // When grouped by collection, we'll paginate the NFTs within each collection
-    };
-
-    const paginatedItems = paginateItems(processedNfts);
-
-    // Calculate total pages
-    const totalPages = !groupByCollection
-        ? Math.ceil(processedNfts.length / itemsPerPage)
-        : 1; // When grouped, pagination happens within collections
+    // Note: Pagination removed - using lazy loading instead
+    // LazyNftGrid component handles chunked loading automatically
 
     // Open the detailed NFT modal
     const openNftModal = (nft) => {
@@ -1965,18 +1948,9 @@ function ProfilePage() {
                         ) : groupByCollection ? (
                             // Grouped by collection view
                             <div className="collections-view">
-                                {paginatedItems.length > 0 ? (
-                                    paginatedItems.map((collection) => {
+                                {processedNfts.length > 0 ? (
+                                    processedNfts.map((collection) => {
                                         const isCollapsed = collapsedCollections[collection.contractAddress] || false;
-
-                                        // Paginate items within each collection
-                                        const collectionStartIdx = (currentPage - 1) * itemsPerPage;
-                                        const collectionEndIdx = collectionStartIdx + itemsPerPage;
-                                        const paginatedCollectionItems = isCollapsed
-                                            ? []
-                                            : collection.items.slice(collectionStartIdx, collectionEndIdx);
-
-                                        const totalCollectionPages = Math.ceil(collection.items.length / itemsPerPage);
 
                                         return (
                                             <div key={collection.contractAddress} className="collection-group card">
@@ -1997,47 +1971,15 @@ function ProfilePage() {
                                                 </div>
 
                                                 {!isCollapsed && (
-                                                    <>
-                                                        <div className={`nfts-${currentView}`}>
-                                                            {paginatedCollectionItems.map((nft) => renderNftCard(nft))}
-                                                        </div>
-
-                                                        {totalCollectionPages > 1 && (
-                                                            <div className="pagination">
-                                                                <button
-                                                                    onClick={() => setCurrentPage(1)}
-                                                                    disabled={currentPage === 1}
-                                                                    className="pagination-button"
-                                                                >
-                                                                    First
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                                                                    disabled={currentPage === 1}
-                                                                    className="pagination-button"
-                                                                >
-                                                                    Previous
-                                                                </button>
-                                                                <span className="page-info">
-                                                                    Page {currentPage} of {totalCollectionPages}
-                                                                </span>
-                                                                <button
-                                                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalCollectionPages))}
-                                                                    disabled={currentPage === totalCollectionPages}
-                                                                    className="pagination-button"
-                                                                >
-                                                                    Next
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => setCurrentPage(totalCollectionPages)}
-                                                                    disabled={currentPage === totalCollectionPages}
-                                                                    className="pagination-button"
-                                                                >
-                                                                    Last
-                                                                </button>
-                                                            </div>
-                                                        )}
-                                                    </>
+                                                    <LazyNftGrid
+                                                        nfts={collection.items}
+                                                        onNftClick={openNftModal}
+                                                        currentView={currentView}
+                                                        contractInfo={contractInfo}
+                                                        batchSize={24}
+                                                        preloadBatches={1}
+                                                        enableInfiniteScroll={true}
+                                                    />
                                                 )}
                                             </div>
                                         );
@@ -2066,59 +2008,27 @@ function ProfilePage() {
                                 )}
                             </div>
                         ) : (
-                            // Regular view
+                            // Regular view with lazy loading
                             <div className="ungrouped-view card">
-                                {userNfts.length > 0 && (
-                                    <div className="collection-stats-bar">
-                                        {nftFilter ? (
-                                            <p>Found {processedNfts.length} of {userNfts.length} NFTs matching "{nftFilter}"</p>
-                                        ) : (
-                                            <p>Showing {paginatedItems.length} of {processedNfts.length} NFTs</p>
-                                        )}
-                                    </div>
-                                )}
-
-                                {paginatedItems.length > 0 ? (
+                                {processedNfts.length > 0 ? (
                                     <>
-                                        <div className={`nfts-${currentView}`}>
-                                            {paginatedItems.map(nft => renderNftCard(nft))}
+                                        <div className="collection-stats-bar">
+                                            {nftFilter ? (
+                                                <p>Found {processedNfts.length} of {userNfts.length} NFTs matching "{nftFilter}"</p>
+                                            ) : (
+                                                <p>Your NFT Collection ({processedNfts.length} NFTs)</p>
+                                            )}
                                         </div>
-
-                                        {totalPages > 1 && (
-                                            <div className="pagination">
-                                                <button
-                                                    onClick={() => setCurrentPage(1)}
-                                                    disabled={currentPage === 1}
-                                                    className="pagination-button"
-                                                >
-                                                    First
-                                                </button>
-                                                <button
-                                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                                                    disabled={currentPage === 1}
-                                                    className="pagination-button"
-                                                >
-                                                    Previous
-                                                </button>
-                                                <span className="page-info">
-                                                    Page {currentPage} of {totalPages}
-                                                </span>
-                                                <button
-                                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                                                    disabled={currentPage === totalPages}
-                                                    className="pagination-button"
-                                                >
-                                                    Next
-                                                </button>
-                                                <button
-                                                    onClick={() => setCurrentPage(totalPages)}
-                                                    disabled={currentPage === totalPages}
-                                                    className="pagination-button"
-                                                >
-                                                    Last
-                                                </button>
-                                            </div>
-                                        )}
+                                        
+                                        <LazyNftGrid
+                                            nfts={processedNfts}
+                                            onNftClick={openNftModal}
+                                            currentView={currentView}
+                                            contractInfo={contractInfo}
+                                            batchSize={24}
+                                            preloadBatches={2}
+                                            enableInfiniteScroll={true}
+                                        />
                                     </>
                                 ) : (
                                     <div className="empty-state">
@@ -2131,7 +2041,6 @@ function ProfilePage() {
                                                 <p>No NFTs found in your wallet</p>
                                                 <p className="small">Try scanning for NFTs in your wallet</p>
                                             </>
-
                                         )}
                                         <button
                                             className="primary-button"
