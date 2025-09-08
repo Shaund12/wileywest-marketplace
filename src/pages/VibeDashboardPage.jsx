@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSupabase } from '../context/SupabaseContext';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
@@ -24,15 +24,12 @@ function VibeDashboardPage() {
     const [recentEvents, setRecentEvents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [timeframe, setTimeframe] = useState('7d');
+    const [error, setError] = useState(null);
 
-    useEffect(() => {
-        loadDashboardData();
-    }, [timeframe]);
+    const toMs = useMemo(() => (t) => (typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : 0), []);
 
-    const toMs = (t) => (typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : 0);
-
-    // Updated to match the contract event fields
-    const getVibeAmount = (row) => {
+    // Updated to match the contract event fields - memoized to prevent dependency changes
+    const getVibeAmount = useMemo(() => (row) => {
         // Check for the direct fields from the contract event
         const vibePortionInPayment = parseFloat(row?.vibe_portion_in_payment ?? row?.vibePortionInPayment ?? '0') || 0;
         if (vibePortionInPayment > 0) return vibePortionInPayment;
@@ -46,11 +43,12 @@ function VibeDashboardPage() {
 
         // Legacy field for backward compatibility
         return parseFloat(row?.vibe_amount ?? '0') || 0;
-    };
+    }, []);
 
-    const loadDashboardData = async () => {
+    const loadDashboardData = useCallback(async () => {
         try {
             setLoading(true);
+            setError(null);
 
             if (!isConnected || !supabase) {
                 debugWarn('Supabase not connected, showing no data');
@@ -313,6 +311,7 @@ function VibeDashboardPage() {
             setRecentEvents(allEvents);
         } catch (error) {
             criticalError('Error loading dashboard data:', error);
+            setError('Failed to load dashboard data. Please try again later.');
             setStats({
                 totalVTRUSent: '0',
                 vtruSent24h: '0',
@@ -328,9 +327,26 @@ function VibeDashboardPage() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [isConnected, supabase, timeframe, toMs, getVibeAmount]); // Fixed dependencies
 
-    const formatTimeAgo = (timestamp) => {
+    // Add useEffect with proper dependencies and error boundaries
+    useEffect(() => {
+        let cancelled = false;
+        
+        const loadData = async () => {
+            if (!cancelled) {
+                await loadDashboardData();
+            }
+        };
+        
+        loadData();
+        
+        return () => {
+            cancelled = true;
+        };
+    }, [loadDashboardData]); // Only depend on loadDashboardData which is properly memoized
+
+    const formatTimeAgo = useCallback((timestamp) => {
         if (!timestamp || isNaN(timestamp)) return 'Unknown';
 
         const now = Date.now();
@@ -342,9 +358,9 @@ function VibeDashboardPage() {
         if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
         const diffDays = Math.floor(diffHours / 24);
         return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
-    };
+    }, []);
 
-    const formatVTRU = (amount) => `${amount} VTRU`;
+    const formatVTRU = useCallback((amount) => `${amount} VTRU`, []);
 
     return (
         <div className="hp" style={{ maxWidth: 1400, margin: '3rem auto', padding: '0 1.25rem' }}>
@@ -352,6 +368,19 @@ function VibeDashboardPage() {
                 <h2>VIBE Dashboard</h2>
                 <p>Real-time analytics from Marketplace payouts (no fee-processor)</p>
             </div>
+
+            {error && (
+                <div className="error-message" style={{ 
+                    padding: '1rem', 
+                    margin: '1rem 0', 
+                    background: 'rgba(255, 51, 102, 0.1)', 
+                    border: '1px solid rgba(255, 51, 102, 0.3)', 
+                    borderRadius: '8px',
+                    color: '#ff3366'
+                }}>
+                    <p>{error}</p>
+                </div>
+            )}
 
             {loading ? (
                 <div className="loading-message">
@@ -488,13 +517,15 @@ function VibeDashboardPage() {
                                         <span className="event-time">{event.time}</span>
                                         <span className="event-description">{event.description}</span>
                                         <span className="event-tx">
-                                            <a
-                                                href={`https://explorer.vitruveo.xyz/tx/${event.hash}`}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                            >
-                                                {event.hash ? `${event.hash.slice(0, 6)}...${event.hash.slice(-4)}` : 'N/A'}
-                                            </a>
+                                            {event.hash ? (
+                                                <a
+                                                    href={`https://explorer.vitruveo.xyz/tx/${event.hash}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                >
+                                                    {`${event.hash.slice(0, 6)}...${event.hash.slice(-4)}`}
+                                                </a>
+                                            ) : 'N/A'}
                                         </span>
                                     </div>
                                 ))

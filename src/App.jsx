@@ -18,8 +18,7 @@ const TermsPage = lazy(() => import('./pages/TermsPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SellPage = lazy(() => import('./pages/SellPage'));
 const CollectionPage = lazy(() => import('./pages/CollectionPage'));
-const BlockSharePage = lazy(() => import('./pages/BlockSharePage'));
-const MintPage = lazy(() => import('./pages/MintPage'));
+
 
 // Auction pages (lazy-loaded)
 const CreateAuctionPage = lazy(() => import('./pages/CreateAuctionPage'));
@@ -190,8 +189,7 @@ function TitleSetter() {
             { test: /^\/hot-listings/, title: `🔥 Hot Listings • ${siteName}` },
             { test: /^\/sell/, title: `List & Sell • ${siteName}` },
             { test: /^\/profile/, title: `Your Profile • ${siteName}` },
-            { test: /^\/blockshare/, title: `BlockShare Revenue • ${siteName}` },
-            { test: /^\/mint/, title: `Mint RevShare NFT • ${siteName}` },
+
             { test: /^\/collections\/[0-9a-zA-Z]+/, title: `Collection • ${siteName}` },
             { test: /^\/my-auctions/, title: `My Auctions • ${siteName}` },
             { test: /^\/auctions\/create/, title: `Create Auction • ${siteName}` },
@@ -215,8 +213,7 @@ function useIdleRoutePrefetch() {
             () => import('./pages/HotListingsPage'),
             () => import('./pages/SellPage'),
             () => import('./pages/ProfilePage'),
-            () => import('./pages/BlockSharePage'),
-            () => import('./pages/MintPage'),
+
             () => import('./pages/CreateAuctionPage'),
             () => import('./pages/MyAuctionsPage'),
             () => import('./pages/AuctionDetailPage'),
@@ -266,8 +263,7 @@ function App() {
                                             <Route path="/marketplace" element={<MarketplacePage />} />
                                             <Route path="/hot-listings" element={<HotListingsPage />} />
                                             <Route path="/sell" element={<SellPage />} />
-                                            <Route path="/blockshare" element={<BlockSharePage />} />
-                                            <Route path="/mint" element={<MintPage />} />
+
                                             <Route path="/terms" element={<TermsPage />} />
                                             <Route path="/privacy" element={<PrivacyPage />} />
 
