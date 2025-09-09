@@ -218,6 +218,8 @@ export function SupabaseProvider({ children }) {
                         payment_token: normAddr(l.paymentToken) || ZERO_ADDR,         // NOT NULL
                         is_erc1155: !!l.isERC1155,
                         active: isCanceled ? false : !!l.active,
+                        sale_status: isCanceled ? 'canceled' : (l.active === false ? 'sold' : 'active'),
+                        sale_transaction_hash: l.saleTransactionHash || null,
                         metadata: l.metadata || {},
                         image_url: img,
                         name: l.name || l.title || l.metadata?.name || null,
@@ -312,6 +314,8 @@ export function SupabaseProvider({ children }) {
                 paymentToken: item.payment_token,
                 isERC1155: item.is_erc1155,
                 active: item.active,
+                saleStatus: item.sale_status,
+                saleTransactionHash: item.sale_transaction_hash,
                 metadata: item.metadata || {},
                 image: item.image_url,
                 imageUrl: item.image_url,
@@ -409,6 +413,59 @@ export function SupabaseProvider({ children }) {
     );
 
     // ========== SOLD LISTING CLEANUP ==========
+    const markListingAsSold = useCallback(
+        async (listingId, transactionHash = null) => {
+            if (!supabase || !listingId) {
+                debugLog('⚠️ Supabase not available or no listing ID provided');
+                return false;
+            }
+
+            try {
+                debugLog(`🔄 Marking listing ${listingId} as sold immediately...`);
+
+                const updateData = {
+                    active: false,
+                    sale_status: 'sold',
+                    updated_at: new Date().toISOString()
+                };
+
+                if (transactionHash) {
+                    updateData.sale_transaction_hash = transactionHash;
+                }
+
+                const { data, error } = await supabase
+                    .from('marketplace_listings')
+                    .update(updateData)
+                    .eq('listing_id', String(listingId))
+                    .select();
+
+                if (error) {
+                    debugWarn(`❌ Error marking listing ${listingId} as sold:`, error);
+                    updateCacheStats('errors');
+                    return false;
+                } else {
+                    debugLog(`✅ Successfully marked listing ${listingId} as sold in database`);
+                    
+                    // Update in-memory cache
+                    const key = getCacheKey('listing', listingId);
+                    cache.current.delete(key);
+                    
+                    // Invalidate 'all_listings' cache to force refresh
+                    cache.current.delete('all_listings');
+                    
+                    updateCacheStats('updates');
+                    return true;
+                }
+
+            } catch (error) {
+                debugWarn(`❌ Error in markListingAsSold for listing ${listingId}:`, error);
+                updateCacheStats('errors');
+                return false;
+            }
+        },
+        [supabase]
+    );
+
     const removeSoldListings = useCallback(
         async (salesHistory) => {
             if (!supabase || !Array.isArray(salesHistory) || salesHistory.length === 0) {
@@ -1215,6 +1272,7 @@ export function SupabaseProvider({ children }) {
         getCachedProfile,
         cacheSalesHistory,
         getCachedSalesHistory,
+        markListingAsSold,
         removeSoldListings,
 
         // Auction ops

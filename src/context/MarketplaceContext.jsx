@@ -30,6 +30,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         getCachedListings, 
         cacheSalesHistory,
         getCachedSalesHistory,
+        markListingAsSold,
         removeSoldListings,
         subscribeToListings,
         isConnected: supabaseConnected 
@@ -1504,7 +1505,17 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
           throw new Error("Transaction failed during execution");
         }
         
-        // Mark the listing as inactive
+        // Immediately mark the listing as sold in Supabase
+        if (markListingAsSold) {
+          try {
+            await markListingAsSold(id, tx.hash);
+            debugLog(`✅ Marked listing ${id} as sold in database`);
+          } catch (dbError) {
+            debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+          }
+        }
+        
+        // Mark the listing as inactive locally
         markListingInactive(id);
 
         setStatus('Purchase successful! Refreshing listings...');
@@ -1604,7 +1615,17 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         throw new Error("Transaction failed during execution");
       }
       
-      // Mark the listing as inactive
+      // Immediately mark the listing as sold in Supabase
+      if (markListingAsSold) {
+        try {
+          await markListingAsSold(id, tx.hash);
+          debugLog(`✅ Marked listing ${id} as sold in database`);
+        } catch (dbError) {
+          debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+        }
+      }
+      
+      // Mark the listing as inactive locally
       markListingInactive(id);
 
       setStatus('Purchase successful! Refreshing listings...');

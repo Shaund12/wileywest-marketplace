@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS marketplace_listings (
     payment_token TEXT NOT NULL,
     is_erc1155 BOOLEAN DEFAULT FALSE,
     active BOOLEAN DEFAULT TRUE,
+    sale_status TEXT DEFAULT 'active', -- 'active', 'sold', 'canceled'
+    sale_transaction_hash TEXT,
     metadata JSONB DEFAULT '{}',
     image_url TEXT,
     name TEXT,
@@ -331,6 +333,7 @@ CREATE TABLE IF NOT EXISTS collection_stats (
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_seller ON marketplace_listings(seller);
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_active ON marketplace_listings(active);
+CREATE INDEX IF NOT EXISTS idx_marketplace_listings_sale_status ON marketplace_listings(sale_status);
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_updated_at ON marketplace_listings(updated_at);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_wallet ON user_profiles(wallet_address);
 CREATE INDEX IF NOT EXISTS idx_sales_history_listing_id ON sales_history(listing_id);
