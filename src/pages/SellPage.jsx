@@ -130,6 +130,13 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
         const tryNext = () => {
             if (i >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[i++];
+
+            // NEW: data: URIs should be used as-is (no cache-buster)
+            if (test.trim().toLowerCase().startsWith('data:')) {
+                resolve(test);
+                return;
+            }
+
             const img = new Image();
             const timer = setTimeout(() => {
                 img.onload = img.onerror = null;
@@ -261,19 +268,27 @@ function vShareLpSvgDataUrl({
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function vShareDefaultDescription() {
+function vShareDescriptionBlockDust() {
     return [
-        'V-Share is the official revenue-sharing NFT for Vmonsters.',
+        'V-Share Revenue Sharing',
         '',
-        'Holders of V-Share participate in marketplace revenue aligned to the Vmonsters ecosystem.',
+        'Own a share in the evolving VMonsters ecosystem. Holders receive a share of ecosystem revenue deposited in native VTRU and claimable on-chain.',
         '',
-        'Benefits:',
-        '• On-chain, non-custodial exposure to Vmonsters rev share mechanics',
-        '• Tradable on the WileyW€$T marketplace (Vitruveo)',
-        '• Designed for transparent accrual and future utility integrations',
+        'Revenue Sources',
+        '• 10% of Random Mint proceeds (allocated as revenue)',
+        '• 3% of PvP generated income',
+        '• Future products: Launchpad fees, new game titles, marketplace features',
+        '• Additional ecosystem products announced later are included by default',
         '',
-        'Note: Actual distributions are governed by the associated smart contracts and program parameters.'
+        'Mint payments are excluded to keep incentives aligned.',
+        '',
+        'Trade V-Share on BlockDust.'
     ].join('\n');
+}
+
+// NEW: match the call site used in setFallback()
+function vShareDefaultDescription() {
+    return vShareDescriptionBlockDust();
 }
 
 const smartUrlCache = new Map();
@@ -286,10 +301,22 @@ function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 
         let cancelled = false;
         const raws = srcList.filter(isString);
         const key = raws.join('|');
+
         if (!raws.length) {
             setFinalUrl(null);
             setFailed(true);
             return;
+        }
+
+        // NEW: If any candidate is a data: URI, use it directly (don’t probe it)
+        const dataUri = raws.find(u => u.trim().toLowerCase().startsWith('data:'));
+        if (dataUri) {
+            smartUrlCache.set(key, dataUri);
+            if (!cancelled) {
+                setFinalUrl(dataUri);
+                setFailed(false);
+            }
+            return () => { cancelled = true; };
         }
 
         if (smartUrlCache.has(key)) {
@@ -299,7 +326,6 @@ function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 
         }
 
         const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
-        // Prefer video if the URL clearly indicates one
         const videoCandidate = candidates.find(isVideoUrl);
         if (videoCandidate) {
             smartUrlCache.set(key, videoCandidate);
@@ -1854,6 +1880,7 @@ function SellPage() {
                                                     {platformFeeBps !== null
                                                         ? (platformFeeBps / 100).toFixed(2) + '%'
                                                         : (fees.marketplaceFee || 2.5).toFixed(2) + '%'}
+
                                                 </li>
                                                 {vibeShareBps !== null && (
                                                     <li>
