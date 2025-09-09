@@ -95,11 +95,7 @@ function VibeDashboardPage() {
             // Try all table options that might contain our data
             const possibleTables = [
                 'sale_breakdowns',
-                'auction_breakdowns',
-                'SaleBreakdown',
-                'AuctionBreakdown',
-                'nft_sales',
-                'marketplace_events'
+                'auction_breakdowns'
             ];
 
             // Try each table and collect any valid data
@@ -115,8 +111,8 @@ function VibeDashboardPage() {
 
                     // Skip if table doesn't exist or has no data
                     if (error) {
-                        if (error.code === '404' || error.code === 'PGRST116') {
-                            debugLog(`Table ${tableName} not found`);
+                        if (error.code === '42P01' || error.code === '404' || error.code === 'PGRST116') {
+                            debugLog(`Table ${tableName} not found (${error.code})`);
                         } else {
                             debugWarn(`Error fetching from ${tableName}:`, error);
                         }
