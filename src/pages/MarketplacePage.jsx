@@ -11,6 +11,7 @@ import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
+import { isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
@@ -681,6 +682,19 @@ function MarketplacePage() {
 
             debugLog(`🔍 Fetching auction metadata for ${nftContract}:${tokenId}`);
 
+            // Special handling for V-Share contracts
+            if (isVShareContract(nftContract)) {
+                debugLog(`🎯 Using V-Share metadata for ${nftContract}:${tokenId}`);
+                const vShareMetadata = getVShareMetadata(nftContract, tokenId);
+                return {
+                    name: vShareMetadata.name,
+                    image: vShareMetadata.image,
+                    description: vShareMetadata.description,
+                    attributes: vShareMetadata.attributes || [],
+                    raw: vShareMetadata
+                };
+            }
+
             // Use the enhanced metadata loader from metadataLoader.js
             const metadata = await loadMetadata(nftContract, tokenId, provider);
 
@@ -704,6 +718,19 @@ function MarketplacePage() {
                 };
             }
         } catch (error) {
+            // If error and it's V-Share, still use V-Share metadata
+            if (isVShareContract(nftContract)) {
+                debugLog(`🎯 Using V-Share metadata for ${nftContract}:${tokenId} (after error)`);
+                const vShareMetadata = getVShareMetadata(nftContract, tokenId);
+                return {
+                    name: vShareMetadata.name,
+                    image: vShareMetadata.image,
+                    description: vShareMetadata.description,
+                    attributes: vShareMetadata.attributes || [],
+                    raw: vShareMetadata
+                };
+            }
+            
             criticalError(`Failed to fetch auction metadata for ${nftContract}:${tokenId}:`, error);
             return {
                 name: `NFT #${tokenId || 'Unknown'}`,

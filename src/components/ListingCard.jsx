@@ -4,6 +4,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
 import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
+import { isVShareContract, vShareLpSvgDataUrl } from '../utils/vShareUtils';
 import { debugWarn } from '../utils/debugUtils';
 import './ListingCard.css';
 
@@ -34,7 +35,19 @@ const shortAddr = (a) => (a && a.length > 9 ? `${a.slice(0, 6)}…${a.slice(-4)}
 const hashString = (str) => { let h = 0; for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; } return Math.abs(h); };
 const imageUrlCache = Object.create(null);
 
-function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '' }) {
+function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '', contractAddress = '', tokenId = '' }) {
+    // Special handling for V-Share contracts
+    if (contractAddress && isVShareContract(contractAddress)) {
+        return vShareLpSvgDataUrl({ 
+            contract: contractAddress, 
+            tokenId: tokenId.toString(), 
+            width, 
+            height,
+            title: 'V-Share',
+            subtitle: 'Vmonsters Rev Share' 
+        });
+    }
+
     const h = hashString(seed), hue = h % 360, hue2 = (hue + 180) % 360, gradId = `g${(h % 1e9).toString(36)}`, block = (h % 7) + 3;
     const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
     const svg = `
@@ -226,9 +239,11 @@ function AssetMedia({
     height = 200,
     className,
     posterUrl,
-    autoPlay = false
+    autoPlay = false,
+    contractAddress = '',
+    tokenId = ''
 }) {
-    const fallback = svgFallbackDataUrl({ seed, width, height, title: alt || '' });
+    const fallback = svgFallbackDataUrl({ seed, width, height, title: alt || '', contractAddress, tokenId });
     if (!url) {
         return <img src={fallback} alt={alt || ''} width={width} height={height} className={`${className || ''} lc-img`} loading="lazy" />;
     }
@@ -486,6 +501,8 @@ function ListingCardInner({
                     width={300}
                     height={200}
                     autoPlay={autoPlayAnimation}
+                    contractAddress={listing?.nftContract}
+                    tokenId={listing?.tokenId}
                 />
                 {loadingMedia && <div className="lc-blur-placeholder" aria-hidden />}
                 {!loadingMedia && !mediaUrl && (

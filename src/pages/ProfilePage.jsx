@@ -14,6 +14,7 @@ import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { NFTScanner } from '../utils/nftScanner';
 import { loadNFTMetadata, batchLoadMetadata } from '../utils/metadataLoader';
 import { getCachedMetadata, getProxyImageUrl, batchPrewarm } from '../utils/edgeCacheUtils';
+import { VSHARE_ADDRESS, vShareLpSvgDataUrl, vShareDefaultDescription, isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -39,7 +40,8 @@ const ERC1155_ABI = [
 // List of known NFT collections to scan
 const KNOWN_NFT_CONTRACTS = [
     '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
-    '0x89207A7F75C9cb7C8f95f0c2517b029BE1AE29b8', //NeonKatz
+    '0x89207A7F75C9cb7C8f95f0c2517b029BE1AE29b8', // NeonKatz
+    '0xc5d518d131738481947cFa4670F94eb7b948a1ac', // V-Share
 ];
 
 // Multiple IPFS gateways to try for better reliability (ordered by reliability)
@@ -530,6 +532,16 @@ function ProfilePage() {
     // Generate a custom LP-style placeholder SVG for NFTs
     const generateFallbackImage = (contractAddress, tokenId) => {
         try {
+            // Special handling for V-Share
+            if (isVShareContract(contractAddress)) {
+                return vShareLpSvgDataUrl({ 
+                    contract: contractAddress, 
+                    tokenId: tokenId.toString(), 
+                    title: 'V-Share', 
+                    subtitle: 'Vmonsters Rev Share' 
+                });
+            }
+
             const hash = contractAddress.toLowerCase() + tokenId.toString();
             let hashNum = 0;
             for (let i = 0; i < hash.length; i++) {
@@ -599,7 +611,17 @@ function ProfilePage() {
         }));
 
         try {
-            // Use the optimized metadata loader
+            // Special handling for V-Share - use custom metadata
+            if (isVShareContract(contractAddress)) {
+                const vShareMetadata = getVShareMetadata(contractAddress, tokenId);
+                setNftMetadata(prev => ({
+                    ...prev,
+                    [key]: vShareMetadata
+                }));
+                return;
+            }
+
+            // Use the optimized metadata loader for other NFTs
             const metadata = await loadNFTMetadata(contractAddress, tokenId, provider, 
                 tokenURI ? { tokenURI } : null);
 
@@ -610,6 +632,16 @@ function ProfilePage() {
 
         } catch (error) {
             debugWarn(`Failed to load metadata for ${contractAddress}:${tokenId}`, error);
+            
+            // Use V-Share metadata if this is a V-Share contract, even on error
+            if (isVShareContract(contractAddress)) {
+                const vShareMetadata = getVShareMetadata(contractAddress, tokenId);
+                setNftMetadata(prev => ({
+                    ...prev,
+                    [key]: vShareMetadata
+                }));
+                return;
+            }
             
             const fallbackImg = generateFallbackImage(contractAddress, tokenId);
             setNftMetadata(prev => ({
@@ -645,6 +677,13 @@ function ProfilePage() {
             try {
                 console.log(`🔍 [CACHE BATCH] ${index + 1}/${nfts.length}: Loading ${key} via edge cache`);
                 
+                // Special handling for V-Share contracts - use custom metadata
+                if (isVShareContract(nft.contractAddress)) {
+                    console.log(`🎯 [CACHE BATCH] Using V-Share metadata for ${key}`);
+                    const vShareMetadata = getVShareMetadata(nft.contractAddress, nft.tokenId);
+                    return { key, metadata: vShareMetadata };
+                }
+                
                 // Try edge cache first
                 const metadata = await getCachedMetadata(nft.contractAddress, nft.tokenId);
                 
@@ -675,14 +714,21 @@ function ProfilePage() {
             } catch (error) {
                 console.error(`❌ [CACHE BATCH] Failed to load metadata for ${key}:`, error);
                 
+                // Special handling for V-Share contracts
+                if (isVShareContract(nft.contractAddress)) {
+                    console.log(`🎯 [CACHE BATCH] Using V-Share metadata for ${key}`);
+                    const vShareMetadata = getVShareMetadata(nft.contractAddress, nft.tokenId);
+                    return { key, metadata: vShareMetadata };
+                }
+                
                 // Return fallback metadata to prevent crashes
                 return {
                     key,
                     metadata: {
                         name: `NFT #${nft.tokenId}`,
                         description: 'Metadata unavailable',
-                        image: 'https://via.placeholder.com/300x300/1a1a1a/fff?text=NFT',
-                        imageUrl: 'https://via.placeholder.com/300x300/1a1a1a/fff?text=NFT',
+                        image: generateFallbackImage(nft.contractAddress, nft.tokenId),
+                        imageUrl: generateFallbackImage(nft.contractAddress, nft.tokenId),
                         error: error.message,
                         loaded: true,
                         loading: false
