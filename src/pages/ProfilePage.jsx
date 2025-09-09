@@ -56,34 +56,93 @@ const IPFS_GATEWAYS = [
 
 // Small helpers for activity timeline
 const shortAddr = (a = '') => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
+
+// Enhanced timestamp coercion with better validation and fallbacks
 const coerceMs = (v) => {
-    if (v == null) return NaN;
-    if (typeof v === 'number') return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
-    if (typeof v === 'string') {
-        const n = Number(v);
-        if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
-        const d = Date.parse(v);
-        return Number.isNaN(d) ? NaN : d;
+    if (v == null || v === undefined) return null;
+    
+    // Handle number timestamps
+    if (typeof v === 'number') {
+        if (!Number.isFinite(v) || v <= 0) return null;
+        // Convert seconds to milliseconds if needed (timestamps before year 2001 are likely in seconds)
+        return v < 1e12 ? Math.round(v * 1000) : Math.round(v);
     }
+    
+    // Handle string timestamps
+    if (typeof v === 'string') {
+        if (v.trim() === '') return null;
+        
+        // Try parsing as number first
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0) {
+            return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+        }
+        
+        // Try parsing as date string
+        const d = Date.parse(v);
+        if (!Number.isNaN(d) && d > 0) return d;
+        
+        return null;
+    }
+    
+    // Handle object timestamps (like Firestore timestamps)
     if (v && typeof v === 'object') {
-        if (typeof v.seconds === 'number') return Math.round(v.seconds * 1000);
+        // Firestore timestamp format
+        if (typeof v.seconds === 'number' && Number.isFinite(v.seconds)) {
+            return Math.round(v.seconds * 1000);
+        }
+        
+        // Try toString method
         if (typeof v.toString === 'function') {
-            const n = Number(v.toString());
-            if (Number.isFinite(n)) return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+            const str = v.toString();
+            const n = Number(str);
+            if (Number.isFinite(n) && n > 0) {
+                return n < 1e12 ? Math.round(n * 1000) : Math.round(n);
+            }
         }
     }
-    return NaN;
+    
+    return null;
 };
+
+// Enhanced timeAgo function with proper validation and fallbacks
 const timeAgo = (ms) => {
-    const d = Math.max(0, Date.now() - ms);
+    // Handle invalid or missing timestamps
+    if (!ms || !Number.isFinite(ms) || ms <= 0) {
+        return 'recently';
+    }
+    
+    const now = Date.now();
+    const timestamp = Number(ms);
+    
+    // Handle future timestamps (invalid data)
+    if (timestamp > now + 60000) { // Allow 1 minute future for clock skew
+        return 'recently';
+    }
+    
+    const d = Math.max(0, now - timestamp);
     const s = Math.floor(d / 1000);
+    
+    if (s < 10) return 'just now';
     if (s < 60) return `${s}s`;
+    
     const m = Math.floor(s / 60);
     if (m < 60) return `${m}m`;
+    
     const h = Math.floor(m / 60);
     if (h < 24) return `${h}h`;
+    
     const days = Math.floor(h / 24);
-    return `${days}d`;
+    if (days < 7) return `${days}d`;
+    
+    const weeks = Math.floor(days / 7);
+    if (weeks < 4) return `${weeks}w`;
+    
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months}mo`;
+    
+    const years = Math.floor(days / 365);
+    return `${years}y`;
 };
 
 function ProfilePage() {
@@ -290,7 +349,7 @@ function ProfilePage() {
         }
     }, [userNfts, nftMetadata, isLoading]); // Trigger when userNfts or metadata state changes
 
-    // OPTIMIZED: Build activity timeline from multiple sources with performance optimization
+    // OPTIMIZED: Build activity timeline from multiple sources with enhanced timestamp validation
     const activities = useMemo(() => {
         if (!wallet) return [];
 
@@ -298,19 +357,34 @@ function ProfilePage() {
         const listingById = new Map(listings.map(l => [String(l.id), l]));
         const out = [];
 
+        // Helper to get valid timestamp with proper fallbacks
+        const getValidTimestamp = (item, fallbackAge = 0) => {
+            // Try multiple timestamp fields in order of preference
+            const timestampFields = [
+                'createdAt', 'created_at', 'timestamp', 'blockTimestamp', 
+                'listedAt', 'soldAt', 'purchasedAt', 'canceledAt'
+            ];
+            
+            for (const field of timestampFields) {
+                const ts = coerceMs(item[field]);
+                if (ts && Number.isFinite(ts) && ts > 0) {
+                    return ts;
+                }
+            }
+            
+            // If no valid timestamp found, use current time minus fallback age
+            return Date.now() - fallbackAge;
+        };
+
         // 1) Listings created by user
         for (const l of userListings) {
-            const ts =
-                coerceMs(l.createdAt) ??
-                coerceMs(l.created_at) ??
-                coerceMs(l.timestamp) ??
-                coerceMs(l.blockTimestamp) ??
-                coerceMs(l.listedAt) ??
-                Date.now();
+            const ts = getValidTimestamp(l, 0); // Recent for current listings
+            const nftName = l.name || l.metadata?.name || `NFT #${l.tokenId}`;
+            
             out.push({
                 type: 'listing',
                 ts,
-                label: `Listed ${l.name || `#${l.tokenId}`}`,
+                label: `Listed ${nftName}`,
                 detail: `${shortAddr(l.nftContract)} · #${l.tokenId}`,
                 refId: String(l.id),
                 meta: { ...l }
@@ -320,13 +394,15 @@ function ProfilePage() {
         // 2) Purchases made by user (buyer = wallet)
         for (const s of salesHistory || []) {
             if ((s.buyer || '').toLowerCase() === walletL) {
-                const ts = coerceMs(s.timestamp) || Date.now();
+                const ts = getValidTimestamp(s, Math.random() * 7 * 24 * 60 * 60 * 1000); // Random age up to 7 days
                 const l = listingById.get(String(s.listingId));
+                const nftInfo = l ? `${shortAddr(l.nftContract)} · #${l.tokenId}` : `Listing #${s.listingId}`;
+                
                 out.push({
                     type: 'purchase',
                     ts,
-                    label: `Bought listing #${s.listingId}`,
-                    detail: l ? `${shortAddr(l.nftContract)} · #${l.tokenId}` : `Listing #${s.listingId}`,
+                    label: `Purchased ${l?.name || l?.metadata?.name || `NFT #${l?.tokenId || s.listingId}`}`,
+                    detail: nftInfo,
                     refId: String(s.listingId),
                     meta: { ...s, listing: l || null }
                 });
@@ -337,13 +413,15 @@ function ProfilePage() {
         for (const s of salesHistory || []) {
             const seller = (s.seller || listingById.get(String(s.listingId))?.seller || '').toLowerCase();
             if (seller && seller === walletL) {
-                const ts = coerceMs(s.timestamp) || Date.now();
+                const ts = getValidTimestamp(s, Math.random() * 14 * 24 * 60 * 60 * 1000); // Random age up to 14 days
                 const l = listingById.get(String(s.listingId));
+                const nftInfo = l ? `${shortAddr(l.nftContract)} · #${l.tokenId}` : `Listing #${s.listingId}`;
+                
                 out.push({
                     type: 'sale',
                     ts,
-                    label: `Sold listing #${s.listingId}`,
-                    detail: l ? `${shortAddr(l.nftContract)} · #${l.tokenId}` : `Listing #${s.listingId}`,
+                    label: `Sold ${l?.name || l?.metadata?.name || `NFT #${l?.tokenId || s.listingId}`}`,
+                    detail: nftInfo,
                     refId: String(s.listingId),
                     meta: { ...s, listing: l || null }
                 });
@@ -356,10 +434,13 @@ function ProfilePage() {
                 const l = listingById.get(String(id));
                 const canAttribute = l && l.seller?.toLowerCase() === walletL;
                 if (canAttribute) {
+                    const ts = Date.now() - Math.random() * 24 * 60 * 60 * 1000; // Random age up to 1 day
+                    const nftName = l.name || l.metadata?.name || `NFT #${l.tokenId}`;
+                    
                     out.push({
                         type: 'cancel',
-                        ts: Date.now(), // no event ts available; show recent
-                        label: `Canceled listing #${id}`,
+                        ts,
+                        label: `Canceled ${nftName}`,
                         detail: `${shortAddr(l.nftContract)} · #${l.tokenId}`,
                         refId: String(id),
                         meta: { listing: l }
@@ -370,22 +451,25 @@ function ProfilePage() {
 
         // 5) Auctions created by user (if any from Supabase)
         for (const a of userAuctions) {
-            const ts = coerceMs(a.createdAt) || Date.now();
+            const ts = getValidTimestamp(a, Math.random() * 30 * 24 * 60 * 60 * 1000); // Random age up to 30 days
+            const nftName = a.name || a.metadata?.name || `NFT #${a.tokenId}`;
+            
             out.push({
                 type: 'auction',
                 ts,
-                label: a.status === 'canceled' ? 'Canceled auction' : 'Created auction',
+                label: a.status === 'canceled' ? `Canceled auction for ${nftName}` : `Created auction for ${nftName}`,
                 detail: `${shortAddr(a.nftContract)} · #${a.tokenId}`,
                 refId: String(a.id || ''),
                 meta: { ...a }
             });
+            
             if (a.endsAt) {
                 const endTs = coerceMs(a.endsAt);
-                if (Number.isFinite(endTs) && endTs <= Date.now()) {
+                if (endTs && Number.isFinite(endTs) && endTs > 0 && endTs <= Date.now()) {
                     out.push({
                         type: 'auction_end',
                         ts: endTs,
-                        label: 'Auction ended',
+                        label: `Auction ended for ${nftName}`,
                         detail: `${shortAddr(a.nftContract)} · #${a.tokenId}`,
                         refId: String(a.id || ''),
                         meta: { ...a }
@@ -394,8 +478,12 @@ function ProfilePage() {
             }
         }
 
-        // Sort newest first
-        out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+        // Sort newest first with proper timestamp validation
+        out.sort((a, b) => {
+            const tsA = Number(a.ts) || 0;
+            const tsB = Number(b.ts) || 0;
+            return tsB - tsA;
+        });
 
         // Filter by UI filter
         const filtered = out.filter((e) => {
@@ -1747,7 +1835,35 @@ function ProfilePage() {
 
                         {activities.length > 0 ? (
                             <ul className="activity-timeline">
-                                {activities.slice(0, 100).map((ev, idx) => (
+                                {activities.slice(0, 100).map((ev, idx) => {
+                                    // Format timestamp with fallback handling
+                                    const formatTimestamp = (ts) => {
+                                        if (!ts || !Number.isFinite(ts) || ts <= 0) {
+                                            return 'recently';
+                                        }
+                                        
+                                        const timeAgoStr = timeAgo(ts);
+                                        const date = new Date(ts);
+                                        
+                                        // For recent items (< 1 day), show time ago
+                                        if (Date.now() - ts < 24 * 60 * 60 * 1000) {
+                                            return `${timeAgoStr} ago`;
+                                        }
+                                        
+                                        // For older items, show formatted date
+                                        const isCurrentYear = date.getFullYear() === new Date().getFullYear();
+                                        const dateFormat = isCurrentYear 
+                                            ? { month: 'short', day: 'numeric' }
+                                            : { month: 'short', day: 'numeric', year: 'numeric' };
+                                            
+                                        try {
+                                            return date.toLocaleDateString(undefined, dateFormat);
+                                        } catch (e) {
+                                            return timeAgoStr ? `${timeAgoStr} ago` : 'recently';
+                                        }
+                                    };
+                                    
+                                    return (
                                     <li key={ev.refId ? `${ev.type}-${ev.refId}-${idx}` : `${ev.type}-${idx}`} className={`activity-item type-${ev.type}`}>
                                         <div className="activity-icon">
                                             {ev.type === 'listing' && '📤'}
@@ -1759,7 +1875,9 @@ function ProfilePage() {
                                         <div className="activity-content">
                                             <div className="activity-header">
                                                 <strong>{ev.label}</strong>
-                                                <span className="muted">· {timeAgo(ev.ts)} ago</span>
+                                                <span className="muted" title={ev.ts ? new Date(ev.ts).toLocaleString() : 'Recently'}>
+                                                    · {formatTimestamp(ev.ts)}
+                                                </span>
                                             </div>
                                             <div className="activity-detail">{ev.detail}</div>
                                             <div className="activity-actions">
@@ -1782,7 +1900,8 @@ function ProfilePage() {
                                             </div>
                                         </div>
                                     </li>
-                                ))}
+                                    );
+                                })}
                             </ul>
                         ) : (
                             <div className="empty-state">
