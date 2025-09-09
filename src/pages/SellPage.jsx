@@ -186,6 +186,96 @@ function svgFallbackDataUrl({ seed = 'media', width = 640, height = 460, title =
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
+/* =========================================================
+   V-Share LP fallback (custom) + description
+   ========================================================= */
+const VSHARE_ADDRESS = '0xc5d518d131738481947cFa4670F94eb7b948a1ac';
+
+function shortAddress(addr) {
+    try { return `${addr.slice(0, 6)}…${addr.slice(-4)}`; } catch { return addr || ''; }
+}
+
+function vShareLpSvgDataUrl({
+    contract,
+    tokenId,
+    width = 640,
+    height = 460,
+    title = 'V-Share',
+    subtitle = 'Vmonsters Rev Share'
+}) {
+    const seed = `${contract}-${tokenId}-vshare`;
+    const h = hashString(seed);
+    const hue = (h % 360);
+    const hue2 = (hue + 140) % 360;
+    const hue3 = (hue + 300) % 360;
+    const gidA = `g${(h % 1e9).toString(36)}a`;
+    const gidB = `g${(h % 1e9).toString(36)}b`;
+    const cx = width * 0.62;
+    const cy = height * 0.52;
+    const rOuter = Math.min(width, height) * 0.38;
+    const rLabel = rOuter * 0.34;
+    const contractShort = shortAddress(contract);
+
+    const grooves = Array.from({ length: 24 }).map((_, i) => {
+        const r = rOuter * (0.65 + i * (0.35 / 24));
+        const op = 0.08 + (i % 2 === 0 ? 0.02 : 0);
+        return `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(2)}" fill="none" stroke="rgba(255,255,255,${op.toFixed(2)})" stroke-width="${i % 4 === 0 ? 1.5 : 0.7}"/>`;
+    }).join('');
+
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  <defs>
+    <linearGradient id="${gidA}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="hsl(${hue},90%,18%)"/>
+      <stop offset="100%" stop-color="hsl(${hue2},90%,14%)"/>
+    </linearGradient>
+    <radialGradient id="${gidB}" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="hsla(${hue3},90%,60%,0.8)"/>
+      <stop offset="100%" stop-color="hsla(${hue3},90%,60%,0)"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="100%" height="100%" fill="url(#${gidA})"/>
+  <rect x="0" y="0" width="100%" height="100%" fill="url(#${gidB})" opacity="0.25"/>
+
+  <g>
+    <circle cx="${cx}" cy="${cy}" r="${rOuter}" fill="black" stroke="hsla(${hue3},95%,65%,0.35)" stroke-width="4"/>
+    ${grooves}
+    <circle cx="${cx}" cy="${cy}" r="${rOuter * 0.03}" fill="rgba(255,255,255,0.9)"/>
+    <circle cx="${cx}" cy="${cy}" r="${rLabel}" fill="hsl(${hue3},85%,50%)" stroke="rgba(255,255,255,0.4)" stroke-width="2"/>
+    <circle cx="${cx}" cy="${cy}" r="${rLabel * 0.92}" fill="rgba(0,0,0,0.22)"/>
+    <text x="${cx}" y="${cy - rLabel * 0.24}" fill="#0b0b0b" font-size="${Math.max(18, rLabel * 0.3)}" font-family="ui-sans-serif, system-ui" text-anchor="middle" font-weight="800">V</text>
+    <text x="${cx}" y="${cy + rLabel * 0.08}" fill="white" font-size="${Math.max(12, rLabel * 0.22)}" font-family="ui-sans-serif, system-ui" text-anchor="middle" font-weight="700">${title}</text>
+    <text x="${cx}" y="${cy + rLabel * 0.32}" fill="rgba(255,255,255,0.85)" font-size="${Math.max(9, rLabel * 0.12)}" font-family="ui-sans-serif, system-ui" text-anchor="middle">${subtitle}</text>
+  </g>
+
+  <g>
+    <text x="6%" y="16%" fill="rgba(255,255,255,0.9)" font-size="24" font-family="ui-sans-serif, system-ui" font-weight="700">V-Share</text>
+    <text x="6%" y="22%" fill="rgba(255,255,255,0.7)" font-size="14" font-family="ui-sans-serif, system-ui">Vmonsters Revenue Share NFT</text>
+  </g>
+
+  <g>
+    <text x="6%" y="${height - 20}" fill="rgba(255,255,255,0.8)" font-size="12" font-family="ui-monospace">${contractShort} • #${tokenId}</text>
+  </g>
+</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function vShareDefaultDescription() {
+    return [
+        'V-Share is the official revenue-sharing NFT for Vmonsters.',
+        '',
+        'Holders of V-Share participate in marketplace revenue aligned to the Vmonsters ecosystem.',
+        '',
+        'Benefits:',
+        '• On-chain, non-custodial exposure to Vmonsters rev share mechanics',
+        '• Tradable on the WileyW€$T marketplace (Vitruveo)',
+        '• Designed for transparent accrual and future utility integrations',
+        '',
+        'Note: Actual distributions are governed by the associated smart contracts and program parameters.'
+    ].join('\n');
+}
+
 const smartUrlCache = new Map();
 /** SmartMedia: pick working video (mp4/webm/…) or image; otherwise nice SVG fallback */
 function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 'media', title = '', className = '' }) {
@@ -336,7 +426,7 @@ function SellPage() {
 
     // Cursor parallax tracking for background effect
     const [mousePosition, setMousePosition] = useState({ x: 0.2, y: 0.3 });
-    
+
     // Listing creation success state for confetti effect
     const [listingSuccess, setListingSuccess] = useState(false);
 
@@ -545,13 +635,13 @@ function SellPage() {
                 priceInWei,
                 formData.paymentToken
             );
-            
+
             setListingSuccess(true);
             setSellProgress(100);
             setTimeout(() => {
                 setListingSuccess(false);
             }, 3000);
-            
+
         } catch (error) {
             setStatus(`Error: ${error.message || 'Could not create listing'}`);
         }
@@ -885,7 +975,7 @@ function SellPage() {
     };
 
     /* =========================
-       NFT metadata (robust)
+       NFT metadata (robust + tolerant)
        ========================= */
     function mediaCandidatesFromMetadata(m) {
         if (!m || typeof m !== 'object') return [];
@@ -916,80 +1006,104 @@ function SellPage() {
         try {
             if (!ethers.isAddress(formData.nftContract)) throw new Error('Invalid contract address format');
             const checksum = ethers.getAddress(formData.nftContract);
+            const tokenIdStr = String(formData.tokenId);
 
-            // Try ERC721 first
+            const setFallback = (type, qty = '1', nameTitle = `NFT #${tokenIdStr}`) => {
+                const isVShare = checksum.toLowerCase() === VSHARE_ADDRESS.toLowerCase();
+                const fallback = isVShare
+                    ? vShareLpSvgDataUrl({ contract: checksum, tokenId: tokenIdStr, title: 'V-Share', subtitle: 'Vmonsters Rev Share' })
+                    : svgFallbackDataUrl({ seed: `${checksum}-${tokenIdStr}`, width: 640, height: 460, title: nameTitle });
+
+                const desc = isVShare ? vShareDefaultDescription() : 'Metadata unavailable';
+
+                setMetadata({ name: nameTitle, description: desc, image: fallback, attributes: [] });
+                setNftName(nameTitle);
+                setNftImage(fallback);
+                setNftType(type);
+                setBalance(qty);
+                setStatus('Warning: Metadata unavailable. Using a safe SVG preview. You can still list this NFT.');
+            };
+
+            // ERC721 path
             try {
                 const erc721 = new ethers.Contract(checksum, ERC721_ABI, provider);
-
                 const owner = await erc721.ownerOf(formData.tokenId);
-                const isOwner = owner?.toLowerCase?.() === wallet?.toLowerCase?.();
-                setOwnershipVerified(!!isOwner);
-                if (!isOwner) {
-                    setStatus('Warning: You are not the owner of this NFT');
-                    setLoading(false);
-                    return;
-                }
-
-                const tokenURI = await erc721.tokenURI(formData.tokenId);
-                const metaCands = metadataCandidatesFromUri(tokenURI, formData.tokenId, false);
-                const { json } = await fetchJsonFromCandidates(metaCands);
-
-                setMetadata(json);
-                setNftName(json?.name || `NFT #${formData.tokenId}`);
-
-                // Pre-resolve one working preview URL for zoom
-                try {
-                    const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
-                    const firstVideo = media.find(isVideoUrl);
-                    if (firstVideo) setNftImage(firstVideo);
-                    else setNftImage(await findFirstWorkingImage(media));
-                } catch {
-                    setNftImage('');
-                }
+                const isOwner = (owner || '').toLowerCase() === (wallet || '').toLowerCase();
+                setOwnershipVerified(isOwner);
+                if (!isOwner) { setStatus('Warning: You are not the owner of this NFT'); setLoading(false); return; }
 
                 setNftType('ERC721');
                 setBalance('1');
-                setStatus('');
-                return;
-            } catch {
-                // fallthrough to ERC1155
-            }
 
-            // Try ERC1155
-            try {
-                const erc1155 = new ethers.Contract(checksum, ERC1155_ABI, provider);
-
-                const bal = await erc1155.balanceOf(wallet, formData.tokenId);
-                const ownerBalance = bal.toString();
-                setBalance(ownerBalance);
-                if (ownerBalance === '0') {
-                    setStatus('Warning: You do not own any of these tokens');
-                    setLoading(false);
-                    return;
-                }
-                setOwnershipVerified(true);
-
-                const uri = await erc1155.uri(formData.tokenId);
-                const metaCands = metadataCandidatesFromUri(uri, formData.tokenId, true);
-                const { json } = await fetchJsonFromCandidates(metaCands);
-
-                setMetadata(json);
-                setNftName(json?.name || `NFT #${formData.tokenId}`);
+                let tokenURI = null;
+                try { tokenURI = await erc721.tokenURI(formData.tokenId); } catch { }
+                if (!tokenURI) { setFallback('ERC721', '1'); setLoading(false); return; }
 
                 try {
-                    const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
-                    const firstVideo = media.find(isVideoUrl);
-                    if (firstVideo) setNftImage(firstVideo);
-                    else setNftImage(await findFirstWorkingImage(media));
+                    const metaCands = metadataCandidatesFromUri(tokenURI, formData.tokenId, false);
+                    const { json } = await fetchJsonFromCandidates(metaCands);
+                    setMetadata(json);
+                    setNftName(json?.name || `NFT #${tokenIdStr}`);
+                    try {
+                        const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
+                        const firstVideo = media.find(isVideoUrl);
+                        if (firstVideo) setNftImage(firstVideo);
+                        else setNftImage(await findFirstWorkingImage(media));
+                    } catch {
+                        const isVShare = checksum.toLowerCase() === VSHARE_ADDRESS.toLowerCase();
+                        const fallback = isVShare
+                            ? vShareLpSvgDataUrl({ contract: checksum, tokenId: tokenIdStr, title: json?.name || `NFT #${tokenIdStr}` })
+                            : svgFallbackDataUrl({ seed: `${checksum}-${tokenIdStr}`, width: 640, height: 460, title: json?.name || `NFT #${tokenIdStr}` });
+                        setNftImage(fallback);
+                    }
+                    setStatus('');
                 } catch {
-                    setNftImage('');
+                    setFallback('ERC721', '1');
                 }
-
-                setNftType('ERC1155');
-                setFormData((prev) => ({ ...prev, quantity: ownerBalance }));
-                setStatus('');
+                setLoading(false);
+                return;
             } catch {
-                setStatus('Could not fetch NFT metadata. Make sure the contract and token ID are correct.');
+                // Continue to ERC1155
+            }
+
+            // ERC1155 path
+            try {
+                const erc1155 = new ethers.Contract(checksum, ERC1155_ABI, provider);
+                const bal = await erc1155.balanceOf(wallet, formData.tokenId);
+                const qty = bal.toString();
+                if (qty === '0') { setStatus('Warning: You do not own any of these tokens'); setLoading(false); return; }
+                setOwnershipVerified(true);
+                setNftType('ERC1155');
+                setBalance(qty);
+
+                let uri = null;
+                try { uri = await erc1155.uri(formData.tokenId); } catch { }
+                if (!uri) { setFallback('ERC1155', qty); setLoading(false); return; }
+
+                try {
+                    const metaCands = metadataCandidatesFromUri(uri, formData.tokenId, true);
+                    const { json } = await fetchJsonFromCandidates(metaCands);
+                    setMetadata(json);
+                    setNftName(json?.name || `NFT #${tokenIdStr}`);
+                    try {
+                        const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
+                        const firstVideo = media.find(isVideoUrl);
+                        if (firstVideo) setNftImage(firstVideo);
+                        else setNftImage(await findFirstWorkingImage(media));
+                    } catch {
+                        const isVShare = checksum.toLowerCase() === VSHARE_ADDRESS.toLowerCase();
+                        const fallback = isVShare
+                            ? vShareLpSvgDataUrl({ contract: checksum, tokenId: tokenIdStr, title: json?.name || `NFT #${tokenIdStr}` })
+                            : svgFallbackDataUrl({ seed: `${checksum}-${tokenIdStr}`, width: 640, height: 460, title: json?.name || `NFT #${tokenIdStr}` });
+                        setNftImage(fallback);
+                    }
+                    setFormData((prev) => ({ ...prev, quantity: qty }));
+                    setStatus('');
+                } catch {
+                    setFallback('ERC1155', qty);
+                }
+            } catch {
+                setStatus('Could not determine NFT standard or fetch metadata. Double-check contract/token ID.');
             }
         } catch (error) {
             setStatus('Error fetching NFT metadata: ' + (error.message || error));
@@ -1166,7 +1280,7 @@ function SellPage() {
                                         Fetch NFT Data
                                     </button>
                                 )}
-                                
+
                                 {loading && (
                                     <div className="form-group">
                                         <div className="skeleton text"></div>
@@ -1417,7 +1531,7 @@ function SellPage() {
                                     <button
                                         type="submit"
                                         className="primary-button"
-                                        disabled={!wallet || !metadata || (typeof status === 'string' && status.includes('Creating')) || !ownershipVerified}
+                                        disabled={!wallet || !ownershipVerified || (typeof status === 'string' && status.includes('Creating'))}
                                     >
                                         {typeof status === 'string' && status.includes('Creating') ? 'Processing...' : 'List NFT for Sale'}
                                     </button>
