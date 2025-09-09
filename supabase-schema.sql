@@ -232,6 +232,9 @@ CREATE TABLE IF NOT EXISTS sale_breakdowns (
     block_number BIGINT NOT NULL,
     log_index INTEGER NOT NULL,
     timestamp BIGINT NOT NULL,
+    transfer_type TEXT, -- 'erc20', 'native_direct', 'native_trace'
+    is_vibe_fee BOOLEAN DEFAULT FALSE, -- Mark records that are pure VIBE fees
+    fee_source TEXT, -- 'marketplace_trace', 'direct_transfer'
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     
     UNIQUE(transaction_hash, log_index)

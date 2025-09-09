@@ -24,6 +24,11 @@ function initProvider() {
     return provider;
 }
 
+// Get marketplace contract address from environment
+function getMarketplaceAddress() {
+    return process.env.VITE_MARKETPLACE_ADDRESS || process.env.MARKETPLACE_ADDRESS || '';
+}
+
 // Initialize Supabase client
 let supabase = null;
 function initSupabase() {
@@ -63,12 +68,12 @@ module.exports = async (req, res) => {
         let totalAmountSynced = 0;
         
         // Sync in batches to avoid RPC limits
-        const BATCH_SIZE = 2000;
+        const BATCH_SIZE = 500; // Smaller batch size for more reliable syncing
         
         for (let fromBlock = lastBlock + 1; fromBlock <= currentBlock; fromBlock += BATCH_SIZE) {
             const toBlock = Math.min(fromBlock + BATCH_SIZE - 1, currentBlock);
             
-            console.log(`🔍 Scanning blocks ${fromBlock} to ${toBlock}...`);
+            console.log(`🔍 Scanning blocks ${fromBlock} to ${toBlock} for VIBE fees...`);
             
             // Get transfer events to VIBE sink address (ERC20 transfers)
             const erc20Logs = await web3Provider.getLogs({
@@ -93,19 +98,20 @@ module.exports = async (req, res) => {
                         await processVibeTransfer(client, log, amount, amountNum, 'erc20', web3Provider);
                         totalFeesFound++;
                         totalAmountSynced += amountNum;
+                        console.log(`💰 ERC20 VIBE fee: ${amount} VTRU from tx ${log.transactionHash.slice(0, 10)}...`);
                     }
                 } catch (error) {
                     console.warn(`⚠️ Error processing ERC20 log ${log.transactionHash}:`, error);
                 }
             }
             
-            // Also scan for native VTRU transfers to VIBE sink
+            // Scan for native VTRU transfers to VIBE sink
             for (let blockNum = fromBlock; blockNum <= toBlock; blockNum++) {
                 try {
                     const block = await web3Provider.getBlock(blockNum, true);
                     if (block && block.transactions) {
                         for (const tx of block.transactions) {
-                            // Check if transaction is to VIBE sink address with value
+                            // Check direct transactions to VIBE sink first
                             if (tx.to && tx.to.toLowerCase() === VIBE_SINK_ADDRESS.toLowerCase() && tx.value && tx.value !== '0') {
                                 const amount = ethers.formatEther(tx.value);
                                 const amountNum = parseFloat(amount);
@@ -114,19 +120,88 @@ module.exports = async (req, res) => {
                                     await processVibeTransfer(client, {
                                         transactionHash: tx.hash,
                                         blockNumber: tx.blockNumber,
-                                        logIndex: 0, // Native transfers don't have log index
-                                        address: 'native', // Indicate this is native VTRU
-                                        topics: [null, ethers.zeroPadValue(tx.from, 32)] // from address
-                                    }, amount, amountNum, 'native', web3Provider);
+                                        logIndex: 0,
+                                        address: 'native',
+                                        topics: [null, ethers.zeroPadValue(tx.from, 32)]
+                                    }, amount, amountNum, 'native_direct', web3Provider);
                                     totalFeesFound++;
                                     totalAmountSynced += amountNum;
-                                    console.log(`💰 Recorded ${amount} native VTRU fee from tx ${tx.hash.slice(0, 10)}...`);
+                                    console.log(`💰 Direct VIBE transfer: ${amount} VTRU from tx ${tx.hash.slice(0, 10)}...`);
+                                    continue; // Skip trace analysis for direct transfers
+                                }
+                            }
+                            
+                            // For complex transactions, use transaction receipt to find internal transfers
+                            if (tx.input && tx.input.length > 10) { // Has function call data
+                                try {
+                                    // Get transaction receipt to check for internal transfers
+                                    const receipt = await web3Provider.getTransactionReceipt(tx.hash);
+                                    
+                                    // Use trace API if available, otherwise use eth_getBalance difference method
+                                    let vibeTransfers = [];
+                                    
+                                    try {
+                                        // Try trace API first
+                                        const trace = await web3Provider.send('debug_traceTransaction', [
+                                            tx.hash,
+                                            { tracer: 'callTracer' }
+                                        ]);
+                                        vibeTransfers = findVibeTransfersInTrace(trace);
+                                        console.log(`🔍 Found ${vibeTransfers.length} VIBE transfers in trace for tx ${tx.hash.slice(0, 10)}...`);
+                                        
+                                    } catch (traceError) {
+                                        // Fallback: Check balance changes using eth_getBalance
+                                        console.log(`📊 Trace API not available, checking balance changes for tx ${tx.hash.slice(0, 10)}...`);
+                                        
+                                        // Get VIBE sink balance before and after this transaction
+                                        const prevBlock = blockNum - 1;
+                                        if (prevBlock >= 0) {
+                                            try {
+                                                const balanceBefore = await web3Provider.getBalance(VIBE_SINK_ADDRESS, prevBlock);
+                                                const balanceAfter = await web3Provider.getBalance(VIBE_SINK_ADDRESS, blockNum);
+                                                const difference = balanceAfter - balanceBefore;
+                                                
+                                                if (difference > 0) {
+                                                    const amount = ethers.formatEther(difference);
+                                                    const amountNum = parseFloat(amount);
+                                                    
+                                                    vibeTransfers.push({
+                                                        from: tx.from,
+                                                        to: VIBE_SINK_ADDRESS,
+                                                        amount: amount,
+                                                        amountNum: amountNum,
+                                                        index: 0
+                                                    });
+                                                    console.log(`💰 Detected VIBE balance change: +${amount} VTRU in tx ${tx.hash.slice(0, 10)}...`);
+                                                }
+                                            } catch (balanceError) {
+                                                console.warn(`⚠️ Could not check balance changes for tx ${tx.hash}:`, balanceError.message);
+                                            }
+                                        }
+                                    }
+                                    
+                                    // Process any transfers found
+                                    for (const transfer of vibeTransfers) {
+                                        await processVibeTransfer(client, {
+                                            transactionHash: tx.hash,
+                                            blockNumber: tx.blockNumber,
+                                            logIndex: transfer.index,
+                                            address: 'trace',
+                                            topics: [null, ethers.zeroPadValue(transfer.from, 32)]
+                                        }, transfer.amount, transfer.amountNum, 'native_trace', web3Provider);
+                                        totalFeesFound++;
+                                        totalAmountSynced += transfer.amountNum;
+                                        console.log(`💰 Processed VIBE fee: ${transfer.amount} VTRU from tx ${tx.hash.slice(0, 10)}...`);
+                                    }
+                                    
+                                } catch (receiptError) {
+                                    console.warn(`⚠️ Error analyzing transaction ${tx.hash}:`, receiptError.message);
                                 }
                             }
                         }
                     }
                 } catch (error) {
-                    console.warn(`⚠️ Error scanning block ${blockNum} for native transfers:`, error);
+                    console.warn(`⚠️ Error scanning block ${blockNum} for VIBE transfers:`, error);
                 }
             }
         }
@@ -159,6 +234,46 @@ module.exports = async (req, res) => {
 };
 
 /**
+ * Recursively search transaction trace for calls to VIBE sink address
+ */
+function findVibeTransfersInTrace(trace, transfers = [], index = 0) {
+    if (!trace) return transfers;
+    
+    // Check if this call is to the VIBE sink address with value
+    if (trace.to && trace.to.toLowerCase() === VIBE_SINK_ADDRESS.toLowerCase()) {
+        if (trace.value && trace.value !== '0x0' && trace.value !== '0') {
+            try {
+                const amount = ethers.formatEther(trace.value);
+                const amountNum = parseFloat(amount);
+                
+                if (amountNum > 0) {
+                    transfers.push({
+                        from: trace.from || 'unknown',
+                        to: trace.to,
+                        amount: amount,
+                        amountNum: amountNum,
+                        index: index,
+                        callType: trace.type || 'CALL'
+                    });
+                    console.log(`🎯 Found VIBE transfer: ${amount} VTRU (${trace.type || 'CALL'}) from ${trace.from || 'unknown'}`);
+                }
+            } catch (error) {
+                console.warn('Error parsing trace value:', trace.value, error);
+            }
+        }
+    }
+    
+    // Recursively search sub-calls
+    if (trace.calls && Array.isArray(trace.calls)) {
+        trace.calls.forEach((call, i) => {
+            findVibeTransfersInTrace(call, transfers, index * 100 + i + 1);
+        });
+    }
+    
+    return transfers;
+}
+
+/**
  * Process a VIBE transfer (ERC20 or native) and store it in the database
  */
 async function processVibeTransfer(client, log, amount, amountNum, transferType, web3Provider) {
@@ -171,22 +286,25 @@ async function processVibeTransfer(client, log, amount, amountNum, transferType,
             ethers.getAddress('0x' + log.topics[1].slice(26)) : 
             'unknown';
         
-        // Store as a sale breakdown (we can't easily distinguish sale vs auction from just transfer logs)
+        // Store as a sale breakdown with improved VIBE fee tracking
         const breakdown = {
             listing_id: `vibe_${transferType}_${log.transactionHash}_${log.logIndex}`,
             platform_fee: '0', // We don't know the breakdown from just transfers
             royalty: '0',
             proceeds: '0', 
             vibe_amount: amount,
-            vibe_portion_in_payment: amount, // This is the actual VIBE fee
+            vibe_portion_in_payment: amount, // This is the actual VIBE fee sent to sink
             transaction_hash: log.transactionHash,
             block_number: log.blockNumber,
             log_index: log.logIndex,
             timestamp: block.timestamp,
-            token_address: log.address === 'native' ? 'VTRU' : log.address,
+            token_address: log.address === 'native' || log.address === 'trace' ? 'VTRU' : log.address,
             from_address: fromAddress,
             to_address: VIBE_SINK_ADDRESS,
-            transfer_type: transferType // Track whether this was ERC20 or native
+            transfer_type: transferType, // Track: erc20, native_direct, native_trace
+            // Additional metadata for better tracking
+            is_vibe_fee: true,
+            fee_source: transferType.includes('trace') ? 'marketplace_trace' : 'direct_transfer'
         };
         
         // Insert into sale_breakdowns table
@@ -219,16 +337,26 @@ async function getLastSyncedBlock(client) {
             
         if (error || !data) {
             console.log('📍 No previous VIBE fee sync found, starting from recent blocks');
-            // Start from 7 days ago to avoid scanning entire history
+            // Start from just 1000 blocks ago to catch recent activity
             const provider = initProvider();
             const currentBlock = await provider.getBlockNumber();
-            return Math.max(0, currentBlock - 100000); // ~7 days of blocks
+            return Math.max(0, currentBlock - 1000); // ~2-3 hours of blocks
         }
         
-        return data.last_vibe_fee_block || 0;
+        const lastBlock = data.last_vibe_fee_block || 0;
+        
+        // Don't go back more than 5000 blocks to avoid overwhelming the sync
+        const provider = initProvider();
+        const currentBlock = await provider.getBlockNumber();
+        const maxLookback = Math.max(0, currentBlock - 5000);
+        
+        return Math.max(lastBlock, maxLookback);
     } catch (error) {
         console.warn('⚠️ Error getting last synced block:', error);
-        return 0;
+        // Start from recent blocks on error
+        const provider = initProvider();
+        const currentBlock = await provider.getBlockNumber();
+        return Math.max(0, currentBlock - 1000);
     }
 }
 
