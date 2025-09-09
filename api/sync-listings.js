@@ -238,8 +238,20 @@ async function syncListings(fullRescan = false) {
     }));
 
     if (upsertRows.length) {
-        const { error } = await supabase.from('marketplace_listings').upsert(upsertRows, { onConflict: 'listing_id' });
-        if (error) throw new Error(error.message);
+        console.log(`💾 Attempting to upsert ${upsertRows.length} listings...`);
+        try {
+            const { error } = await supabase
+                .from('marketplace_listings')
+                .upsert(upsertRows);
+            if (error) {
+                console.error(`❌ Upsert failed: ${error.message}`);
+                throw new Error(error.message);
+            }
+            console.log(`✅ Successfully upserted ${upsertRows.length} listings`);
+        } catch (err) {
+            console.error(`❌ Upsert operation failed: ${err.message}`);
+            throw err;
+        }
     }
 
     // Mark newly canceled (only if listing exists and active)
@@ -254,7 +266,8 @@ async function syncListings(fullRescan = false) {
     await setLastSyncMeta(latest);
     return {
         newListingIds: newIds.length,
-        upserted: upsertRows.length,
+        found: listingArr.length,
+        cached: upsertRows.length,
         canceled: canceled.size,
         latestBlock: latest,
         fromBlock
@@ -269,8 +282,12 @@ module.exports = async function handler(req, res) {
     if (!['GET', 'POST'].includes(req.method)) return res.status(405).json({ error: 'Method not allowed' });
 
     const start = Date.now();
+    console.log(`🚀 Starting listings sync...`);
+    
     try {
         init();
+        console.log(`✅ Initialized clients - Marketplace: ${process.env.VITE_MARKETPLACE_ADDRESS}`);
+        
         const authHeader = req.headers.authorization;
         const cronSecret = process.env.CRON_SECRET;
         if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
@@ -279,13 +296,24 @@ module.exports = async function handler(req, res) {
         const body = req.method === 'POST' ? req.body || {} : {};
         const fullRescan = body.fullRescan === true;
         const stats = await syncListings(fullRescan);
+        
+        const duration = Date.now() - start;
+        console.log(`✅ Sync completed: ${JSON.stringify({
+            success: true,
+            timestamp: new Date().toISOString(),
+            duration: `${duration}ms`,
+            stats: { scanned: stats.newListingIds, found: stats.found, cached: stats.cached }
+        })}`);
+        
         return res.status(200).json({
             success: true,
             mode: fullRescan ? 'full' : 'incremental',
             stats,
-            durationMs: Date.now() - start
+            durationMs: duration
         });
     } catch (e) {
-        return res.status(500).json({ error: e.message, durationMs: Date.now() - start });
+        const duration = Date.now() - start;
+        console.error(`❌ Sync failed: ${e.message}`);
+        return res.status(500).json({ error: e.message, durationMs: duration });
     }
 };

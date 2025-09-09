@@ -330,6 +330,16 @@ CREATE TABLE IF NOT EXISTS collection_stats (
     UNIQUE(collection_address, date)
 );
 
+-- Table for tracking sync metadata and block numbers
+CREATE TABLE IF NOT EXISTS marketplace_sync_meta (
+    id SERIAL PRIMARY KEY,
+    key TEXT UNIQUE NOT NULL,
+    last_block BIGINT,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_seller ON marketplace_listings(seller);
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_active ON marketplace_listings(active);
@@ -379,6 +389,7 @@ ALTER TABLE admin_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE vibe_hourly_stats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE token_fee_stats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE collection_stats ENABLE ROW LEVEL SECURITY;
+ALTER TABLE marketplace_sync_meta ENABLE ROW LEVEL SECURITY;
 
 -- Policies for marketplace_listings (public read, authenticated write)
 CREATE POLICY "Enable read access for all users" ON marketplace_listings FOR SELECT USING (true);
@@ -424,6 +435,10 @@ CREATE POLICY "Authenticated write" ON token_fee_stats FOR ALL WITH CHECK (true)
 CREATE POLICY "Public read access" ON collection_stats FOR SELECT USING (true);
 CREATE POLICY "Authenticated write" ON collection_stats FOR ALL WITH CHECK (true);
 
+-- Policies for sync meta table (authenticated write only)
+CREATE POLICY "Authenticated read access" ON marketplace_sync_meta FOR SELECT USING (true);
+CREATE POLICY "Authenticated write" ON marketplace_sync_meta FOR ALL WITH CHECK (true);
+
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
@@ -438,6 +453,7 @@ CREATE TRIGGER update_marketplace_listings_updated_at BEFORE UPDATE ON marketpla
 CREATE TRIGGER update_user_profiles_updated_at BEFORE UPDATE ON user_profiles FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_token_fee_stats_updated_at BEFORE UPDATE ON token_fee_stats FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_collection_stats_updated_at BEFORE UPDATE ON collection_stats FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_marketplace_sync_meta_updated_at BEFORE UPDATE ON marketplace_sync_meta FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- Comments for documentation
 COMMENT ON TABLE marketplace_listings IS 'Cache table for NFT marketplace listings with metadata';
@@ -455,3 +471,4 @@ COMMENT ON TABLE admin_events IS 'Administrative events (PathSet, fee updates, e
 COMMENT ON TABLE vibe_hourly_stats IS 'Hourly rollups of VIBE flow statistics';
 COMMENT ON TABLE token_fee_stats IS 'Daily rollups of per-token fee conversions';
 COMMENT ON TABLE collection_stats IS 'Daily rollups of per-collection fees and royalties';
+COMMENT ON TABLE marketplace_sync_meta IS 'Metadata table for tracking sync state and block numbers';
