@@ -5,8 +5,8 @@
 const { ethers } = require('ethers');
 const { createClient } = require('@supabase/supabase-js');
 
-// VIBE Sink address that receives fees (updated based on transaction trace)
-const VIBE_SINK_ADDRESS = '0x327fab0f5a79c884b9e3fc611d490a19147d235';
+// VIBE Sink address that receives fees (corrected to actual VIBE sink)
+const VIBE_SINK_ADDRESS = '0x8e7C7f0DF435Be6773641f8cf62C590d7Dde5a8a';
 
 // ERC20 Transfer event signature
 const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -70,8 +70,8 @@ module.exports = async (req, res) => {
             
             console.log(`🔍 Scanning blocks ${fromBlock} to ${toBlock}...`);
             
-            // Get transfer events to VIBE sink address
-            const logs = await web3Provider.getLogs({
+            // Get transfer events to VIBE sink address (ERC20 transfers)
+            const erc20Logs = await web3Provider.getLogs({
                 fromBlock,
                 toBlock,
                 topics: [
@@ -81,55 +81,52 @@ module.exports = async (req, res) => {
                 ]
             });
             
-            console.log(`📋 Found ${logs.length} transfers to VIBE sink in blocks ${fromBlock}-${toBlock}`);
+            console.log(`📋 Found ${erc20Logs.length} ERC20 transfers to VIBE sink in blocks ${fromBlock}-${toBlock}`);
             
-            for (const log of logs) {
+            // Process ERC20 transfers
+            for (const log of erc20Logs) {
                 try {
                     const amount = ethers.formatEther(log.data);
                     const amountNum = parseFloat(amount);
                     
                     if (amountNum > 0) {
-                        // Get transaction details
-                        const tx = await web3Provider.getTransaction(log.transactionHash);
-                        const block = await web3Provider.getBlock(log.blockNumber);
-                        
-                        // Decode transfer event
-                        const fromAddress = ethers.getAddress('0x' + log.topics[1].slice(26));
-                        
-                        // Store as a sale breakdown (we can't easily distinguish sale vs auction from just transfer logs)
-                        const breakdown = {
-                            listing_id: `fee_${log.transactionHash}_${log.logIndex}`,
-                            platform_fee: '0', // We don't know the breakdown from just transfers
-                            royalty: '0',
-                            proceeds: '0', 
-                            vibe_amount: amount,
-                            vibe_portion_in_payment: amount, // This is the actual VIBE fee
-                            transaction_hash: log.transactionHash,
-                            block_number: log.blockNumber,
-                            log_index: log.logIndex,
-                            timestamp: block.timestamp,
-                            token_address: log.address,
-                            from_address: fromAddress,
-                            to_address: VIBE_SINK_ADDRESS
-                        };
-                        
-                        // Insert into sale_breakdowns table
-                        const { error } = await client
-                            .from('sale_breakdowns')
-                            .upsert(breakdown, {
-                                onConflict: 'transaction_hash,log_index'
-                            });
-                        
-                        if (error) {
-                            console.warn(`⚠️ Failed to insert breakdown for ${log.transactionHash}:`, error);
-                        } else {
-                            totalFeesFound++;
-                            totalAmountSynced += amountNum;
-                            console.log(`💰 Recorded ${amount} VTRU fee from tx ${log.transactionHash.slice(0, 10)}...`);
+                        await processVibeTransfer(client, log, amount, amountNum, 'erc20', web3Provider);
+                        totalFeesFound++;
+                        totalAmountSynced += amountNum;
+                    }
+                } catch (error) {
+                    console.warn(`⚠️ Error processing ERC20 log ${log.transactionHash}:`, error);
+                }
+            }
+            
+            // Also scan for native VTRU transfers to VIBE sink
+            for (let blockNum = fromBlock; blockNum <= toBlock; blockNum++) {
+                try {
+                    const block = await web3Provider.getBlock(blockNum, true);
+                    if (block && block.transactions) {
+                        for (const tx of block.transactions) {
+                            // Check if transaction is to VIBE sink address with value
+                            if (tx.to && tx.to.toLowerCase() === VIBE_SINK_ADDRESS.toLowerCase() && tx.value && tx.value !== '0') {
+                                const amount = ethers.formatEther(tx.value);
+                                const amountNum = parseFloat(amount);
+                                
+                                if (amountNum > 0) {
+                                    await processVibeTransfer(client, {
+                                        transactionHash: tx.hash,
+                                        blockNumber: tx.blockNumber,
+                                        logIndex: 0, // Native transfers don't have log index
+                                        address: 'native', // Indicate this is native VTRU
+                                        topics: [null, ethers.zeroPadValue(tx.from, 32)] // from address
+                                    }, amount, amountNum, 'native', web3Provider);
+                                    totalFeesFound++;
+                                    totalAmountSynced += amountNum;
+                                    console.log(`💰 Recorded ${amount} native VTRU fee from tx ${tx.hash.slice(0, 10)}...`);
+                                }
+                            }
                         }
                     }
                 } catch (error) {
-                    console.warn(`⚠️ Error processing log ${log.transactionHash}:`, error);
+                    console.warn(`⚠️ Error scanning block ${blockNum} for native transfers:`, error);
                 }
             }
         }
@@ -160,6 +157,54 @@ module.exports = async (req, res) => {
         });
     }
 };
+
+/**
+ * Process a VIBE transfer (ERC20 or native) and store it in the database
+ */
+async function processVibeTransfer(client, log, amount, amountNum, transferType, web3Provider) {
+    try {
+        // Get transaction details if we don't have them
+        const block = await web3Provider.getBlock(log.blockNumber);
+        
+        // Decode from address
+        const fromAddress = log.topics && log.topics[1] ? 
+            ethers.getAddress('0x' + log.topics[1].slice(26)) : 
+            'unknown';
+        
+        // Store as a sale breakdown (we can't easily distinguish sale vs auction from just transfer logs)
+        const breakdown = {
+            listing_id: `vibe_${transferType}_${log.transactionHash}_${log.logIndex}`,
+            platform_fee: '0', // We don't know the breakdown from just transfers
+            royalty: '0',
+            proceeds: '0', 
+            vibe_amount: amount,
+            vibe_portion_in_payment: amount, // This is the actual VIBE fee
+            transaction_hash: log.transactionHash,
+            block_number: log.blockNumber,
+            log_index: log.logIndex,
+            timestamp: block.timestamp,
+            token_address: log.address === 'native' ? 'VTRU' : log.address,
+            from_address: fromAddress,
+            to_address: VIBE_SINK_ADDRESS,
+            transfer_type: transferType // Track whether this was ERC20 or native
+        };
+        
+        // Insert into sale_breakdowns table
+        const { error } = await client
+            .from('sale_breakdowns')
+            .upsert(breakdown, {
+                onConflict: 'transaction_hash,log_index'
+            });
+        
+        if (error) {
+            console.warn(`⚠️ Failed to insert ${transferType} breakdown for ${log.transactionHash}:`, error);
+        } else {
+            console.log(`💰 Recorded ${amount} ${transferType} VTRU fee from tx ${log.transactionHash.slice(0, 10)}...`);
+        }
+    } catch (error) {
+        console.warn(`⚠️ Error processing ${transferType} transfer ${log.transactionHash}:`, error);
+    }
+}
 
 /**
  * Get the last synced block number for VIBE fees

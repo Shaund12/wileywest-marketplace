@@ -25,6 +25,9 @@ function VibeDashboardPage() {
     const [loading, setLoading] = useState(true);
     const [timeframe, setTimeframe] = useState('7d');
     const [error, setError] = useState(null);
+    const [syncing, setSyncing] = useState(false);
+    const [lastSync, setLastSync] = useState(null);
+    const [autoRefresh, setAutoRefresh] = useState(true);
 
     const toMs = useMemo(() => (t) => (typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : 0), []);
 
@@ -349,6 +352,43 @@ function VibeDashboardPage() {
         };
     }, [loadDashboardData]); // Only depend on loadDashboardData which is properly memoized
 
+    // Auto-refresh effect
+    useEffect(() => {
+        if (!autoRefresh) return;
+        
+        const interval = setInterval(() => {
+            loadDashboardData();
+        }, 30000); // Refresh every 30 seconds
+        
+        return () => clearInterval(interval);
+    }, [autoRefresh, loadDashboardData]);
+
+    // Sync VIBE fees from blockchain
+    const syncVibeFeesFromBlockchain = useCallback(async () => {
+        if (syncing) return;
+        
+        setSyncing(true);
+        try {
+            debugLog('🚀 Starting VIBE fee sync from blockchain...');
+            const response = await fetch('/api/sync-vibe-fees');
+            const result = await response.json();
+            
+            if (result.success) {
+                debugLog('✅ VIBE fee sync successful:', result.summary);
+                setLastSync(new Date());
+                // Reload dashboard data after successful sync
+                await loadDashboardData();
+            } else {
+                throw new Error(result.message || 'Sync failed');
+            }
+        } catch (error) {
+            criticalError('❌ VIBE fee sync failed:', error);
+            setError(`Sync failed: ${error.message}`);
+        } finally {
+            setSyncing(false);
+        }
+    }, [syncing, loadDashboardData]);
+
     const formatTimeAgo = useCallback((timestamp) => {
         if (!timestamp || isNaN(timestamp)) return 'Unknown';
 
@@ -371,9 +411,54 @@ function VibeDashboardPage() {
                 <h2>VIBE Dashboard</h2>
                 <p>Real-time analytics from Marketplace payouts and VIBE sink tracking</p>
                 <div style={{ fontSize: '0.9em', opacity: 0.7, marginTop: '0.5rem' }}>
-                    📊 VIBE Sink Address: <code style={{ background: 'rgba(0,255,255,0.1)', padding: '2px 4px', borderRadius: '3px' }}>0x327fab0f5a79c884b9e3fc611d490a19147d235</code>
+                    📊 VIBE Sink Address: <code style={{ background: 'rgba(0,255,255,0.1)', padding: '2px 4px', borderRadius: '3px' }}>0x8e7C7f0DF435Be6773641f8cf62C590d7Dde5a8a</code>
                     <br />
-                    💡 To populate data: Call <code>/api/sync-vibe-fees</code> to sync blockchain transfers to the VIBE sink
+                    💡 Click "Sync from Blockchain" to pull latest VIBE fees from blockchain transactions
+                    {lastSync && (
+                        <>
+                            <br />
+                            🕒 Last sync: {lastSync.toLocaleTimeString()}
+                        </>
+                    )}
+                </div>
+                <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button 
+                        onClick={syncVibeFeesFromBlockchain}
+                        disabled={syncing}
+                        style={{
+                            padding: '0.5rem 1rem',
+                            background: syncing ? '#666' : '#00ffff',
+                            color: syncing ? '#ccc' : '#000',
+                            border: 'none',
+                            borderRadius: '4px',
+                            cursor: syncing ? 'not-allowed' : 'pointer',
+                            fontWeight: 'bold'
+                        }}
+                    >
+                        {syncing ? '🔄 Syncing...' : '🔄 Sync from Blockchain'}
+                    </button>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9em' }}>
+                        <input 
+                            type="checkbox" 
+                            checked={autoRefresh} 
+                            onChange={(e) => setAutoRefresh(e.target.checked)}
+                        />
+                        Auto-refresh (30s)
+                    </label>
+                    <button 
+                        onClick={loadDashboardData}
+                        disabled={loading}
+                        style={{
+                            padding: '0.5rem 1rem',
+                            background: loading ? '#666' : 'rgba(0,255,255,0.2)',
+                            color: loading ? '#ccc' : '#00ffff',
+                            border: '1px solid rgba(0,255,255,0.3)',
+                            borderRadius: '4px',
+                            cursor: loading ? 'not-allowed' : 'pointer'
+                        }}
+                    >
+                        {loading ? '🔄 Loading...' : '🔄 Refresh Data'}
+                    </button>
                 </div>
             </div>
 
