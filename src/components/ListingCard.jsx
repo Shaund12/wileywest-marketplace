@@ -4,7 +4,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
 import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
-import { isVShareContract, vShareLpSvgDataUrl } from '../utils/vShareUtils';
+import { isVShareContract, vShareLpSvgDataUrl, getVShareMetadata } from '../utils/vShareUtils';
 import { debugWarn } from '../utils/debugUtils';
 import './ListingCard.css';
 
@@ -185,6 +185,24 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
 }
 
 function collectImageSources(listing) {
+    const nftContract = safeStr(listing?.nftContract);
+    const tokenId = safeStr(listing?.tokenId);
+    
+    // Special handling for V-Share contracts - prioritize V-Share SVG
+    if (nftContract && isVShareContract(nftContract)) {
+        const vShareMetadata = getVShareMetadata(nftContract, tokenId);
+        if (vShareMetadata?.image) {
+            // Return V-Share SVG as first priority, then any other images as fallback
+            const m = listing?.metadata || {};
+            const otherSources = [
+                m.image, listing?.image, listing?.imageUrl, m.image_url, m.imageUrl
+            ].filter(Boolean).map(x => String(x).trim());
+            
+            return [vShareMetadata.image, ...otherSources];
+        }
+    }
+    
+    // Standard image collection for non-V-Share NFTs
     const m = listing?.metadata || {};
     const s = [
         m.image, listing?.image, listing?.imageUrl, m.image_url, m.imageUrl
@@ -206,6 +224,17 @@ async function resolveWorkingMediaUrl(listing, { preferAnimation = false } = {})
     const base = preferAnimation ? [...collectAnimationSources(listing), ...collectImageSources(listing)]
         : [...collectImageSources(listing), ...collectAnimationSources(listing)];
     if (!base.length) return null;
+
+    // Special handling for V-Share contracts - return V-Share SVG immediately
+    const nftContract = safeStr(listing?.nftContract);
+    const tokenId = safeStr(listing?.tokenId);
+    if (nftContract && isVShareContract(nftContract)) {
+        const vShareMetadata = getVShareMetadata(nftContract, tokenId);
+        if (vShareMetadata?.image && vShareMetadata.image.startsWith('data:image/svg+xml')) {
+            imageUrlCache[cacheKey] = vShareMetadata.image;
+            return vShareMetadata.image;
+        }
+    }
 
     const candidates = [];
     const seen = new Set();

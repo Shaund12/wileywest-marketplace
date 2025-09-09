@@ -1070,9 +1070,34 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 
                 if (cachedListings && cachedListings.length > 0) {
                     debugLog(`✅ Loaded ${cachedListings.length} cached listings`);
-                    setListings(cachedListings);
-                    setHotListings(cachedListings.slice(0, 5));
-                    setStatus(`${cachedListings.length} listings loaded (updated by background sync)`);
+                    
+                    // Apply V-Share metadata normalization to cached listings
+                    const processedListings = cachedListings.map(listing => {
+                        if (listing?.nftContract && listing?.tokenId) {
+                            // Apply metadata normalization (handles V-Share detection)
+                            const normalizedMetadata = normalizeNFTMetadata(
+                                listing.metadata, 
+                                listing.nftContract, 
+                                listing.tokenId
+                            );
+                            
+                            // Update listing with normalized metadata
+                            return {
+                                ...listing,
+                                metadata: normalizedMetadata,
+                                // Ensure image fields are properly set for V-Share NFTs
+                                image: normalizedMetadata.image || listing.image,
+                                imageUrl: normalizedMetadata.imageUrl || listing.imageUrl || normalizedMetadata.image,
+                                name: normalizedMetadata.name || listing.name,
+                                description: normalizedMetadata.description || listing.description
+                            };
+                        }
+                        return listing;
+                    });
+                    
+                    setListings(processedListings);
+                    setHotListings(processedListings.slice(0, 5));
+                    setStatus(`${processedListings.length} listings loaded (updated by background sync)`);
                     
                     // Clear status after 3 seconds
                     setTimeout(() => setStatus(''), 3000);
@@ -1156,26 +1181,39 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         paymentToken: '0x0000000000000000000000000000000000000000',
                         isERC1155: false,
                         active: true,
-                        metadata: {
-                            name: 'V-Share Revenue Pool #1',
-                            description: 'A revenue sharing NFT that provides returns from marketplace fees',
-                            image: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGRlZnM+CjxsaW5lYXJHcmFkaWVudCBpZD0idjIiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgo8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMDA2ZmY1Ii8+CjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzAwNGZjYyIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSJ1cmwoI3YyKSIvPgo8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxNTAiIHI9IjgwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4zKSIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxjaXJjbGUgY3g9IjE1MCIgY3k9IjE1MCIgcj0iMTIwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4yKSIgc3Ryb2tlLXdpZHRoPSIxIi8+Cjx0ZXh0IHg9IjE1MCIgeT0iMTQwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5WPC90ZXh0Pgo8dGV4dCB4PSIxNTAiIHk9IjE3MCIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC45KSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+U0hBUkU8L3RleHQ+CjwvcnZnPg==',
-                            attributes: [
-                                { trait_type: 'Type', value: 'Revenue Share' },
-                                { trait_type: 'Pool', value: 'LP Token' },
-                                { trait_type: 'Returns', value: 'Marketplace Fees' }
-                            ]
-                        },
-                        image: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGRlZnM+CjxsaW5lYXJHcmFkaWVudCBpZD0idjIiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgo8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMDA2ZmY1Ii8+CjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzAwNGZjYyIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSJ1cmwoI3YyKSIvPgo8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxNTAiIHI9IjgwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4zKSIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxjaXJjbGUgY3g9IjE1MCIgY3k9IjE1MCIgcj0iMTIwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4yKSIgc3Ryb2tlLXdpZHRoPSIxIi8+Cjx0ZXh0IHg9IjE1MCIgeT0iMTQwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5WPC90ZXh0Pgo8dGV4dCB4PSIxNTAiIHk9IjE3MCIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC45KSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+U0hBUkU8L3RleHQ+CjwvcnZnPg==',
-                        imageUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGRlZnM+CjxsaW5lYXJHcmFkaWVudCBpZD0idjIiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgo8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMDA2ZmY1Ii8+CjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzAwNGZjYyIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSJ1cmwoI3YyKSIvPgo8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxNTAiIHI9IjgwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4zKSIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxjaXJjbGUgY3g9IjE1MCIgY3k9IjE1MCIgcj0iMTIwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4yKSIgc3Ryb2tlLXdpZHRoPSIxIi8+Cjx0ZXh0IHg9IjE1MCIgeT0iMTQwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5WPC90ZXh0Pgo8dGV4dCB4PSIxNTAiIHk9IjE3MCIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC45KSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+U0hBUkU8L3RleHQ+CjwvcnZnPg==',
+                        // Remove hardcoded metadata to allow V-Share normalization to work
                         name: 'V-Share Revenue Pool #1',
                         title: 'V-Share Revenue Pool #1',
                         description: 'A revenue sharing NFT that provides returns from marketplace fees'
                     }
                 ];
                 
-                setListings(demoListings);
-                setHotListings(demoListings.slice(0, 2));
+                // Apply V-Share metadata normalization to demo listings
+                const processedDemoListings = demoListings.map(listing => {
+                    if (listing?.nftContract && listing?.tokenId) {
+                        // Apply metadata normalization (handles V-Share detection)
+                        const normalizedMetadata = normalizeNFTMetadata(
+                            listing.metadata, 
+                            listing.nftContract, 
+                            listing.tokenId
+                        );
+                        
+                        // Update listing with normalized metadata  
+                        return {
+                            ...listing,
+                            metadata: normalizedMetadata,
+                            // Ensure image fields are properly set for V-Share NFTs
+                            image: normalizedMetadata.image || listing.image,
+                            imageUrl: normalizedMetadata.imageUrl || listing.imageUrl || normalizedMetadata.image,
+                            name: normalizedMetadata.name || listing.name,
+                            description: normalizedMetadata.description || listing.description
+                        };
+                    }
+                    return listing;
+                });
+                
+                setListings(processedDemoListings);
+                setHotListings(processedDemoListings.slice(0, 2));
                 
                 // Clear status after 3 seconds
                 setTimeout(() => setStatus(''), 3000);

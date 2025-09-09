@@ -11,7 +11,7 @@ import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
-import { isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
+import { isVShareContract, getVShareMetadata, vShareLpSvgDataUrl } from '../utils/vShareUtils';
 import { ethers } from 'ethers';
 import './MarketplacePage.css';
 import '../components/MarketplaceStats.css';
@@ -113,7 +113,19 @@ function hashString(str) {
     for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; }
     return Math.abs(h);
 }
-function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '' }) {
+function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '', contractAddress = '', tokenId = '' }) {
+    // Special handling for V-Share contracts
+    if (contractAddress && isVShareContract(contractAddress)) {
+        return vShareLpSvgDataUrl({ 
+            contract: contractAddress, 
+            tokenId: tokenId.toString(), 
+            width, 
+            height,
+            title: 'V-Share',
+            subtitle: 'Vmonsters Rev Share' 
+        });
+    }
+
     const h = hashString(seed);
     const hue = h % 360;
     const hue2 = (hue + 180) % 360;
@@ -215,6 +227,8 @@ function SmartImage({
     height = 200,
     seed = 'nft',
     title = '',
+    contractAddress = '',
+    tokenId = ''
 }) {
     const [url, setUrl] = useState(null);
     const [failed, setFailed] = useState(false);
@@ -238,7 +252,7 @@ function SmartImage({
         return () => { cancelled = true; };
     }, [src, JSON.stringify(srcList)]);
 
-    const finalSrc = failed || !url ? svgFallbackDataUrl({ seed, width, height, title }) : url;
+    const finalSrc = failed || !url ? svgFallbackDataUrl({ seed, width, height, title, contractAddress, tokenId }) : url;
 
     return (
         <img
@@ -1457,6 +1471,8 @@ function MarketplacePage() {
                                     seed={`${safeStr(featuredNFT.nftContract)}-${safeStr(featuredNFT.tokenId)}`}
                                     title={featuredNFT.name || featuredNFT.metadata?.name}
                                     className="featured-image-img"
+                                    contractAddress={featuredNFT.nftContract}
+                                    tokenId={featuredNFT.tokenId}
                                 />
                             </div>
                             <div className="featured-details">
@@ -1565,6 +1581,8 @@ function MarketplacePage() {
                                                 height={200}
                                                 seed={`${a.nftContract}-${a.tokenId}`}
                                                 title={title}
+                                                contractAddress={a.nftContract}
+                                                tokenId={a.tokenId}
                                             />
                                             <div className="auction-badge">AUCTION</div>
                                         </div>

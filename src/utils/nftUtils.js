@@ -5,6 +5,7 @@
 
 import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from './debugUtils';
+import { isVShareContract, getVShareMetadata } from './vShareUtils';
 
 /**
  * Configuration for marketplace scanning and display
@@ -292,7 +293,44 @@ export const normalizeNFTMetadata = (rawMetadata, contractAddress, tokenId) => {
     const cacheKey = `${contractAddress}-${tokenId}`;
     
     try {
-        // Create base metadata structure
+        // Special handling for V-Share contracts - prioritize V-Share metadata
+        if (contractAddress && isVShareContract(contractAddress)) {
+            debugLog(`🎯 Applying V-Share metadata for ${contractAddress}:${tokenId}`);
+            const vShareMetadata = getVShareMetadata(contractAddress, tokenId);
+            
+            if (vShareMetadata) {
+                const normalized = {
+                    name: vShareMetadata.name,
+                    description: vShareMetadata.description,
+                    image: vShareMetadata.image,
+                    imageUrl: vShareMetadata.imageUrl || vShareMetadata.image,
+                    attributes: vShareMetadata.attributes || [],
+                    collection: {
+                        name: 'V-Share',
+                        description: 'Vmonsters Revenue Share NFTs',
+                        image: vShareMetadata.image
+                    },
+                    contractAddress: contractAddress,
+                    tokenId: tokenId,
+                    // Metadata flags
+                    loaded: true,
+                    loading: false,
+                    error: null,
+                    timestamp: Date.now(),
+                    source: 'V-Share Generator'
+                };
+                
+                // Cache the V-Share metadata
+                metadataCache.set(cacheKey, {
+                    ...normalized,
+                    signature: createContentSignature(normalized)
+                });
+                
+                return normalized;
+            }
+        }
+        
+        // Create base metadata structure for non-V-Share NFTs
         const normalized = {
             name: '',
             description: '',
