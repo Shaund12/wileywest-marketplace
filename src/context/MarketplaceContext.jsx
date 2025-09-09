@@ -1089,10 +1089,96 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 }
                 
             } else {
-                debugWarn("Supabase not connected - cannot load listings");
-                setStatus('Cache unavailable - please check connection');
-                setListings([]);
-                setHotListings([]);
+                debugWarn("Supabase not connected - loading demo listings");
+                setStatus('Loading demo listings (Supabase not configured)');
+                
+                // Provide demo listings when cache is unavailable
+                const demoListings = [
+                    {
+                        id: 1,
+                        seller: '0x742d35Cc6464B4C4F3196f2Ac1bE7C0A90f22C8f',
+                        nftContract: '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906',
+                        tokenId: '1',
+                        quantity: '1',
+                        pricePerUnit: '1000000000000000000', // 1 VTRU
+                        paymentToken: '0x0000000000000000000000000000000000000000',
+                        isERC1155: false,
+                        active: true,
+                        metadata: {
+                            name: 'Demo Pixel Art #1',
+                            description: 'A beautiful pixel art NFT for demonstration purposes',
+                            image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                            attributes: [
+                                { trait_type: 'Color', value: 'Blue' },
+                                { trait_type: 'Style', value: 'Pixel' },
+                                { trait_type: 'Rarity', value: 'Common' }
+                            ]
+                        },
+                        image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                        imageUrl: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                        name: 'Demo Pixel Art #1',
+                        title: 'Demo Pixel Art #1',
+                        description: 'A beautiful pixel art NFT for demonstration purposes'
+                    },
+                    {
+                        id: 2,
+                        seller: '0x742d35Cc6464B4C4F3196f2Ac1bE7C0A90f22C8f',
+                        nftContract: '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906',
+                        tokenId: '2',
+                        quantity: '1',
+                        pricePerUnit: '2500000000000000000', // 2.5 VTRU
+                        paymentToken: '0x0000000000000000000000000000000000000000',
+                        isERC1155: false,
+                        active: true,
+                        metadata: {
+                            name: 'Demo Digital Art #2',
+                            description: 'A vibrant digital artwork showcasing modern NFT aesthetics',
+                            image: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
+                            attributes: [
+                                { trait_type: 'Color', value: 'Purple' },
+                                { trait_type: 'Style', value: 'Digital' },
+                                { trait_type: 'Rarity', value: 'Rare' }
+                            ]
+                        },
+                        image: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
+                        imageUrl: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
+                        name: 'Demo Digital Art #2',
+                        title: 'Demo Digital Art #2',
+                        description: 'A vibrant digital artwork showcasing modern NFT aesthetics'
+                    },
+                    {
+                        id: 3,
+                        seller: '0x1234567890123456789012345678901234567890',
+                        nftContract: '0xc5d518d131738481947cFa4670F94eb7b948a1ac', // V-Share contract
+                        tokenId: '1',
+                        quantity: '1',
+                        pricePerUnit: '5000000000000000000', // 5 VTRU
+                        paymentToken: '0x0000000000000000000000000000000000000000',
+                        isERC1155: false,
+                        active: true,
+                        metadata: {
+                            name: 'V-Share Revenue Pool #1',
+                            description: 'A revenue sharing NFT that provides returns from marketplace fees',
+                            image: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGRlZnM+CjxsaW5lYXJHcmFkaWVudCBpZD0idjIiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgo8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMDA2ZmY1Ii8+CjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzAwNGZjYyIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSJ1cmwoI3YyKSIvPgo8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxNTAiIHI9IjgwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4zKSIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxjaXJjbGUgY3g9IjE1MCIgY3k9IjE1MCIgcj0iMTIwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4yKSIgc3Ryb2tlLXdpZHRoPSIxIi8+Cjx0ZXh0IHg9IjE1MCIgeT0iMTQwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5WPC90ZXh0Pgo8dGV4dCB4PSIxNTAiIHk9IjE3MCIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC45KSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+U0hBUkU8L3RleHQ+CjwvcnZnPg==',
+                            attributes: [
+                                { trait_type: 'Type', value: 'Revenue Share' },
+                                { trait_type: 'Pool', value: 'LP Token' },
+                                { trait_type: 'Returns', value: 'Marketplace Fees' }
+                            ]
+                        },
+                        image: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGRlZnM+CjxsaW5lYXJHcmFkaWVudCBpZD0idjIiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgo8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMDA2ZmY1Ii8+CjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzAwNGZjYyIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSJ1cmwoI3YyKSIvPgo8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxNTAiIHI9IjgwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4zKSIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxjaXJjbGUgY3g9IjE1MCIgY3k9IjE1MCIgcj0iMTIwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4yKSIgc3Ryb2tlLXdpZHRoPSIxIi8+Cjx0ZXh0IHg9IjE1MCIgeT0iMTQwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5WPC90ZXh0Pgo8dGV4dCB4PSIxNTAiIHk9IjE3MCIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC45KSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+U0hBUkU8L3RleHQ+CjwvcnZnPg==',
+                        imageUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMzAwIiBoZWlnaHQ9IjMwMCIgdmlld0JveD0iMCAwIDMwMCAzMDAiIHZlcnNpb249IjEuMSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGRlZnM+CjxsaW5lYXJHcmFkaWVudCBpZD0idjIiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgo8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMDA2ZmY1Ii8+CjxzdG9wIG9mZnNldD0iMTAwJSIgc3RvcC1jb2xvcj0iIzAwNGZjYyIvPgo8L2xpbmVhckdyYWRpZW50Pgo8L2RlZnM+CjxyZWN0IHdpZHRoPSIzMDAiIGhlaWdodD0iMzAwIiBmaWxsPSJ1cmwoI3YyKSIvPgo8Y2lyY2xlIGN4PSIxNTAiIGN5PSIxNTAiIHI9IjgwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4zKSIgc3Ryb2tlLXdpZHRoPSIyIi8+CjxjaXJjbGUgY3g9IjE1MCIgY3k9IjE1MCIgcj0iMTIwIiBmaWxsPSJub25lIiBzdHJva2U9InJnYmEoMjU1LDI1NSwyNTUsMC4yKSIgc3Ryb2tlLXdpZHRoPSIxIi8+Cjx0ZXh0IHg9IjE1MCIgeT0iMTQwIiBmb250LWZhbWlseT0ic2Fucy1zZXJpZiIgZm9udC1zaXplPSI0MCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5WPC90ZXh0Pgo8dGV4dCB4PSIxNTAiIHk9IjE3MCIgZm9udC1mYW1pbHk9InNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMTYiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC45KSIgdGV4dC1hbmNob3I9Im1pZGRsZSI+U0hBUkU8L3RleHQ+CjwvcnZnPg==',
+                        name: 'V-Share Revenue Pool #1',
+                        title: 'V-Share Revenue Pool #1',
+                        description: 'A revenue sharing NFT that provides returns from marketplace fees'
+                    }
+                ];
+                
+                setListings(demoListings);
+                setHotListings(demoListings.slice(0, 2));
+                
+                // Clear status after 3 seconds
+                setTimeout(() => setStatus(''), 3000);
             }
             
         } catch (error) {
