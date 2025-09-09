@@ -34,6 +34,10 @@ function VibeDashboardPage() {
         const vibePortionInPayment = parseFloat(row?.vibe_portion_in_payment ?? row?.vibePortionInPayment ?? '0') || 0;
         if (vibePortionInPayment > 0) return vibePortionInPayment;
 
+        // Fall back to the vibe_amount field (primary field in breakdown tables)
+        const vibeAmount = parseFloat(row?.vibe_amount ?? '0') || 0;
+        if (vibeAmount > 0) return vibeAmount;
+
         // Fall back to the output metrics that track what was actually sent
         const wvtru = parseFloat(row?.vibe_out_wvtru ?? row?.vibeOutWVTRU ?? '0') || 0;
         const native = parseFloat(row?.vibe_out_native ?? row?.vibeOutNative ?? '0') || 0;
@@ -41,8 +45,7 @@ function VibeDashboardPage() {
         // If either exists, use them
         if (wvtru > 0 || native > 0) return wvtru + native;
 
-        // Legacy field for backward compatibility
-        return parseFloat(row?.vibe_amount ?? '0') || 0;
+        return 0;
     }, []);
 
     const loadDashboardData = useCallback(async () => {
@@ -366,7 +369,12 @@ function VibeDashboardPage() {
         <div className="hp" style={{ maxWidth: 1400, margin: '3rem auto', padding: '0 1.25rem' }}>
             <div className="hp-section__head">
                 <h2>VIBE Dashboard</h2>
-                <p>Real-time analytics from Marketplace payouts (no fee-processor)</p>
+                <p>Real-time analytics from Marketplace payouts and VIBE sink tracking</p>
+                <div style={{ fontSize: '0.9em', opacity: 0.7, marginTop: '0.5rem' }}>
+                    📊 VIBE Sink Address: <code style={{ background: 'rgba(0,255,255,0.1)', padding: '2px 4px', borderRadius: '3px' }}>0x327fab0f5a79c884b9e3fc611d490a19147d235</code>
+                    <br />
+                    💡 To populate data: Call <code>/api/sync-vibe-fees</code> to sync blockchain transfers to the VIBE sink
+                </div>
             </div>
 
             {error && (
