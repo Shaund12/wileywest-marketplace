@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS marketplace_listings (
     payment_token TEXT NOT NULL,
     is_erc1155 BOOLEAN DEFAULT FALSE,
     active BOOLEAN DEFAULT TRUE,
+    sale_status TEXT DEFAULT 'active', -- 'active', 'sold', 'canceled'
+    sale_transaction_hash TEXT,
     metadata JSONB DEFAULT '{}',
     image_url TEXT,
     name TEXT,
@@ -94,6 +96,92 @@ CREATE TABLE IF NOT EXISTS auction_bids (
     
     UNIQUE(transaction_hash, log_index)
 );
+
+-- === METADATA CACHE TABLES FOR INSTANT LOADING ===
+
+-- Table for caching normalized NFT metadata with TTL
+CREATE TABLE IF NOT EXISTS metadata_cache (
+    id SERIAL PRIMARY KEY,
+    contract_address TEXT NOT NULL,
+    token_id TEXT NOT NULL,
+    metadata JSONB NOT NULL,
+    image_url TEXT,
+    placeholder_data JSONB, -- Store dominant color, blurhash, etc.
+    token_uri TEXT,
+    cache_key TEXT UNIQUE NOT NULL, -- contract_address-token_id
+    hits INTEGER DEFAULT 0,
+    last_hit TIMESTAMP WITH TIME ZONE,
+    ttl_expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(contract_address, token_id)
+);
+
+-- Index for fast cache lookups
+CREATE INDEX IF NOT EXISTS idx_metadata_cache_key ON metadata_cache(cache_key);
+CREATE INDEX IF NOT EXISTS idx_metadata_cache_ttl ON metadata_cache(ttl_expires_at);
+CREATE INDEX IF NOT EXISTS idx_metadata_cache_contract_token ON metadata_cache(contract_address, token_id);
+
+-- Table for image cache entries with proxy URLs
+CREATE TABLE IF NOT EXISTS image_cache (
+    id SERIAL PRIMARY KEY,
+    original_url TEXT UNIQUE NOT NULL,
+    proxy_url TEXT NOT NULL,
+    content_type TEXT,
+    content_length BIGINT,
+    placeholder_data JSONB, -- Store dominant color, blurhash, LQIP
+    gateway_used TEXT,
+    cache_status TEXT DEFAULT 'cached', -- 'cached', 'warming', 'failed'
+    hits INTEGER DEFAULT 0,
+    last_hit TIMESTAMP WITH TIME ZONE,
+    ttl_expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for fast image cache lookups
+CREATE INDEX IF NOT EXISTS idx_image_cache_original_url ON image_cache(original_url);
+CREATE INDEX IF NOT EXISTS idx_image_cache_ttl ON image_cache(ttl_expires_at);
+CREATE INDEX IF NOT EXISTS idx_image_cache_status ON image_cache(cache_status);
+
+-- Table for pre-warm job queue
+CREATE TABLE IF NOT EXISTS prewarm_queue (
+    id SERIAL PRIMARY KEY,
+    job_type TEXT NOT NULL, -- 'metadata', 'image', 'listing'
+    contract_address TEXT NOT NULL,
+    token_id TEXT,
+    listing_id TEXT,
+    metadata_url TEXT,
+    image_urls TEXT[], -- Array of image URLs to pre-warm
+    priority INTEGER DEFAULT 1, -- Higher number = higher priority
+    status TEXT DEFAULT 'pending', -- 'pending', 'processing', 'completed', 'failed'
+    attempts INTEGER DEFAULT 0,
+    max_attempts INTEGER DEFAULT 3,
+    error_message TEXT,
+    processed_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for efficient queue processing
+CREATE INDEX IF NOT EXISTS idx_prewarm_queue_status_priority ON prewarm_queue(status, priority DESC, created_at);
+CREATE INDEX IF NOT EXISTS idx_prewarm_queue_contract_token ON prewarm_queue(contract_address, token_id);
+
+-- Table for cache performance metrics
+CREATE TABLE IF NOT EXISTS cache_metrics (
+    id SERIAL PRIMARY KEY,
+    metric_type TEXT NOT NULL, -- 'metadata_hit', 'metadata_miss', 'image_hit', 'image_miss', 'latency'
+    cache_type TEXT NOT NULL, -- 'metadata', 'image'
+    value NUMERIC NOT NULL,
+    dimensions JSONB, -- Store additional context like gateway, contract, etc.
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Index for metrics queries
+CREATE INDEX IF NOT EXISTS idx_cache_metrics_type_timestamp ON cache_metrics(metric_type, timestamp);
+CREATE INDEX IF NOT EXISTS idx_cache_metrics_cache_type ON cache_metrics(cache_type, timestamp);
+
+-- === AUCTION TABLES ===
 
 -- Table for auction settlements
 CREATE TABLE IF NOT EXISTS auction_settlements (
@@ -245,6 +333,7 @@ CREATE TABLE IF NOT EXISTS collection_stats (
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_seller ON marketplace_listings(seller);
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_active ON marketplace_listings(active);
+CREATE INDEX IF NOT EXISTS idx_marketplace_listings_sale_status ON marketplace_listings(sale_status);
 CREATE INDEX IF NOT EXISTS idx_marketplace_listings_updated_at ON marketplace_listings(updated_at);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_wallet ON user_profiles(wallet_address);
 CREATE INDEX IF NOT EXISTS idx_sales_history_listing_id ON sales_history(listing_id);

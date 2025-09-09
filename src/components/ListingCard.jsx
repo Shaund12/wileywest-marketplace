@@ -4,6 +4,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
 import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
+import { isVShareContract, vShareLpSvgDataUrl, getVShareMetadata } from '../utils/vShareUtils';
 import { debugWarn } from '../utils/debugUtils';
 import './ListingCard.css';
 
@@ -34,7 +35,19 @@ const shortAddr = (a) => (a && a.length > 9 ? `${a.slice(0, 6)}…${a.slice(-4)}
 const hashString = (str) => { let h = 0; for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; } return Math.abs(h); };
 const imageUrlCache = Object.create(null);
 
-function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '' }) {
+function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '', contractAddress = '', tokenId = '' }) {
+    // Special handling for V-Share contracts
+    if (contractAddress && isVShareContract(contractAddress)) {
+        return vShareLpSvgDataUrl({ 
+            contract: contractAddress, 
+            tokenId: tokenId.toString(), 
+            width, 
+            height,
+            title: 'V-Share',
+            subtitle: 'Vmonsters Rev Share' 
+        });
+    }
+
     const h = hashString(seed), hue = h % 360, hue2 = (hue + 180) % 360, gradId = `g${(h % 1e9).toString(36)}`, block = (h % 7) + 3;
     const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
     const svg = `
@@ -172,6 +185,24 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
 }
 
 function collectImageSources(listing) {
+    const nftContract = safeStr(listing?.nftContract);
+    const tokenId = safeStr(listing?.tokenId);
+    
+    // Special handling for V-Share contracts - prioritize V-Share SVG
+    if (nftContract && isVShareContract(nftContract)) {
+        const vShareMetadata = getVShareMetadata(nftContract, tokenId);
+        if (vShareMetadata?.image) {
+            // Return V-Share SVG as first priority, then any other images as fallback
+            const m = listing?.metadata || {};
+            const otherSources = [
+                m.image, listing?.image, listing?.imageUrl, m.image_url, m.imageUrl
+            ].filter(Boolean).map(x => String(x).trim());
+            
+            return [vShareMetadata.image, ...otherSources];
+        }
+    }
+    
+    // Standard image collection for non-V-Share NFTs
     const m = listing?.metadata || {};
     const s = [
         m.image, listing?.image, listing?.imageUrl, m.image_url, m.imageUrl
@@ -193,6 +224,17 @@ async function resolveWorkingMediaUrl(listing, { preferAnimation = false } = {})
     const base = preferAnimation ? [...collectAnimationSources(listing), ...collectImageSources(listing)]
         : [...collectImageSources(listing), ...collectAnimationSources(listing)];
     if (!base.length) return null;
+
+    // Special handling for V-Share contracts - return V-Share SVG immediately
+    const nftContract = safeStr(listing?.nftContract);
+    const tokenId = safeStr(listing?.tokenId);
+    if (nftContract && isVShareContract(nftContract)) {
+        const vShareMetadata = getVShareMetadata(nftContract, tokenId);
+        if (vShareMetadata?.image && vShareMetadata.image.startsWith('data:image/svg+xml')) {
+            imageUrlCache[cacheKey] = vShareMetadata.image;
+            return vShareMetadata.image;
+        }
+    }
 
     const candidates = [];
     const seen = new Set();
@@ -226,9 +268,11 @@ function AssetMedia({
     height = 200,
     className,
     posterUrl,
-    autoPlay = false
+    autoPlay = false,
+    contractAddress = '',
+    tokenId = ''
 }) {
-    const fallback = svgFallbackDataUrl({ seed, width, height, title: alt || '' });
+    const fallback = svgFallbackDataUrl({ seed, width, height, title: alt || '', contractAddress, tokenId });
     if (!url) {
         return <img src={fallback} alt={alt || ''} width={width} height={height} className={`${className || ''} lc-img`} loading="lazy" />;
     }
@@ -486,6 +530,8 @@ function ListingCardInner({
                     width={300}
                     height={200}
                     autoPlay={autoPlayAnimation}
+                    contractAddress={listing?.nftContract}
+                    tokenId={listing?.tokenId}
                 />
                 {loadingMedia && <div className="lc-blur-placeholder" aria-hidden />}
                 {!loadingMedia && !mediaUrl && (

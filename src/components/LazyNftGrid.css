@@ -1,0 +1,298 @@
+/* Lazy NFT Grid Styles */
+.lazy-nft-grid {
+    width: 100%;
+}
+
+/* Progress indicator */
+.lazy-grid-progress {
+    margin-bottom: 1.5rem;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.progress-text {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    color: #e0e0e0;
+}
+
+.batch-info {
+    color: #9ca3af;
+    font-size: 0.8rem;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #00d4ff, #5b8def);
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+
+/* Loading states */
+.loading-image {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+}
+
+.loading-text {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: #9ca3af;
+}
+
+.error-image {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    background: rgba(255, 0, 0, 0.1);
+    border-radius: 8px;
+}
+
+.error-image span {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.error-image .fallback {
+    opacity: 0.7;
+}
+
+/* Footer loading area */
+.lazy-grid-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 2rem;
+    padding: 1.5rem;
+}
+
+.batch-loading {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    color: #e0e0e0;
+    font-size: 0.9rem;
+}
+
+.load-more-trigger {
+    width: 100%;
+    min-height: 10px;
+}
+
+.load-more-button {
+    padding: 0.75rem 1.5rem;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: #e0e0e0;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.load-more-button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    transform: translateY(-1px);
+}
+
+.load-more-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Completion message */
+.lazy-grid-complete {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-top: 2rem;
+    padding: 1rem;
+    background: rgba(0, 255, 0, 0.1);
+    border: 1px solid rgba(0, 255, 0, 0.2);
+    border-radius: 8px;
+    color: #4ade80;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+/* NFT Card enhancements for lazy loading */
+.nft-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.nft-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+}
+
+.nft-card-inner {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.nft-image {
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px 8px 0 0;
+    background: #1a1a1a;
+}
+
+.nft-image img {
+    width: 100%;
+    height: 200px;
+    object-fit: cover;
+    transition: transform 0.2s ease;
+}
+
+.nft-card:hover .nft-image img {
+    transform: scale(1.05);
+}
+
+.nft-image img.fallback {
+    opacity: 0.8;
+    filter: grayscale(0.2);
+}
+
+/* List view specific styles */
+.nft-list-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: all 0.2s ease;
+    margin-bottom: 0.75rem;
+}
+
+.nft-list-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateX(4px);
+}
+
+.nft-list-image {
+    flex-shrink: 0;
+    width: 80px;
+    height: 80px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #1a1a1a;
+    cursor: pointer;
+}
+
+.nft-list-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.nft-list-details {
+    flex: 1;
+    cursor: pointer;
+}
+
+.nft-list-details h3 {
+    margin: 0 0 0.25rem 0;
+    font-size: 1.1rem;
+    color: #fff;
+}
+
+.nft-list-details .collection-name {
+    margin: 0 0 0.5rem 0;
+    color: #9ca3af;
+    font-size: 0.9rem;
+}
+
+.nft-list-meta {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+}
+
+.nft-list-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.nft-list-actions button {
+    padding: 0.5rem 1rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .lazy-grid-progress {
+        padding: 0.75rem;
+    }
+    
+    .progress-text {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+    
+    .nft-list-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+    }
+    
+    .nft-list-image {
+        width: 100%;
+        height: 150px;
+    }
+    
+    .nft-list-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+    
+    .nft-list-actions button {
+        flex: 1;
+    }
+}
+
+/* Dark theme specific adjustments */
+@media (prefers-color-scheme: dark) {
+    .lazy-grid-progress {
+        background: rgba(255, 255, 255, 0.03);
+        border-color: rgba(255, 255, 255, 0.08);
+    }
+    
+    .nft-list-item {
+        background: rgba(255, 255, 255, 0.03);
+        border-color: rgba(255, 255, 255, 0.08);
+    }
+    
+    .nft-list-item:hover {
+        background: rgba(255, 255, 255, 0.08);
+        border-color: rgba(255, 255, 255, 0.15);
+    }
+}

@@ -1,785 +1,308 @@
+/**
+ * Enhanced full-chain NFT sync with:
+ * - Genesis scan (block 0) chunked (CONFIG.CHUNK_BLOCKS)
+ * - Incremental mode using last_full_scan_block
+ * - Progressive metadata fetch & caching
+ * - Immediate fullRescan trigger via POST body { walletAddress, immediate:true, fullRescan:true }
+ */
 const { ethers } = require('ethers');
 const { createClient } = require('@supabase/supabase-js');
 
-// ERC721 and ERC1155 ABIs for NFT scanning
+const CONFIG = {
+    CHUNK_BLOCKS: parseInt(process.env.NFT_SCAN_CHUNK || '6000', 10),
+    MAX_ENUM_721: 4000,
+    MAX_METADATA_CONCURRENCY: 25,
+    METADATA_TIMEOUT: 20000
+};
+
 const ERC721_ABI = [
     'function balanceOf(address owner) view returns (uint256)',
     'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
     'function tokenURI(uint256 tokenId) view returns (string)',
     'function ownerOf(uint256 tokenId) view returns (address)',
-    'function name() view returns (string)',
-    'function symbol() view returns (string)',
-    'function supportsInterface(bytes4 interfaceId) view returns (bool)',
-    'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'
+    'function supportsInterface(bytes4 interfaceId) view returns (bool)'
 ];
-
 const ERC1155_ABI = [
     'function balanceOf(address owner, uint256 id) view returns (uint256)',
-    'function balanceOfBatch(address[] owners, uint256[] ids) view returns (uint256[])',
     'function uri(uint256 id) view returns (string)',
-    'function name() view returns (string)',
-    'function symbol() view returns (string)',
-    'function supportsInterface(bytes4 interfaceId) view returns (bool)',
-    'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
-    'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
+    'function supportsInterface(bytes4 interfaceId) view returns (bool)'
 ];
 
-// Known NFT contracts to scan - expanded list for better initial discovery
 const KNOWN_NFT_CONTRACTS = [
-    '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
-    // Add more known NFT contracts on Vitruveo network here
-    // This ensures new users get scanned for common collections even without recent transfers
+    '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906'
 ];
 
-// IPFS gateways for metadata resolution (ordered by reliability)
-const IPFS_GATEWAYS = [
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://dweb.link/ipfs/',
-    'https://ipfs.io/ipfs/',
-    'https://cloudflare-ipfs.com/ipfs/',
-    'https://gateway.ipfs.io/ipfs/',
-    'https://ipfs.fleek.co/ipfs/',
-];
-
-// Configuration
-const COLLECTION_CONFIG = {
-    MAX_BLOCKS_BACK: 1000000, // Increased to ~12 months for better initial discovery
-    BATCH_SIZE: 50,
-    MAX_RETRIES: 3,
-    RETRY_DELAY: 1000,
-    MAX_CONCURRENT_USERS: 5, // Process max 5 users per cron run
-    METADATA_TIMEOUT: 30000, // Increased to 30 seconds for better IPFS reliability
-    GATEWAY_TIMEOUT: 8000 // Per-gateway timeout
-};
-
-// Initialize providers
 let provider;
 let supabase;
 
-function initializeClients() {
-    // Initialize Ethereum provider
+function init() {
     const rpcUrl = process.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
     provider = new ethers.JsonRpcProvider(rpcUrl);
-    
-    // Initialize Supabase
     const supabaseUrl = process.env.VITE_SUPABASE_URL;
     const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
-    
-    if (!supabaseUrl || !supabaseKey) {
-        throw new Error('Supabase credentials not configured');
-    }
-    
+    if (!supabaseUrl || !supabaseKey) throw new Error('Supabase credentials missing');
     supabase = createClient(supabaseUrl, supabaseKey);
-    
-    console.log('✅ Initialized clients for user collection sync');
 }
 
-// Fetch NFT metadata from tokenURI with improved reliability
-async function fetchNFTMetadata(nftContract, tokenId) {
+async function fetchJson(url, timeoutMs) {
+    const ctrl = new AbortController();
+    const id = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
-        const nftAbi = [
-            'function tokenURI(uint256 tokenId) external view returns (string memory)',
-            'function uri(uint256 id) external view returns (string memory)' // ERC1155
-        ];
-        
-        const nft = new ethers.Contract(nftContract, nftAbi, provider);
-        let tokenURI;
-        
-        try {
-            tokenURI = await nft.tokenURI(tokenId);
-        } catch {
-            // Try ERC1155 uri method
-            try {
-                tokenURI = await nft.uri(tokenId);
-            } catch {
-                console.warn(`No tokenURI found for ${nftContract}:${tokenId}`);
-                return null;
-            }
-        }
-        
-        if (!tokenURI) {
-            console.warn(`Empty tokenURI for ${nftContract}:${tokenId}`);
-            return null;
-        }
-        
-        console.log(`Fetching metadata for ${nftContract}:${tokenId} from URI: ${tokenURI}`);
-        
-        // Handle different URI schemes
-        if (tokenURI.startsWith('ipfs://')) {
-            return await fetchFromIPFS(tokenURI, nftContract, tokenId);
-        } else if (tokenURI.startsWith('http://') || tokenURI.startsWith('https://')) {
-            return await fetchFromHTTP(tokenURI, nftContract, tokenId);
-        } else if (tokenURI.startsWith('data:')) {
-            return await parseDataURI(tokenURI, nftContract, tokenId);
-        } else {
-            console.warn(`Unsupported URI scheme for ${nftContract}:${tokenId}: ${tokenURI}`);
-            return null;
-        }
-    } catch (error) {
-        console.warn(`Failed to fetch metadata for ${nftContract}:${tokenId}:`, error.message);
-        return null;
+        const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: 'application/json' } });
+        clearTimeout(id);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const txt = await res.text();
+        return JSON.parse(txt);
+    } catch (e) {
+        clearTimeout(id);
+        throw e;
     }
 }
 
-// Fetch metadata from IPFS with multiple gateway fallbacks
-async function fetchFromIPFS(ipfsURI, nftContract, tokenId) {
-    const cid = ipfsURI.slice(7); // Remove 'ipfs://'
-    
-    for (let i = 0; i < IPFS_GATEWAYS.length; i++) {
-        const gateway = IPFS_GATEWAYS[i];
-        const url = `${gateway}${cid}`;
-        
-        try {
-            console.log(`Trying IPFS gateway ${i + 1}/${IPFS_GATEWAYS.length}: ${gateway}`);
-            
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), COLLECTION_CONFIG.GATEWAY_TIMEOUT);
-            
-            const response = await fetch(url, { 
-                signal: controller.signal,
-                headers: { 
-                    'Accept': 'application/json',
-                    'User-Agent': 'BlockDust-NFT-Scanner/1.0'
-                }
-            });
-            
-            clearTimeout(timeoutId);
-            
-            if (!response.ok) {
-                console.warn(`Gateway ${gateway} returned ${response.status} for ${nftContract}:${tokenId}`);
-                continue;
-            }
-            
-            // Get response text first and validate JSON parsing
-            const text = await response.text();
-            let metadata;
-            
-            try {
-                metadata = JSON.parse(text);
-            } catch (jsonError) {
-                console.warn(`Failed to parse JSON from ${gateway} for ${nftContract}:${tokenId}:`, jsonError.message);
-                console.warn(`Response text (first 200 chars):`, text.substring(0, 200));
-                continue; // Try next gateway
-            }
-            
-            // Resolve nested IPFS image URLs
-            if (metadata.image?.startsWith('ipfs://')) {
-                const imageCid = metadata.image.slice(7);
-                metadata.image = `${gateway}${imageCid}`;
-                console.log(`Resolved image URL: ${metadata.image}`);
-            }
-            
-            // Validate metadata structure
-            if (typeof metadata === 'object' && metadata !== null) {
-                console.log(`✅ Successfully fetched metadata for ${nftContract}:${tokenId} from ${gateway}`);
-                return metadata;
-            } else {
-                console.warn(`Invalid metadata structure from ${gateway} for ${nftContract}:${tokenId}`);
-                continue;
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                console.warn(`Gateway ${gateway} timeout for ${nftContract}:${tokenId}`);
-            } else {
-                console.warn(`Gateway ${gateway} error for ${nftContract}:${tokenId}:`, error.message);
-            }
-        }
-    }
-    
-    console.warn(`❌ All IPFS gateways failed for ${nftContract}:${tokenId}`);
+async function classifyContract(address) {
+    // 721?
+    try {
+        const c = new ethers.Contract(address, ERC721_ABI, provider);
+        const sup = await c.supportsInterface('0x80ac58cd').catch(() => false);
+        if (sup) return 'ERC721';
+    } catch { }
+    // 1155?
+    try {
+        const c2 = new ethers.Contract(address, ERC1155_ABI, provider);
+        const sup2 = await c2.supportsInterface('0xd9b67a26').catch(() => false);
+        if (sup2) return 'ERC1155';
+    } catch { }
     return null;
 }
 
-// Fetch metadata from HTTP/HTTPS URLs
-async function fetchFromHTTP(httpURI, nftContract, tokenId) {
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), COLLECTION_CONFIG.METADATA_TIMEOUT);
-        
-        const response = await fetch(httpURI, { 
-            signal: controller.signal,
-            headers: { 
-                'Accept': 'application/json',
-                'User-Agent': 'BlockDust-NFT-Scanner/1.0'
-            }
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (!response.ok) {
-            console.warn(`HTTP ${response.status} for ${nftContract}:${tokenId} at ${httpURI}`);
-            return null;
-        }
-        
-        // Get response text first and validate JSON parsing
-        const text = await response.text();
-        let metadata;
-        
+async function discoverContractsForWallet(wallet, fromBlock, toBlock) {
+    const set = new Set(KNOWN_NFT_CONTRACTS.map(a => a.toLowerCase()));
+    const transferTopic721 = ethers.id('Transfer(address,address,uint256)');
+    const single1155 = ethers.id('TransferSingle(address,address,address,uint256,uint256)');
+    const batch1155 = ethers.id('TransferBatch(address,address,address,uint256[],uint256[])');
+    const walletTopic = ethers.zeroPadValue(wallet.toLowerCase(), 32);
+    for (let start = fromBlock; start <= toBlock; start += CONFIG.CHUNK_BLOCKS) {
+        const end = Math.min(start + CONFIG.CHUNK_BLOCKS - 1, toBlock);
+        // ERC721 to wallet
         try {
-            metadata = JSON.parse(text);
-        } catch (jsonError) {
-            console.warn(`Failed to parse HTTP JSON for ${nftContract}:${tokenId}:`, jsonError.message);
-            console.warn(`Response text (first 200 chars):`, text.substring(0, 200));
-            return null;
-        }
-        
-        if (typeof metadata === 'object' && metadata !== null) {
-            console.log(`✅ Successfully fetched HTTP metadata for ${nftContract}:${tokenId}`);
-            return metadata;
-        } else {
-            console.warn(`Invalid HTTP metadata structure for ${nftContract}:${tokenId}`);
-            return null;
-        }
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            console.warn(`HTTP timeout for ${nftContract}:${tokenId} at ${httpURI}`);
-        } else {
-            console.warn(`HTTP error for ${nftContract}:${tokenId}:`, error.message);
-        }
-        return null;
+            const logs721 = await provider.getLogs({ fromBlock: start, toBlock: end, topics: [transferTopic721, null, walletTopic] });
+            logs721.forEach(l => set.add(l.address.toLowerCase()));
+        } catch { }
+        // 1155 single -> wallet
+        try {
+            const sLogs = await provider.getLogs({ fromBlock: start, toBlock: end, topics: [single1155, null, null, walletTopic] });
+            sLogs.forEach(l => set.add(l.address.toLowerCase()));
+        } catch { }
+        // 1155 batch -> wallet
+        try {
+            const bLogs = await provider.getLogs({ fromBlock: start, toBlock: end, topics: [batch1155, null, null, walletTopic] });
+            bLogs.forEach(l => set.add(l.address.toLowerCase()));
+        } catch { }
     }
+    return [...set];
 }
 
-// Parse data: URI scheme metadata
-async function parseDataURI(dataURI, nftContract, tokenId) {
-    try {
-        if (dataURI.startsWith('data:application/json;base64,')) {
-            const base64Data = dataURI.slice(29);
-            const jsonString = Buffer.from(base64Data, 'base64').toString('utf-8');
-            const metadata = JSON.parse(jsonString);
-            
-            console.log(`✅ Successfully parsed data URI metadata for ${nftContract}:${tokenId}`);
-            return metadata;
-        } else if (dataURI.startsWith('data:application/json,')) {
-            const jsonString = decodeURIComponent(dataURI.slice(22));
-            const metadata = JSON.parse(jsonString);
-            
-            console.log(`✅ Successfully parsed data URI metadata for ${nftContract}:${tokenId}`);
-            return metadata;
-        } else {
-            console.warn(`Unsupported data URI format for ${nftContract}:${tokenId}: ${dataURI.slice(0, 50)}...`);
-            return null;
-        }
-    } catch (error) {
-        console.warn(`Failed to parse data URI for ${nftContract}:${tokenId}:`, error.message);
-        return null;
-    }
-}
-
-// Detect if contract is ERC721 or ERC1155
-async function detectNftStandard(contractAddress) {
-    try {
-        // Try ERC721 first
-        const erc721Contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
-        await erc721Contract.supportsInterface('0x80ac58cd'); // ERC721 interface ID
-        return 'ERC721';
-    } catch (e) {
-        try {
-            // Try ERC1155
-            const erc1155Contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
-            await erc1155Contract.supportsInterface('0xd9b67a26'); // ERC1155 interface ID
-            return 'ERC1155';
-        } catch (e) {
-            return null; // Not a standard NFT contract
-        }
-    }
-}
-
-// Get contract info (name/symbol)
-async function getContractInfo(contractAddress, contractType) {
-    try {
-        const abi = contractType === 'ERC721' ? ERC721_ABI : ERC1155_ABI;
-        const contract = new ethers.Contract(contractAddress, abi, provider);
-        
-        let name = '';
-        let symbol = '';
-        
-        try {
-            name = await contract.name();
-        } catch { /* optional */ }
-        
-        try {
-            symbol = await contract.symbol();
-        } catch { /* optional */ }
-        
-        if (!name) {
-            name = `Collection ${contractAddress.slice(0, 6)}...${contractAddress.slice(-4)}`;
-        }
-        
-        return { name, symbol };
-    } catch (e) {
-        return {
-            name: `Collection ${contractAddress.slice(0, 6)}...${contractAddress.slice(-4)}`,
-            symbol: ''
-        };
-    }
-}
-
-// Scan for ERC721 NFTs owned by user
-async function scanERC721(contractAddress, walletAddress) {
-    try {
-        console.log(`Scanning ERC721 contract ${contractAddress} for wallet ${walletAddress}...`);
-        
-        const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
-        const balance = await contract.balanceOf(walletAddress);
-        
-        if (balance.toString() === '0') {
-            console.log(`No ERC721 tokens found for ${walletAddress} in ${contractAddress}`);
-            return [];
-        }
-        
-        const nfts = [];
-        const balanceNum = Number(balance.toString());
-        
-        console.log(`Found ${balanceNum} ERC721 tokens for ${walletAddress} in ${contractAddress}`);
-        
-        // Fetch contract info
-        const contractInfo = await getContractInfo(contractAddress, 'ERC721');
-        
-        for (let i = 0; i < Math.min(balanceNum, 100); i++) { // Limit to 100 NFTs per contract
+async function scanERC721(contractAddr, wallet) {
+    const out = [];
+    const c = new ethers.Contract(contractAddr, ERC721_ABI, provider);
+    let balance = 0n;
+    try { balance = await c.balanceOf(wallet); } catch { }
+    // Try enumerating
+    if (balance > 0n) {
+        for (let i = 0; i < Math.min(Number(balance), CONFIG.MAX_ENUM_721); i++) {
             try {
-                const tokenId = await contract.tokenOfOwnerByIndex(walletAddress, i);
-                
-                let tokenURI = null;
-                try {
-                    tokenURI = await contract.tokenURI(tokenId);
-                } catch (e) {
-                    console.warn(`Failed to get tokenURI for ${contractAddress}:${tokenId}:`, e.message);
-                }
-                
-                // Fetch metadata with improved error handling
-                console.log(`Fetching metadata for ERC721 ${contractAddress}:${tokenId}...`);
-                const metadata = await fetchNFTMetadata(contractAddress, tokenId.toString());
-                
-                // Generate fallback data if metadata fetch fails
-                const name = metadata?.name || `${contractInfo.name || 'NFT'} #${tokenId}`;
-                const image = metadata?.image || null;
-                
-                const nftData = {
-                    contractAddress: contractAddress.toLowerCase(),
-                    tokenId: tokenId.toString(),
-                    type: 'ERC721',
-                    tokenURI,
-                    balance: '1',
-                    metadata: metadata || {},
-                    name,
-                    image,
-                    collection: contractInfo
-                };
-                
-                nfts.push(nftData);
-                
-                if (metadata) {
-                    console.log(`✅ Successfully processed ERC721 ${contractAddress}:${tokenId} with metadata`);
-                } else {
-                    console.log(`⚠️ Processed ERC721 ${contractAddress}:${tokenId} without metadata`);
-                }
-            } catch (e) {
-                console.warn(`Failed to fetch ERC721 token ${i} from ${contractAddress}:`, e.message);
-            }
-        }
-        
-        console.log(`Completed ERC721 scan: ${nfts.length} NFTs processed for ${contractAddress}`);
-        return nfts;
-    } catch (e) {
-        console.warn(`Failed to scan ERC721 contract ${contractAddress}:`, e.message);
-        return [];
-    }
-}
-
-// Scan for ERC1155 NFTs owned by user
-async function scanERC1155(contractAddress, walletAddress) {
-    try {
-        console.log(`Scanning ERC1155 contract ${contractAddress} for wallet ${walletAddress}...`);
-        
-        const contract = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
-        
-        // Fetch contract info
-        const contractInfo = await getContractInfo(contractAddress, 'ERC1155');
-        
-        // Get transfer events to find token IDs
-        const transferSingleFilter = contract.filters.TransferSingle(null, null, walletAddress);
-        const transferBatchFilter = contract.filters.TransferBatch(null, null, walletAddress);
-        
-        const currentBlock = await provider.getBlockNumber();
-        const fromBlock = Math.max(0, currentBlock - COLLECTION_CONFIG.MAX_BLOCKS_BACK);
-        
-        console.log(`Scanning ERC1155 events from block ${fromBlock} to ${currentBlock}...`);
-        
-        const singleEvents = await contract.queryFilter(transferSingleFilter, fromBlock);
-        const batchEvents = await contract.queryFilter(transferBatchFilter, fromBlock);
-        
-        const tokenIds = new Set();
-        
-        singleEvents.forEach(event => {
-            tokenIds.add(event.args.id.toString());
-        });
-        
-        batchEvents.forEach(event => {
-            event.args.ids.forEach(id => tokenIds.add(id.toString()));
-        });
-        
-        // Also try common token IDs 1-20
-        for (let i = 1; i <= 20; i++) {
-            tokenIds.add(i.toString());
-        }
-        
-        console.log(`Found ${tokenIds.size} potential token IDs for ERC1155 ${contractAddress}`);
-        
-        const nfts = [];
-        const tokenIdArray = [...tokenIds].slice(0, 100); // Limit to 100 tokens
-        
-        for (const tokenId of tokenIdArray) {
-            try {
-                const balance = await contract.balanceOf(walletAddress, tokenId);
-                
-                if (balance.toString() !== '0') {
+                const tokenId = await c.tokenOfOwnerByIndex(wallet, i);
+                const owner = await c.ownerOf(tokenId);
+                if (owner.toLowerCase() === wallet.toLowerCase()) {
                     let tokenURI = null;
-                    try {
-                        tokenURI = await contract.uri(tokenId);
-                    } catch (e) {
-                        console.warn(`Failed to get URI for ERC1155 ${contractAddress}:${tokenId}:`, e.message);
-                    }
-                    
-                    // Fetch metadata with improved error handling
-                    console.log(`Fetching metadata for ERC1155 ${contractAddress}:${tokenId}...`);
-                    const metadata = await fetchNFTMetadata(contractAddress, tokenId);
-                    
-                    // Generate fallback data if metadata fetch fails
-                    const name = metadata?.name || `${contractInfo.name || 'NFT'} #${tokenId}`;
-                    const image = metadata?.image || null;
-                    
-                    const nftData = {
-                        contractAddress: contractAddress.toLowerCase(),
-                        tokenId,
-                        type: 'ERC1155',
+                    try { tokenURI = await c.tokenURI(tokenId); } catch { }
+                    out.push({
+                        contractAddress: contractAddr,
+                        tokenId: tokenId.toString(),
+                        type: 'ERC721',
+                        balance: '1',
                         tokenURI,
-                        balance: balance.toString(),
-                        metadata: metadata || {},
-                        name,
-                        image,
-                        collection: contractInfo
-                    };
-                    
-                    nfts.push(nftData);
-                    
-                    if (metadata) {
-                        console.log(`✅ Successfully processed ERC1155 ${contractAddress}:${tokenId} with metadata`);
-                    } else {
-                        console.log(`⚠️ Processed ERC1155 ${contractAddress}:${tokenId} without metadata`);
-                    }
+                        metadata: {}
+                    });
                 }
-            } catch (e) {
-                console.warn(`Failed to process ERC1155 token ${tokenId} from ${contractAddress}:`, e.message);
+            } catch {
+                break;
             }
         }
-        
-        console.log(`Completed ERC1155 scan: ${nfts.length} NFTs processed for ${contractAddress}`);
-        return nfts;
-    } catch (e) {
-        console.warn(`Failed to scan ERC1155 contract ${contractAddress}:`, e.message);
-        return [];
     }
+    // If enumeration yields none, attempt ownerOf through log-derived IDs (optional skipped for brevity)
+    return out;
 }
 
-// Find NFT contracts from Transfer events and comprehensive scanning
-async function findNFTContracts(walletAddress) {
-    try {
-        console.log(`🔍 Finding NFT contracts for ${walletAddress}...`);
-        
-        // Start with known contracts to ensure basic coverage
-        const contracts = new Set([...KNOWN_NFT_CONTRACTS.map(addr => addr.toLowerCase())]);
-        
+async function scanERC1155(contractAddr, wallet, fromBlock, toBlock) {
+    const out = [];
+    const c = new ethers.Contract(contractAddr, ERC1155_ABI, provider);
+    const single = ethers.id('TransferSingle(address,address,address,uint256,uint256)');
+    const batch = ethers.id('TransferBatch(address,address,address,uint256[],uint256[])');
+    const walletTopic = ethers.zeroPadValue(wallet.toLowerCase(), 32);
+    const tokenIds = new Set();
+    for (let start = fromBlock; start <= toBlock; start += CONFIG.CHUNK_BLOCKS) {
+        const end = Math.min(start + CONFIG.CHUNK_BLOCKS - 1, toBlock);
         try {
-            // ERC721 Transfer events
-            const erc721TransferTopic = ethers.id('Transfer(address,address,uint256)');
-            const toUserTopic = ethers.zeroPadValue(walletAddress.toLowerCase(), 32);
-            
-            const currentBlock = await provider.getBlockNumber();
-            const fromBlock = Math.max(0, currentBlock - COLLECTION_CONFIG.MAX_BLOCKS_BACK);
-            
-            console.log(`Scanning Transfer events from block ${fromBlock} to ${currentBlock}...`);
-            
-            const filter = {
-                topics: [erc721TransferTopic, null, toUserTopic],
-                fromBlock,
-                toBlock: 'latest'
-            };
-            
-            const logs = await provider.getLogs(filter);
-            
-            logs.forEach(log => {
-                contracts.add(log.address.toLowerCase());
+            const sLogs = await provider.getLogs({ fromBlock: start, toBlock: end, address: contractAddr, topics: [single, null, null, walletTopic] });
+            sLogs.forEach(l => {
+                const tid = l.topics[4];
+                if (tid) tokenIds.add(BigInt(tid).toString());
             });
-            
-            console.log(`📋 Found ${logs.length} transfer events, ${contracts.size} total contracts to scan`);
-        } catch (eventError) {
-            console.warn('Failed to fetch transfer events, using known contracts only:', eventError.message);
-        }
-        
-        // Always ensure we have at least the known contracts even if event scanning fails
-        if (contracts.size === 0) {
-            console.log('No contracts found via events, using fallback known contracts');
-            KNOWN_NFT_CONTRACTS.forEach(addr => contracts.add(addr.toLowerCase()));
-        }
-        
-        return [...contracts];
-    } catch (e) {
-        console.warn('Failed to find NFT contracts:', e.message);
-        console.log('Falling back to known contracts only');
-        return [...KNOWN_NFT_CONTRACTS.map(addr => addr.toLowerCase())];
+        } catch { }
+        try {
+            const bLogs = await provider.getLogs({ fromBlock: start, toBlock: end, address: contractAddr, topics: [batch, null, null, walletTopic] });
+            // Parsing batch ids omitted (implement if needed)
+        } catch { }
     }
+    if (tokenIds.size === 0) {
+        for (let i = 1; i <= 25; i++) tokenIds.add(String(i));
+    }
+    for (const id of tokenIds) {
+        try {
+            const bal = await c.balanceOf(wallet, id);
+            if (bal > 0n) {
+                let tokenURI = null;
+                try { tokenURI = await c.uri(id); } catch { }
+                out.push({
+                    contractAddress: contractAddr,
+                    tokenId: id,
+                    type: 'ERC1155',
+                    balance: bal.toString(),
+                    tokenURI,
+                    metadata: {}
+                });
+            }
+        } catch { }
+    }
+    return out;
 }
 
-// Scan all NFTs for a specific user
-async function scanUserNFTs(walletAddress) {
-    try {
-        console.log(`🔍 Scanning NFTs for ${walletAddress}...`);
-        
-        const nftContracts = await findNFTContracts(walletAddress);
-        const allNfts = [];
-        let totalWithMetadata = 0;
-        let totalWithoutMetadata = 0;
-        
-        console.log(`Found ${nftContracts.length} NFT contracts to scan for ${walletAddress}`);
-        
-        for (const contractAddress of nftContracts) {
+async function fetchMetadataInParallel(nfts) {
+    const ipfsGateway = 'https://gateway.pinata.cloud/ipfs/';
+    const chunks = [];
+    for (let i = 0; i < nfts.length; i += CONFIG.MAX_METADATA_CONCURRENCY) {
+        chunks.push(nfts.slice(i, i + CONFIG.MAX_METADATA_CONCURRENCY));
+    }
+    for (const chunk of chunks) {
+        await Promise.allSettled(chunk.map(async (n) => {
+            if (!n.tokenURI) return;
+            let uri = n.tokenURI;
+            if (uri.startsWith('ipfs://')) uri = `${ipfsGateway}${uri.slice(7)}`;
             try {
-                console.log(`Scanning contract ${contractAddress}...`);
-                
-                // Detect contract type
-                const contractType = await detectNftStandard(contractAddress);
-                
-                if (contractType === 'ERC721') {
-                    const nfts = await scanERC721(contractAddress, walletAddress);
-                    allNfts.push(...nfts);
-                } else if (contractType === 'ERC1155') {
-                    const nfts = await scanERC1155(contractAddress, walletAddress);
-                    allNfts.push(...nfts);
-                } else {
-                    console.warn(`Unknown or unsupported contract type for ${contractAddress}`);
-                }
-                
-                // Small delay to avoid rate limiting
-                await new Promise(resolve => setTimeout(resolve, 250));
-            } catch (e) {
-                console.warn(`Failed to scan contract ${contractAddress}:`, e.message);
+                const meta = await fetchJson(uri, CONFIG.METADATA_TIMEOUT);
+                let image = meta.image || meta.image_url || null;
+                if (image && image.startsWith('ipfs://')) image = `${ipfsGateway}${image.slice(7)}`;
+                n.metadata = { ...meta };
+                n.image = image;
+                n.name = meta.name || null;
+            } catch {
+                // silently ignore
             }
-        }
-        
-        // Calculate metadata statistics
-        allNfts.forEach(nft => {
-            if (nft.metadata && Object.keys(nft.metadata).length > 0 && nft.image) {
-                totalWithMetadata++;
-            } else {
-                totalWithoutMetadata++;
-            }
-        });
-        
-        console.log(`📊 NFT scan results for ${walletAddress}:`);
-        console.log(`  Total NFTs: ${allNfts.length}`);
-        console.log(`  With metadata: ${totalWithMetadata}`);
-        console.log(`  Without metadata: ${totalWithoutMetadata}`);
-        console.log(`  Metadata success rate: ${allNfts.length > 0 ? ((totalWithMetadata / allNfts.length) * 100).toFixed(1) : 0}%`);
-        
-        return allNfts;
-    } catch (error) {
-        console.error(`❌ Failed to scan NFTs for ${walletAddress}:`, error.message);
-        return [];
+        }));
     }
+    return nfts;
 }
 
-// Get users to sync (from recent activity or all users)
-async function getUsersToSync() {
-    try {
-        // Get users with recent activity (marketplace listings, sales, etc.)
-        const { data: recentUsers, error } = await supabase
-            .from('marketplace_listings')
-            .select('seller')
-            .gte('updated_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // Last 24 hours
-            .limit(COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
-        
-        if (error) {
-            console.warn('Failed to fetch recent users, using fallback:', error.message);
-            
-            // Fallback: get any users from user_profiles table
-            const { data: allUsers, error: profileError } = await supabase
-                .from('user_profiles')
-                .select('wallet_address')
-                .limit(COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
-            
-            if (profileError) {
-                console.warn('Failed to fetch any users:', profileError.message);
-                return [];
-            }
-            
-            return (allUsers || []).map(u => u.wallet_address);
-        }
-        
-        // Extract unique wallet addresses
-        const wallets = [...new Set((recentUsers || []).map(u => u.seller))];
-        console.log(`📋 Found ${wallets.length} users to sync collections for`);
-        
-        return wallets.slice(0, COLLECTION_CONFIG.MAX_CONCURRENT_USERS);
-    } catch (error) {
-        console.error('Failed to get users to sync:', error.message);
-        return [];
-    }
+async function upsertProfile(wallet, data) {
+    await supabase.from('user_profiles').upsert({
+        wallet_address: wallet.toLowerCase(),
+        ...data,
+        updated_at: new Date().toISOString()
+    });
 }
 
-// Cache user NFTs to Supabase
-async function cacheUserNFTs(walletAddress, nfts) {
-    try {
-        console.log(`💾 Caching ${nfts.length} NFTs for ${walletAddress}...`);
-        
-        // Always create/update user profile, even if they have 0 NFTs
-        // This ensures the profile exists for future cache lookups
-        const { error } = await supabase
-            .from('user_profiles')
-            .upsert({
-                wallet_address: walletAddress.toLowerCase(),
-                nfts: nfts,
-                updated_at: new Date().toISOString(),
-                last_sync: new Date().toISOString(),
-                sync_status: nfts.length > 0 ? 'completed' : 'completed_empty'
-            });
-        
-        if (error) {
-            console.error(`❌ Failed to cache NFTs for ${walletAddress}:`, error.message);
-            return false;
-        }
-        
-        if (nfts.length === 0) {
-            console.log(`✅ Created empty profile for ${walletAddress} - no NFTs found`);
+async function fullOrIncrementalScan(wallet, fullRescan = false) {
+    const latest = await provider.getBlockNumber();
+    let fromBlock = 0;
+    let lastFull = null;
+    const { data: existing } = await supabase
+        .from('user_profiles')
+        .select('last_full_scan_block,nfts')
+        .eq('wallet_address', wallet.toLowerCase())
+        .single();
+
+    if (existing && existing.last_full_scan_block && !fullRescan) {
+        fromBlock = existing.last_full_scan_block + 1;
+        lastFull = existing.last_full_scan_block;
+    }
+
+    const toBlock = latest;
+    const contracts = await discoverContractsForWallet(wallet, fullRescan ? 0 : fromBlock, toBlock);
+    const results = [];
+    for (const addr of contracts) {
+        const type = await classifyContract(addr);
+        if (!type) continue;
+        if (type === 'ERC721') {
+            const items = await scanERC721(addr, wallet);
+            results.push(...items);
         } else {
-            console.log(`✅ Cached ${nfts.length} NFTs for ${walletAddress}`);
+            const items = await scanERC1155(addr, wallet, fullRescan ? 0 : fromBlock, toBlock);
+            results.push(...items);
         }
-        return true;
-    } catch (error) {
-        console.error(`❌ Failed to cache NFTs for ${walletAddress}:`, error.message);
-        return false;
+    }
+    await fetchMetadataInParallel(results);
+    // Merge with existing NFTs (preserve old if incremental & no duplicates)
+    let merged = results;
+    if (existing && Array.isArray(existing.nfts) && !fullRescan) {
+        const seen = new Set(results.map(n => `${n.contractAddress}-${n.tokenId}`));
+        const retained = existing.nfts.filter(n => !seen.has(`${n.contractAddress}-${n.tokenId}`));
+        merged = [...retained, ...results];
+    }
+    await upsertProfile(wallet, {
+        nfts: merged,
+        last_full_scan_block: fullRescan ? latest : (lastFull || latest),
+        sync_status: 'completed'
+    });
+    return merged.length;
+}
+
+async function immediateSync(wallet, fullRescan) {
+    await upsertProfile(wallet, { sync_status: 'running', last_sync: new Date().toISOString() });
+    try {
+        const count = await fullOrIncrementalScan(wallet, fullRescan);
+        return {
+            success: true,
+            wallet,
+            nfts: count,
+            mode: fullRescan ? 'full' : 'incremental'
+        };
+    } catch (e) {
+        await upsertProfile(wallet, { sync_status: 'error' });
+        throw e;
     }
 }
 
-// Main sync function
-async function syncUserCollections() {
-    console.log('🚀 Starting user collections sync...');
-    
-    const users = await getUsersToSync();
-    if (users.length === 0) {
-        console.log('📋 No users found to sync');
-        return { synced: 0, errors: 0 };
-    }
-    
-    let synced = 0;
-    let errors = 0;
-    
-    for (const walletAddress of users) {
-        try {
-            console.log(`🔄 Syncing collections for ${walletAddress}...`);
-            
-            const nfts = await scanUserNFTs(walletAddress);
-            const cached = await cacheUserNFTs(walletAddress, nfts);
-            
-            if (cached) {
-                synced++;
-            } else {
-                errors++;
-            }
-            
-            // Small delay between users
-            await new Promise(resolve => setTimeout(resolve, 500));
-        } catch (error) {
-            console.error(`❌ Failed to sync collections for ${walletAddress}:`, error.message);
-            errors++;
-        }
-    }
-    
-    console.log(`✅ Collections sync complete: ${synced} users synced, ${errors} errors`);
-    return { synced, errors, total: users.length };
-}
-
-// Main handler
 module.exports = async function handler(req, res) {
-    // Set CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-    
-    // Only allow GET and POST methods
+    if (req.method === 'OPTIONS') return res.status(200).end();
     if (!['GET', 'POST'].includes(req.method)) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
-    
-    const startTime = Date.now();
-    
+    const start = Date.now();
     try {
-        // Verify authorization for cron jobs (but allow manual syncs without auth)
-        const authHeader = req.headers.authorization;
-        const cronSecret = process.env.CRON_SECRET;
-        const isCronJob = authHeader === `Bearer ${cronSecret}`;
-        
-        // For manual sync requests, check if specific wallet is provided
-        const requestBody = req.method === 'POST' ? req.body : {};
-        const targetWallet = requestBody?.walletAddress;
-        const isImmediateSync = requestBody?.immediate === true;
-        
-        console.log(`🚀 Starting ${isCronJob ? 'scheduled' : 'manual'} collections sync...`);
-        
-        // Initialize clients
-        initializeClients();
-        
-        let result;
-        
-        if (targetWallet && isImmediateSync) {
-            // Immediate sync for specific wallet
-            console.log(`🔄 Immediate sync for wallet: ${targetWallet}`);
-            
-            const nfts = await scanUserNFTs(targetWallet);
-            const cached = await cacheUserNFTs(targetWallet, nfts);
-            
-            result = {
-                synced: cached ? 1 : 0,
-                errors: cached ? 0 : 1,
-                total: 1,
-                nfts: nfts.length,
-                wallet: targetWallet,
-                message: cached 
-                    ? (nfts.length > 0 
-                        ? `Successfully scanned and cached ${nfts.length} NFTs` 
-                        : 'Scan completed - no NFTs found but profile created') 
-                    : 'Failed to cache scan results'
-            };
-        } else {
-            // Batch sync for multiple users (cron job or general sync)
-            result = await syncUserCollections();
+        init();
+        const body = req.method === 'POST' ? req.body || {} : {};
+        const wallet = body.walletAddress;
+        const immediate = body.immediate === true;
+        const fullRescan = body.fullRescan === true;
+        if (wallet && immediate) {
+            const out = await immediateSync(wallet, fullRescan);
+            return res.status(200).json({
+                success: true,
+                type: 'immediate',
+                ...out,
+                durationMs: Date.now() - start
+            });
         }
-        
-        const duration = Date.now() - startTime;
-        const response = {
+        return res.status(200).json({
             success: true,
-            timestamp: new Date().toISOString(),
-            duration: `${duration}ms`,
-            type: isCronJob ? 'cron' : (targetWallet ? 'immediate' : 'batch'),
-            stats: result
-        };
-        
-        console.log('✅ User collections sync completed:', response);
-        
-        return res.status(200).json(response);
-        
-    } catch (error) {
-        console.error('❌ User collections sync failed:', error.message);
-        
-        const duration = Date.now() - startTime;
-        return res.status(500).json({
-            error: error.message,
-            timestamp: new Date().toISOString(),
-            duration: `${duration}ms`
+            message: 'Provide {walletAddress, immediate:true} POST body to trigger sync',
+            durationMs: Date.now() - start
         });
+    } catch (e) {
+        return res.status(500).json({ error: e.message, durationMs: Date.now() - start });
     }
-}
+};

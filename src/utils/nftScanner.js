@@ -34,11 +34,15 @@ const EXTENDED_ERC1155_ABI = [
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ];
 
-// Add well-known NFT contracts to force-scan
+// Add well-known NFT contracts to force-scan - EXPANDED LIST for comprehensive coverage
 const KNOWN_NFT_CONTRACTS = [
     '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
-    // Add more known NFT contracts here as they are discovered
-    // This helps users who have NFTs from popular collections
+    '0x0BE8E03C7cf2F880cD6968E355feae724aB9b5AE', // VMonsters
+    '0x0e4a2D78658aF51800852ca67181B57Bac401F13', // vdex v3
+    '0xE1A5518CEbd226FE2a3251F93A1F6AAef65d3131', // Skoollz
+    '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453', // CrocoDeal 404
+    '0x89207A7F75C9cb7C8f95f0c2517b029BE1AE29b8', // NeonKatz
+
 ];
 
 // Known ERC20 tokens to exclude
@@ -272,6 +276,180 @@ export class NFTScanner {
         
         return nfts;
     }
+
+    // NEW: Enhanced contract discovery for Vitruveo blockchain
+    async discoverNFTContractsForVitruveoBlockchain(scanFromGenensis = false) {
+        const discoveredContracts = new Set();
+        
+        try {
+            const currentBlock = await this.provider.getBlockNumber();
+            const fromBlock = scanFromGenensis ? 0 : Math.max(0, currentBlock - 200000); // 200k blocks for good coverage
+            
+            this.updateStatus(`🔍 Discovering NFT contracts on Vitruveo blockchain...`);
+            
+            // Focus on Vitruveo marketplace and local contracts
+            const VITRUVEO_MARKETPLACE_CONTRACTS = [
+                process.env.VITE_MARKETPLACE_ADDRESS, // Our own marketplace
+                // Add other known Vitruveo marketplace contracts here as they're discovered
+            ].filter(addr => addr && addr !== '0x0000000000000000000000000000000000000000');
+
+            // Scan our own marketplace for NFT contract activity
+            for (const marketplaceAddr of VITRUVEO_MARKETPLACE_CONTRACTS) {
+                if (!marketplaceAddr) continue;
+                
+                try {
+                    // Look for Transfer events from/to our wallet around marketplace activity
+                    const transferTopic = ethers.id('Transfer(address,address,uint256)');
+                    const walletTopic = ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32);
+                    
+                    const filter = {
+                        topics: [transferTopic, null, walletTopic], // Transfers TO our wallet
+                        fromBlock: fromBlock,
+                        toBlock: 'latest'
+                    };
+
+                    const logs = await this.provider.getLogs(filter);
+                    
+                    // Parse logs to extract NFT contract addresses
+                    for (const log of logs) {
+                        // The contract address of the transfer is likely an NFT contract
+                        const contractAddr = log.address.toLowerCase();
+                        
+                        // Skip known ERC20s and the marketplace itself
+                        if (!this.knownErc20s.has(contractAddr) && 
+                            contractAddr !== marketplaceAddr.toLowerCase()) {
+                            discoveredContracts.add(contractAddr);
+                        }
+                    }
+                    
+                } catch (marketplaceError) {
+                    debugLog(`Error scanning Vitruveo marketplace ${marketplaceAddr}: ${marketplaceError.message}`);
+                }
+                
+                // Small delay between marketplace scans
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            // Also look for ERC721/ERC1155 approval events (ApprovalForAll) 
+            try {
+                const approvalTopic = ethers.id('ApprovalForAll(address,address,bool)');
+                const walletTopic = ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32);
+                
+                const approvalFilter = {
+                    topics: [approvalTopic, walletTopic], // Events where our wallet approved someone
+                    fromBlock: fromBlock,
+                    toBlock: 'latest'
+                };
+
+                const approvalLogs = await this.provider.getLogs(approvalFilter);
+                
+                // The contract address of these events are NFT contracts we've interacted with
+                for (const log of approvalLogs) {
+                    if (!this.knownErc20s.has(log.address.toLowerCase())) {
+                        discoveredContracts.add(log.address.toLowerCase());
+                    }
+                }
+                
+            } catch (approvalError) {
+                debugLog(`Error scanning approval events: ${approvalError.message}`);
+            }
+            
+            const contractsArray = Array.from(discoveredContracts);
+            this.updateStatus(`🎯 Discovered ${contractsArray.length} potential NFT contracts on Vitruveo blockchain`);
+            
+            return contractsArray;
+            
+        } catch (error) {
+            debugWarn(`Error in Vitruveo contract discovery: ${error.message}`);
+            return [];
+        }
+    }
+
+    // NEW: Final ownership verification to ensure we only return currently owned NFTs
+    async verifyNFTOwnership(nfts) {
+        const verifiedNfts = [];
+        const totalToVerify = nfts.length;
+        let verified = 0;
+        
+        this.updateStatus(`🔒 Verifying ownership of ${totalToVerify} NFTs...`);
+        
+        // Process in batches to avoid overwhelming the RPC
+        const batchSize = 15;
+        for (let i = 0; i < nfts.length; i += batchSize) {
+            const batch = nfts.slice(i, i + batchSize);
+            
+            const verificationPromises = batch.map(async (nft) => {
+                try {
+                    const { contractAddress, tokenId, type } = nft;
+                    
+                    if (type === 'ERC721') {
+                        // For ERC721, check ownerOf
+                        const contract = new ethers.Contract(contractAddress, EXTENDED_ERC721_ABI, this.provider);
+                        const ownerPromise = contract.ownerOf(tokenId);
+                        const timeoutPromise = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('ownerOf timeout')), 8000)
+                        );
+                        
+                        const owner = await Promise.race([ownerPromise, timeoutPromise]);
+                        if (owner.toLowerCase() === this.walletAddress.toLowerCase()) {
+                            return nft; // We still own this NFT
+                        }
+                    } else if (type === 'ERC1155') {
+                        // For ERC1155, check balanceOf
+                        const contract = new ethers.Contract(contractAddress, EXTENDED_ERC1155_ABI, this.provider);
+                        const balancePromise = contract.balanceOf(this.walletAddress, tokenId);
+                        const timeoutPromise = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('balanceOf timeout')), 8000)
+                        );
+                        
+                        const balance = await Promise.race([balancePromise, timeoutPromise]);
+                        if (Number(balance) > 0) {
+                            // Update the balance in case it changed
+                            return { ...nft, balance: balance.toString() };
+                        }
+                    }
+                    
+                    // If we get here, we don't own this NFT anymore
+                    return null;
+                    
+                } catch (error) {
+                    // If verification fails, assume we don't own it (safer approach)
+                    if (!error.message.includes('execution reverted') && 
+                        !error.message.includes('timeout')) {
+                        debugLog(`Ownership verification failed for ${nft.contractAddress}:${nft.tokenId} - ${error.message}`);
+                    }
+                    return null;
+                }
+            });
+            
+            const batchResults = await Promise.allSettled(verificationPromises);
+            
+            for (const result of batchResults) {
+                if (result.status === 'fulfilled' && result.value) {
+                    verifiedNfts.push(result.value);
+                }
+                verified++;
+            }
+            
+            // Update progress
+            this.updateStatus(`🔒 Verified ownership: ${verified}/${totalToVerify} NFTs (${verifiedNfts.length} confirmed owned)`);
+            
+            // Small delay between batches
+            if (i + batchSize < nfts.length) {
+                await new Promise(r => setTimeout(r, 200));
+            }
+        }
+        
+        const removedCount = totalToVerify - verifiedNfts.length;
+        if (removedCount > 0) {
+            this.updateStatus(`✅ Ownership verified: ${verifiedNfts.length} NFTs confirmed (${removedCount} no longer owned)`);
+            debugLog(`🔒 Removed ${removedCount} NFTs that are no longer owned`);
+        } else {
+            this.updateStatus(`✅ All ${verifiedNfts.length} NFTs confirmed as currently owned`);
+        }
+        
+        return verifiedNfts;
+    }
     
     // Smart background scan with rate limiting for production use
     startBackgroundScan() {
@@ -314,8 +492,8 @@ export class NFTScanner {
         }, 5000); // Start after 5 seconds delay
     }
 
-    // USER REQUIREMENT: ALWAYS scan from genesis (block 0) for all NFT discovery 
-    async scanAllNFTs(isBackground = false, scanFromGenesis = true) {
+    // FIXED: Smart scanning - conservative by default, comprehensive only when requested
+    async scanAllNFTs(isBackground = false, scanFromGenesis = false) {
         try {
             // Start timing for performance tracking
             this.scanStartTime = Date.now();
@@ -326,31 +504,52 @@ export class NFTScanner {
             // Start with known contracts + contract discovery
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
             
-            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) - no more conservative scanning
-            debugLog(`🔍 DEBUG: scanAllNFTs called with scanFromGenesis=${scanFromGenesis}`);
-            this.updateStatus("🔍 Comprehensive NFT scanning from blockchain genesis (block 0)");
-            debugLog("🌐 Comprehensive NFT discovery from all blockchain history");
-            debugLog("💡 Scanning known contracts + complete blockchain history for maximum coverage");
+            // FIXED: Smart scanning approach based on actual parameter
+            if (scanFromGenesis) {
+                debugLog(`🔍 DEBUG: scanAllNFTs called with COMPREHENSIVE scanning (genesis)`);
+                this.updateStatus("🔍 Comprehensive NFT scanning from blockchain genesis (block 0)");
+                debugLog("🌐 Comprehensive NFT discovery from all blockchain history");
+                debugLog("💡 Scanning known contracts + complete blockchain history for maximum coverage");
+            } else {
+                debugLog(`🔍 DEBUG: scanAllNFTs called with SMART scanning (recent blocks)`);
+                this.updateStatus("🔍 Smart NFT scanning from recent blockchain activity");
+                debugLog("🌐 Smart NFT discovery from recent blockchain activity (last 50k blocks)");
+                debugLog("💡 Scanning known contracts + recent blockchain history for fast performance");
+            }
             
-            // Add contracts from transfer discovery (always from genesis)
-            this.updateStatus("🔍 Discovering NFT contracts from complete blockchain history...");
+            // Add contracts from transfer discovery (respecting scanFromGenesis)
+            this.updateStatus(scanFromGenesis ? 
+                "🔍 Discovering NFT contracts from complete blockchain history..." :
+                "🔍 Discovering NFT contracts from recent blockchain activity...");
             
             let recentContracts = [];
             try {
-                // FORCE GENESIS SCANNING: Pass true regardless of input parameter
-                recentContracts = await this.findContractsByRecentTransfers(true);
+                // FIXED: Pass the actual parameter instead of forcing true
+                recentContracts = await this.findContractsByRecentTransfers(scanFromGenesis);
             } catch (error) {
                 debugWarn("Main contract discovery failed, using fallback method:", error);
                 // Fallback to the method that respects scanFromGenesis flag
                 try {
-                    // FORCE GENESIS SCANNING: Pass true regardless of input parameter
-                    recentContracts = await this.findContractsByRecentTransfersFallback(true);
+                    // FIXED: Pass the actual parameter instead of forcing true
+                    recentContracts = await this.findContractsByRecentTransfersFallback(scanFromGenesis);
                 } catch (fallbackError) {
                     criticalError("Fallback contract discovery also failed:", fallbackError);
                     recentContracts = []; // Continue with known contracts only
                 }
             }
             contractsToScan.push(...recentContracts);
+
+            // NEW: Add Vitruveo blockchain contract discovery for enhanced coverage
+            let vitruveoContracts = [];
+            try {
+                this.updateStatus("🎯 Discovering NFT contracts on Vitruveo blockchain...");
+                vitruveoContracts = await this.discoverNFTContractsForVitruveoBlockchain(scanFromGenesis);
+                contractsToScan.push(...vitruveoContracts);
+                debugLog(`🎯 Added ${vitruveoContracts.length} contracts from Vitruveo discovery`);
+            } catch (vitruveoError) {
+                debugWarn("Vitruveo contract discovery failed:", vitruveoError);
+                // Continue without additional discovery
+            }
             
             // Remove duplicates and invalid addresses
             contractsToScan = [...new Set(contractsToScan)]
@@ -363,7 +562,9 @@ export class NFTScanner {
             );
             // Update total for progress tracking
             this.updateProgress({ total: contractsToScan.length });
-            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan - comprehensive genesis approach from block 0`);
+            
+            const scanType = scanFromGenesis ? 'comprehensive genesis' : 'smart recent';
+            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan - ${scanType} approach`);
             
             // Save contract cache and known ERC20s periodically
             const saveInterval = setInterval(() => {
@@ -371,7 +572,7 @@ export class NFTScanner {
                 this.saveKnownErc20s();
             }, 15000);
             
-            // Gather all NFTs with comprehensive approach
+            // Gather all NFTs with the chosen approach
             const allNfts = [];
             
             // Process in small sequential batches to reduce load
@@ -384,8 +585,8 @@ export class NFTScanner {
                     // Process contracts sequentially with comprehensive error handling
                     for (const address of batch) {
                         try {
-                            // FORCE GENESIS SCANNING: Always pass true for comprehensive scanning
-                            const nfts = await this.scanSingleContract(address, true);
+                            // FIXED: Pass the actual scanFromGenesis parameter
+                            const nfts = await this.scanSingleContract(address, scanFromGenesis);
                             allNfts.push(...nfts);
                             
                             // Update progress
@@ -402,14 +603,14 @@ export class NFTScanner {
                                 e.code === -32603 || e.code === -32000 || e.code === 'CALL_EXCEPTION') {
                                 // Expected RPC errors - don't log
                             } else {
-                                debugWarn(`Error in comprehensive scan for ${address}:`, e.message);
+                                debugWarn(`Error in ${scanType} scan for ${address}:`, e.message);
                             }
                             // Update scanned count even on error
                             this.updateProgress({ scanned: this.progress.scanned + 1 });
                         }
                         
                         // Small delay between contracts
-                        await new Promise(r => setTimeout(r, 500));
+                        await new Promise(r => setTimeout(r, 300));
                     }
                     
                     // For background scan, yield to main thread more frequently
@@ -419,7 +620,7 @@ export class NFTScanner {
                     
                     // Small delay between batches
                     if (i + batchSize < contractsToScan.length) {
-                        await new Promise(r => setTimeout(r, isBackground ? 1000 : 600));
+                        await new Promise(r => setTimeout(r, isBackground ? 1000 : 400));
                     }
                 }
             } finally {
@@ -429,7 +630,17 @@ export class NFTScanner {
             }
             
             const scanDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
-            this.updateStatus(`✅ Conservative scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s`);
+            this.updateStatus(`✅ ${scanType} scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s`);
+            
+            // NEW: Final ownership verification to ensure accuracy
+            if (allNfts.length > 0) {
+                this.updateStatus(`🔒 Performing final ownership verification...`);
+                const verifiedNfts = await this.verifyNFTOwnership(allNfts);
+                const finalDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
+                this.updateStatus(`✅ Scan complete! ${verifiedNfts.length} verified NFTs in ${finalDuration}s`);
+                return verifiedNfts;
+            }
+            
             return allNfts;
         } catch (error) {
             criticalError("Error in conservative NFT scan:", error);
@@ -634,18 +845,25 @@ export class NFTScanner {
         }
     }
 
-    // Find contracts from recent Transfer events (conservative approach)
-    async findContractsByRecentTransfers(scanFromGenesis = true) {
+    // Find contracts from recent Transfer events (smart approach based on flag)
+    async findContractsByRecentTransfers(scanFromGenesis = false) {
         try {
             const contracts = new Set();
             
-            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) - no more conservative scanning
+            // Smart scanning approach based on flag
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = 0; // FORCE GENESIS: Always start from block 0
+            // FIXED: Smart selection based on scanFromGenesis flag
+            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 200000); // 200k recent blocks for smart scanning (increased for better coverage)
             
-            debugLog(`🔍 DEBUG: findContractsByRecentTransfers - FORCING genesis scan from block 0 to ${currentBlock}`);
-            this.updateStatus(`🔍 Comprehensive blockchain scan (block 0 to ${currentBlock}) - scanning all history...`);
-            debugLog(`🌐 Comprehensive blockchain scan: blocks 0 to ${currentBlock} for complete coverage`);
+            if (scanFromGenesis) {
+                debugLog(`🔍 DEBUG: findContractsByRecentTransfers - comprehensive genesis scan from block 0 to ${currentBlock}`);
+                this.updateStatus(`🔍 Comprehensive blockchain scan (block 0 to ${currentBlock}) - scanning all history...`);
+                debugLog(`🌐 Comprehensive blockchain scan: blocks 0 to ${currentBlock} for complete coverage`);
+            } else {
+                debugLog(`🔍 DEBUG: findContractsByRecentTransfers - smart scan from block ${fromBlock} to ${currentBlock}`);
+                this.updateStatus(`🔍 Smart blockchain scan (block ${fromBlock} to ${currentBlock}) - scanning recent activity...`);
+                debugLog(`🌐 Smart blockchain scan: blocks ${fromBlock} to ${currentBlock} for fast performance`);
+            }
             
             // Use chunked approach to scan blockchain history
             try {
@@ -668,7 +886,7 @@ export class NFTScanner {
                 !this.knownErc20s.has(addr.toLowerCase())
             );
                 
-            const scanType = scanFromGenesis ? 'comprehensive' : 'conservative';
+            const scanType = scanFromGenesis ? 'comprehensive' : 'smart';
             this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from ${scanType} scan`);
             return filteredContracts;
         } catch (error) {
@@ -678,19 +896,26 @@ export class NFTScanner {
     }
 
     // Fallback method for when comprehensive scan fails
-    async findContractsByRecentTransfersFallback(scanFromGenesis = true) {
+    async findContractsByRecentTransfersFallback(scanFromGenesis = false) {
         try {
             const contracts = new Set();
             
-            // USER REQUIREMENT: ALWAYS scan from genesis (block 0) - no more conservative scanning
+            // Smart fallback approach based on flag
             const currentBlock = await this.provider.getBlockNumber();
-            const fromBlock = 0; // FORCE GENESIS: Always start from block 0
+            // FIXED: Smart selection based on scanFromGenesis flag
+            const fromBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 300000); // 300k blocks for fallback (increased coverage)
             
-            debugLog(`🔍 DEBUG: findContractsByRecentTransfersFallback - FORCING genesis scan from block 0 to ${currentBlock}`);
-            this.updateStatus(`🔄 Fallback genesis scan: blocks 0 to ${currentBlock} (using smaller chunks)...`);
-            debugLog(`🔄 Fallback genesis scanning: blocks 0 to ${currentBlock} (comprehensive with smaller chunks)`);
+            if (scanFromGenesis) {
+                debugLog(`🔍 DEBUG: findContractsByRecentTransfersFallback - comprehensive genesis scan from block 0 to ${currentBlock}`);
+                this.updateStatus(`🔄 Fallback genesis scan: blocks 0 to ${currentBlock} (using smaller chunks)...`);
+                debugLog(`🔄 Fallback genesis scanning: blocks 0 to ${currentBlock} (comprehensive with smaller chunks)`);
+            } else {
+                debugLog(`🔍 DEBUG: findContractsByRecentTransfersFallback - smart fallback scan from block ${fromBlock} to ${currentBlock}`);
+                this.updateStatus(`🔄 Fallback smart scan: blocks ${fromBlock} to ${currentBlock} (using smaller chunks)...`);
+                debugLog(`🔄 Fallback smart scanning: blocks ${fromBlock} to ${currentBlock} (smart with smaller chunks)`);
+            }
             
-            // Scan fallback transfers with error handling - always from genesis
+            // Scan fallback transfers with error handling
             await this.findTransfersByRecentBlocks(ethers.id("Transfer(address,address,uint256)"), 
                 ethers.zeroPadValue(this.walletAddress.toLowerCase(), 32), 
                 contracts, fromBlock, currentBlock);
@@ -705,7 +930,8 @@ export class NFTScanner {
                 !this.knownErc20s.has(addr.toLowerCase())
             );
                 
-            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from fallback genesis scan`);
+            const scanType = scanFromGenesis ? 'fallback genesis' : 'fallback smart';
+            this.updateStatus(`Found ${filteredContracts.length} potential NFT contracts from ${scanType} scan`);
             return filteredContracts;
         } catch (error) {
             criticalError("Error in fallback transfer scanning:", error);
@@ -755,22 +981,25 @@ export class NFTScanner {
         }
     }
     
-    // Find transfers by breaking into smaller chunks (comprehensive approach from genesis)
+    // Find transfers by breaking into smaller chunks (smart approach based on flag)
     async findTransfersByChunks(eventTopic, walletTopic, contracts, fromBlock, toBlock, isErc1155 = false) {
         try {
             const currentBlock = toBlock || await this.provider.getBlockNumber();
-            const startBlock = fromBlock !== undefined ? fromBlock : 0; // USER REQUIREMENT: Default to block 0 if not specified
-            let chunkSize = 25000; // Smaller chunks for comprehensive approach
+            const startBlock = fromBlock !== undefined ? fromBlock : 0;
+            
+            // FIXED: Adaptive chunk size based on scan type
+            let chunkSize = fromBlock === 0 ? 25000 : 50000; // Smaller chunks for genesis, larger for recent
             let failedAttempts = 0;
             
-            debugLog(`🔍 DEBUG: findTransfersByChunks starting from block ${startBlock} to ${currentBlock}`);
+            const scanType = fromBlock === 0 ? 'comprehensive' : 'smart';
+            debugLog(`🔍 DEBUG: findTransfersByChunks starting ${scanType} scan from block ${startBlock} to ${currentBlock}`);
             
-            // Comprehensive processing: smaller chunks, thorough scanning from genesis
+            // Process with adaptive chunk sizing based on scan type
             for (let chunkStart = startBlock; chunkStart < currentBlock; chunkStart += chunkSize) {
                 const chunkEnd = Math.min(chunkStart + chunkSize - 1, currentBlock);
                 
                 try {
-                    this.updateStatus(`Scanning blocks ${chunkStart}-${chunkEnd} for transfers (comprehensive from genesis)...`);
+                    this.updateStatus(`Scanning blocks ${chunkStart}-${chunkEnd} for transfers (${scanType} scan)...`);
                     
                     const filter = isErc1155 ? {
                         topics: [eventTopic, null, null, walletTopic],
@@ -839,12 +1068,13 @@ export class NFTScanner {
                     }
                 }
                 
-                // Conservative delay between chunks to reduce load
-                await new Promise(resolve => setTimeout(resolve, 300));
+                // Adaptive delay between chunks based on scan type
+                const delay = fromBlock === 0 ? 300 : 150; // Longer delay for comprehensive scans
+                await new Promise(resolve => setTimeout(resolve, delay));
             }
             
         } catch (error) {
-            criticalError("Error in conservative chunked transfer search:", error);
+            criticalError("Error in chunked transfer search:", error);
         }
     }
 
@@ -1126,7 +1356,7 @@ export class NFTScanner {
             // COMPREHENSIVE approach: Scan from the beginning of blockchain for complete coverage
             try {
                 const currentBlock = await this.provider.getBlockNumber();
-                const comprehensiveStartBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 100000); // Respect the flag
+                const comprehensiveStartBlock = scanFromGenesis ? 0 : Math.max(0, currentBlock - 250000); // Increased to 250k blocks for better coverage
                 
                 if (scanFromGenesis) {
                     this.updateStatus(`Comprehensive ERC721 scan: blocks 0-${currentBlock} for complete coverage...`);

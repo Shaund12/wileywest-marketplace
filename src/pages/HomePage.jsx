@@ -6,6 +6,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { convertToUSDCValue, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
+import { isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
 import ListingCard from '../components/ListingCard';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
@@ -282,6 +283,28 @@ function HomePage() {
                 try {
                     if (!auction.nftContract || auction.nftContract === '0x0000000000000000000000000000000000000000') {
                         return auction;
+                    }
+
+                    // Special handling for V-Share contracts - prioritize V-Share metadata
+                    if (isVShareContract && isVShareContract(auction.nftContract)) {
+                        console.log(`🎯 Using V-Share metadata for auction ${auction.nftContract}:${auction.tokenId}`);
+                        try {
+                            const vShareMetadata = getVShareMetadata(auction.nftContract, auction.tokenId);
+                            
+                            if (vShareMetadata) {
+                                return {
+                                    ...auction,
+                                    image: vShareMetadata.image,
+                                    imageUrl: vShareMetadata.image,
+                                    name: vShareMetadata.name,
+                                    collectionName: 'V-Share',
+                                    metadata: vShareMetadata
+                                };
+                            }
+                        } catch (error) {
+                            console.warn('Error loading V-Share metadata:', error);
+                            // Continue with standard metadata loading
+                        }
                     }
 
                     // Fetch NFT metadata from contract

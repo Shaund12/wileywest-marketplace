@@ -1,0 +1,239 @@
+/* Edge Cache Monitor Styles */
+.edge-cache-monitor {
+    background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+    border: 1px solid #00ff88;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 20px 0;
+    font-family: 'Courier New', monospace;
+    box-shadow: 0 4px 12px rgba(0, 255, 136, 0.2);
+}
+
+.cache-monitor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    border-bottom: 1px solid #333;
+    padding-bottom: 15px;
+}
+
+.cache-monitor-header h3 {
+    color: #00ff88;
+    margin: 0;
+    font-size: 1.4em;
+    text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+}
+
+.cache-controls {
+    display: flex;
+    gap: 10px;
+}
+
+.cache-controls .btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid #00ff88;
+    background: transparent;
+    color: #00ff88;
+    font-size: 0.9em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-family: inherit;
+}
+
+.cache-controls .btn:hover {
+    background: #00ff88;
+    color: #000;
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+}
+
+.cache-controls .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.cache-controls .btn-success {
+    background: #00ff88;
+    color: #000;
+}
+
+.cache-controls .btn-outline {
+    background: transparent;
+}
+
+.cache-status-message {
+    background: rgba(0, 255, 136, 0.1);
+    border: 1px solid #00ff88;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 15px;
+    color: #00ff88;
+    text-align: center;
+    animation: fadeIn 0.3s ease;
+}
+
+.cache-loading {
+    text-align: center;
+    color: #888;
+    padding: 40px;
+    font-style: italic;
+}
+
+.cache-error {
+    background: rgba(255, 0, 0, 0.1);
+    border: 1px solid #ff4444;
+    border-radius: 6px;
+    padding: 15px;
+    color: #ff4444;
+    text-align: center;
+}
+
+.cache-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+}
+
+.metric-card {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 15px;
+    transition: border-color 0.3s ease;
+}
+
+.metric-card:hover {
+    border-color: #00ff88;
+}
+
+.metric-card h4 {
+    color: #00ff88;
+    margin: 0 0 15px 0;
+    font-size: 1.1em;
+    border-bottom: 1px solid #333;
+    padding-bottom: 8px;
+}
+
+.metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    color: #ccc;
+}
+
+.metric-row:last-child {
+    border-bottom: none;
+}
+
+.metric-row span:first-child {
+    font-weight: 500;
+}
+
+.metric-row span:last-child {
+    font-weight: bold;
+    font-family: monospace;
+}
+
+/* Status indicators */
+.status-enabled {
+    color: #00ff88 !important;
+    text-shadow: 0 0 5px rgba(0, 255, 136, 0.5);
+}
+
+.status-disabled {
+    color: #ff4444 !important;
+}
+
+.status-good {
+    color: #00ff88 !important;
+}
+
+.status-warning {
+    color: #ffaa00 !important;
+}
+
+.status-error {
+    color: #ff4444 !important;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .cache-monitor-header {
+        flex-direction: column;
+        gap: 15px;
+        align-items: stretch;
+    }
+    
+    .cache-controls {
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+    
+    .cache-metrics-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .edge-cache-monitor {
+        padding: 15px;
+        margin: 15px 0;
+    }
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Loading animation */
+.cache-loading::after {
+    content: '';
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid #00ff88;
+    border-radius: 50%;
+    border-top-color: transparent;
+    animation: spin 1s linear infinite;
+    margin-left: 10px;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Compact mode for smaller displays */
+.edge-cache-monitor.compact {
+    padding: 10px;
+    margin: 10px 0;
+}
+
+.edge-cache-monitor.compact .cache-metrics-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+}
+
+.edge-cache-monitor.compact .metric-card {
+    padding: 10px;
+}
+
+.edge-cache-monitor.compact .metric-card h4 {
+    font-size: 1em;
+    margin-bottom: 10px;
+}
+
+.edge-cache-monitor.compact .metric-row {
+    padding: 4px 0;
+    font-size: 0.9em;
+}

@@ -30,6 +30,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         getCachedListings, 
         cacheSalesHistory,
         getCachedSalesHistory,
+        markListingAsSold,
+        removeSoldListings,
         subscribeToListings,
         isConnected: supabaseConnected 
     } = useSupabase();
@@ -203,6 +205,18 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                             debugLog(`💾 Smart caching ${salesHistory.length} sales (within safe limit)...`);
                             await cacheSalesHistory(salesHistory);
                             debugLog(`✅ Successfully cached sales history`);
+                            
+                            // Remove sold listings from marketplace and profiles
+                            if (removeSoldListings && salesHistory.length > 0) {
+                                try {
+                                    debugLog(`🧹 Removing ${salesHistory.length} sold listings from marketplace...`);
+                                    await removeSoldListings(salesHistory);
+                                    debugLog(`✅ Successfully removed sold listings`);
+                                } catch (removeError) {
+                                    debugWarn("❌ Failed to remove sold listings:", removeError);
+                                }
+                            }
+                            
                         } catch (cacheError) {
                             debugWarn("❌ Failed to cache sales history:", cacheError);
                         }
@@ -1057,9 +1071,34 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 
                 if (cachedListings && cachedListings.length > 0) {
                     debugLog(`✅ Loaded ${cachedListings.length} cached listings`);
-                    setListings(cachedListings);
-                    setHotListings(cachedListings.slice(0, 5));
-                    setStatus(`${cachedListings.length} listings loaded (updated by background sync)`);
+                    
+                    // Apply V-Share metadata normalization to cached listings
+                    const processedListings = cachedListings.map(listing => {
+                        if (listing?.nftContract && listing?.tokenId) {
+                            // Apply metadata normalization (handles V-Share detection)
+                            const normalizedMetadata = normalizeNFTMetadata(
+                                listing.metadata, 
+                                listing.nftContract, 
+                                listing.tokenId
+                            );
+                            
+                            // Update listing with normalized metadata
+                            return {
+                                ...listing,
+                                metadata: normalizedMetadata,
+                                // Ensure image fields are properly set for V-Share NFTs
+                                image: normalizedMetadata.image || listing.image,
+                                imageUrl: normalizedMetadata.imageUrl || listing.imageUrl || normalizedMetadata.image,
+                                name: normalizedMetadata.name || listing.name,
+                                description: normalizedMetadata.description || listing.description
+                            };
+                        }
+                        return listing;
+                    });
+                    
+                    setListings(processedListings);
+                    setHotListings(processedListings.slice(0, 5));
+                    setStatus(`${processedListings.length} listings loaded (updated by background sync)`);
                     
                     // Clear status after 3 seconds
                     setTimeout(() => setStatus(''), 3000);
@@ -1076,10 +1115,109 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 }
                 
             } else {
-                debugWarn("Supabase not connected - cannot load listings");
-                setStatus('Cache unavailable - please check connection');
-                setListings([]);
-                setHotListings([]);
+                debugWarn("Supabase not connected - loading demo listings");
+                setStatus('Loading demo listings (Supabase not configured)');
+                
+                // Provide demo listings when cache is unavailable
+                const demoListings = [
+                    {
+                        id: 1,
+                        seller: '0x742d35Cc6464B4C4F3196f2Ac1bE7C0A90f22C8f',
+                        nftContract: '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906',
+                        tokenId: '1',
+                        quantity: '1',
+                        pricePerUnit: '1000000000000000000', // 1 VTRU
+                        paymentToken: '0x0000000000000000000000000000000000000000',
+                        isERC1155: false,
+                        active: true,
+                        metadata: {
+                            name: 'Demo Pixel Art #1',
+                            description: 'A beautiful pixel art NFT for demonstration purposes',
+                            image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                            attributes: [
+                                { trait_type: 'Color', value: 'Blue' },
+                                { trait_type: 'Style', value: 'Pixel' },
+                                { trait_type: 'Rarity', value: 'Common' }
+                            ]
+                        },
+                        image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                        imageUrl: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
+                        name: 'Demo Pixel Art #1',
+                        title: 'Demo Pixel Art #1',
+                        description: 'A beautiful pixel art NFT for demonstration purposes'
+                    },
+                    {
+                        id: 2,
+                        seller: '0x742d35Cc6464B4C4F3196f2Ac1bE7C0A90f22C8f',
+                        nftContract: '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906',
+                        tokenId: '2',
+                        quantity: '1',
+                        pricePerUnit: '2500000000000000000', // 2.5 VTRU
+                        paymentToken: '0x0000000000000000000000000000000000000000',
+                        isERC1155: false,
+                        active: true,
+                        metadata: {
+                            name: 'Demo Digital Art #2',
+                            description: 'A vibrant digital artwork showcasing modern NFT aesthetics',
+                            image: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
+                            attributes: [
+                                { trait_type: 'Color', value: 'Purple' },
+                                { trait_type: 'Style', value: 'Digital' },
+                                { trait_type: 'Rarity', value: 'Rare' }
+                            ]
+                        },
+                        image: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
+                        imageUrl: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
+                        name: 'Demo Digital Art #2',
+                        title: 'Demo Digital Art #2',
+                        description: 'A vibrant digital artwork showcasing modern NFT aesthetics'
+                    },
+                    {
+                        id: 3,
+                        seller: '0x1234567890123456789012345678901234567890',
+                        nftContract: '0xc5d518d131738481947cFa4670F94eb7b948a1ac', // V-Share contract
+                        tokenId: '1',
+                        quantity: '1',
+                        pricePerUnit: '5000000000000000000', // 5 VTRU
+                        paymentToken: '0x0000000000000000000000000000000000000000',
+                        isERC1155: false,
+                        active: true,
+                        // Remove hardcoded metadata to allow V-Share normalization to work
+                        name: 'V-Share Revenue Pool #1',
+                        title: 'V-Share Revenue Pool #1',
+                        description: 'A revenue sharing NFT that provides returns from marketplace fees'
+                    }
+                ];
+                
+                // Apply V-Share metadata normalization to demo listings
+                const processedDemoListings = demoListings.map(listing => {
+                    if (listing?.nftContract && listing?.tokenId) {
+                        // Apply metadata normalization (handles V-Share detection)
+                        const normalizedMetadata = normalizeNFTMetadata(
+                            listing.metadata, 
+                            listing.nftContract, 
+                            listing.tokenId
+                        );
+                        
+                        // Update listing with normalized metadata  
+                        return {
+                            ...listing,
+                            metadata: normalizedMetadata,
+                            // Ensure image fields are properly set for V-Share NFTs
+                            image: normalizedMetadata.image || listing.image,
+                            imageUrl: normalizedMetadata.imageUrl || listing.imageUrl || normalizedMetadata.image,
+                            name: normalizedMetadata.name || listing.name,
+                            description: normalizedMetadata.description || listing.description
+                        };
+                    }
+                    return listing;
+                });
+                
+                setListings(processedDemoListings);
+                setHotListings(processedDemoListings.slice(0, 2));
+                
+                // Clear status after 3 seconds
+                setTimeout(() => setStatus(''), 3000);
             }
             
         } catch (error) {
@@ -1367,7 +1505,17 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
           throw new Error("Transaction failed during execution");
         }
         
-        // Mark the listing as inactive
+        // Immediately mark the listing as sold in Supabase
+        if (markListingAsSold) {
+          try {
+            await markListingAsSold(id, tx.hash);
+            debugLog(`✅ Marked listing ${id} as sold in database`);
+          } catch (dbError) {
+            debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+          }
+        }
+        
+        // Mark the listing as inactive locally
         markListingInactive(id);
 
         setStatus('Purchase successful! Refreshing listings...');
@@ -1467,7 +1615,17 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         throw new Error("Transaction failed during execution");
       }
       
-      // Mark the listing as inactive
+      // Immediately mark the listing as sold in Supabase
+      if (markListingAsSold) {
+        try {
+          await markListingAsSold(id, tx.hash);
+          debugLog(`✅ Marked listing ${id} as sold in database`);
+        } catch (dbError) {
+          debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+        }
+      }
+      
+      // Mark the listing as inactive locally
       markListingInactive(id);
 
       setStatus('Purchase successful! Refreshing listings...');
