@@ -1,6 +1,6 @@
 # Supabase Setup Guide for Auction Functionality
 
-This guide provides step-by-step instructions for setting up Supabase to support the complete auction system in WileyWest Marketplace.
+This guide provides step-by-step instructions for setting up Supabase to support the complete auction system in BlockDust Marketplace.
 
 ## Critical Updates ⚠️
 

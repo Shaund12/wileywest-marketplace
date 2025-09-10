@@ -1,6 +1,6 @@
-# Supabase Integration for WileyWest Marketplace
+# Supabase Integration for BlockDust Marketplace
 
-This document explains the Supabase caching integration that has been added to improve performance and provide real-time updates for the WileyWest Marketplace.
+This document explains the Supabase caching integration that has been added to improve performance and provide real-time updates for the BlockDust Marketplace.
 
 ## Overview
 

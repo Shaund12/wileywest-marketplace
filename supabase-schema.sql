@@ -1,4 +1,4 @@
--- Migration for WileyWest Marketplace Caching Tables
+-- Migration for BlockDust Marketplace Caching Tables
 -- This file contains the SQL schema for Supabase database tables
 
 -- Table for caching marketplace listings
