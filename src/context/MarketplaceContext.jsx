@@ -912,7 +912,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             let volume1hUSDC = 0, volume6hUSDC = 0, volume12hUSDC = 0;
             let volume24hUSDC = 0, volume7dUSDC = 0, volume30dUSDC = 0;
             let sales1h = 0, sales6h = 0, sales12h = 0;
-            let sales24h = 0, sales7d = 0, sales30d = 0;
+            let sales24h = 0, sales7d = 0, sales30h = 0;
             
             // Advanced analytics tracking
             let priceSum = 0, priceCount = 0;
@@ -1365,7 +1365,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         }
     };
 
-    // Add this ERC20 ABI at the top with your other imports
+// Add this ERC20 ABI at the top with your other imports
 const ERC20_ABI = [
     'function approve(address spender, uint256 amount) returns (bool)',
     'function allowance(address owner, address spender) view returns (uint256)',
@@ -2002,6 +2002,42 @@ const markListingInactive = useCallback((listingId) => {
   });
 }, []);
 
+    // Reset token allowance function
+const resetTokenAllowance = useCallback(
+  async (tokenAddress, spender, customSetStatus) => {
+    if (!signer) {
+      (customSetStatus || setStatusWithType)('Wallet not connected', 'error');
+      return false;
+    }
+    try {
+      const token = new ethers.Contract(
+        tokenAddress,
+        [
+          'function symbol() view returns (string)',
+          'function approve(address,uint256) returns (bool)'
+        ],
+        signer
+      );
+      const symbol = await token.symbol().catch(() => 'TOKEN');
+
+      (customSetStatus || setStatusWithType)(`Resetting ${symbol} allowance to 0…`);
+      const tx1 = await token.approve(spender, 0);
+      await tx1.wait();
+
+      (customSetStatus || setStatusWithType)(`Approving max ${symbol} allowance…`);
+      const tx2 = await token.approve(spender, ethers.MaxUint256);
+      await tx2.wait();
+
+      (customSetStatus || setStatusWithType)(`${symbol} allowance refreshed`, 'success');
+      return true;
+    } catch (e) {
+      (customSetStatus || setStatusWithType)(`Allowance reset failed: ${e.message}`, 'error');
+      return false;
+    }
+  },
+  [signer]
+);
+
     return (
         <MarketplaceContext.Provider value={{
             marketplace,
@@ -2019,16 +2055,13 @@ const markListingInactive = useCallback((listingId) => {
             createListing,
             isInitialized,
             isLoading,
-            markListingInactive, // Add this new function
-            // New marketplace statistics and data
+            markListingInactive,
             salesHistory,
             canceledListings,
             marketplaceStats,
             calculateMarketplaceStats,
-            // Add function to manually trigger sync via API
             triggerManualSync,
-            // Add instant sync function for immediate updates
-            triggerInstantSync
+            resetTokenAllowance // <-- added
         }}>
             {children}
         </MarketplaceContext.Provider>
@@ -2038,36 +2071,3 @@ const markListingInactive = useCallback((listingId) => {
 export function useMarketplace() {
     return useContext(MarketplaceContext);
 }
-
-// Add this function to reset allowances
-async function resetTokenAllowance(tokenAddress, spender, setStatus) {
-  if (!signer) return false;
-  
-  try {
-    const token = new ethers.Contract(tokenAddress, [
-      'function symbol() view returns (string)',
-      'function approve(address,uint256) returns (bool)'
-    ], signer);
-    
-    const symbol = await token.symbol().catch(() => 'TOKEN');
-    setStatus(`Resetting ${symbol} allowance to zero...`);
-    
-    // First set to zero
-    const tx1 = await token.approve(spender, 0);
-    await tx1.wait();
-    
-    // Then approve max
-    setStatus(`Approving ${symbol} for trading...`);
-    const tx2 = await token.approve(spender, ethers.MaxUint256);
-    await tx2.wait();
-    
-    setStatus(`${symbol} approved successfully!`);
-    return true;
-  } catch (error) {
-    setStatus(`Failed to reset token allowance: ${error.message}`);
-    return false;
-  }
-}
-
-// Add this reset button to the UI for marketplace page
-// And modify buyListing to use this reset function when allowance errors occur
