@@ -1,6 +1,6 @@
 # Troubleshooting Supabase Caching Issues
 
-This guide helps diagnose and fix caching problems with the WileyWest Marketplace Supabase integration.
+This guide helps diagnose and fix caching problems with the BlockDust Marketplace Supabase integration.
 
 ## Quick Diagnosis
 

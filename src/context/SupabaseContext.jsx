@@ -446,12 +446,32 @@ export function SupabaseProvider({ children }) {
                 } else {
                     debugLog(`✅ Successfully marked listing ${listingId} as sold in database`);
                     
-                    // Update in-memory cache
+                    // Update in-memory cache immediately
                     const key = getCacheKey('listing', listingId);
                     cache.current.delete(key);
                     
                     // Invalidate 'all_listings' cache to force refresh
                     cache.current.delete('all_listings');
+                    
+                    // Trigger immediate real-time notification if channel exists
+                    try {
+                        if (supabase) {
+                            debugLog(`📡 Broadcasting real-time update for listing ${listingId}`);
+                            // Send a custom broadcast to all connected clients
+                            supabase.channel('marketplace_listings')
+                                .send({
+                                    type: 'broadcast',
+                                    event: 'listing_sold',
+                                    payload: {
+                                        listing_id: listingId,
+                                        transaction_hash: transactionHash,
+                                        timestamp: new Date().toISOString()
+                                    }
+                                });
+                        }
+                    } catch (broadcastError) {
+                        debugWarn('Failed to broadcast real-time update:', broadcastError);
+                    }
                     
                     updateCacheStats('updates');
                     return true;
@@ -696,17 +716,47 @@ export function SupabaseProvider({ children }) {
     const subscribeToListings = (callback) => {
         if (!supabase) return null;
         try {
-            debugLog('🔄 Setting up real-time subscription for listings...');
+            debugLog('🔄 Setting up enhanced real-time subscription for instant listing updates...');
             const subscription = supabase
                 .channel('marketplace_listings')
                 .on(
                     'postgres_changes',
                     { event: '*', schema: 'public', table: 'marketplace_listings' },
                     (payload) => {
-                        debugLog('📡 Real-time listing update:', payload);
+                        debugLog('📡 Real-time listing database change:', payload);
                         clearCache('listing');
                         clearCache('all_listings');
                         if (callback) callback(payload);
+                    }
+                )
+                .on(
+                    'broadcast',
+                    { event: 'listing_sold' },
+                    (payload) => {
+                        debugLog('📡 Real-time listing sold broadcast:', payload);
+                        clearCache('listing');
+                        clearCache('all_listings');
+                        if (callback) callback({ 
+                            eventType: 'DELETE',
+                            table: 'marketplace_listings',
+                            new: payload.payload,
+                            old: null 
+                        });
+                    }
+                )
+                .on(
+                    'broadcast',
+                    { event: 'listing_created' },
+                    (payload) => {
+                        debugLog('📡 Real-time listing created broadcast:', payload);
+                        clearCache('listing');
+                        clearCache('all_listings');
+                        if (callback) callback({ 
+                            eventType: 'INSERT',
+                            table: 'marketplace_listings',
+                            new: payload.payload,
+                            old: null 
+                        });
                     }
                 )
                 .subscribe();
