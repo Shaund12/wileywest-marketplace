@@ -18,6 +18,7 @@ const TermsPage = lazy(() => import('./pages/TermsPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SellPage = lazy(() => import('./pages/SellPage'));
 const CollectionPage = lazy(() => import('./pages/CollectionPage'));
+const MintPage = lazy(() => import('./pages/MintPage'));
 
 
 // Auction pages (lazy-loaded)
@@ -26,6 +27,7 @@ const AuctionDetailPage = lazy(() => import('./pages/AuctionDetailPage'));
 const MyAuctionsPage = lazy(() => import('./pages/MyAuctionsPage'));
 const AdminPathsPage = lazy(() => import('./pages/AdminPathsPage'));
 const VibeDashboardPage = lazy(() => import('./pages/VibeDashboardPage'));
+const BlockSharePage = lazy(() => import('./pages/BlockSharePage'));
 
 // Providers
 import { WalletProvider } from './context/WalletContext';
@@ -188,6 +190,7 @@ function TitleSetter() {
             { test: /^\/marketplace/, title: `Marketplace • ${siteName} ✦` },
             { test: /^\/hot-listings/, title: `🔥 Hot Listings • ${siteName}` },
             { test: /^\/sell/, title: `List & Sell • ${siteName}` },
+            { test: /^\/mint/, title: `Mint RevShare NFT • ${siteName}` },
             { test: /^\/profile/, title: `Your Profile • ${siteName}` },
 
             { test: /^\/collections\/[0-9a-zA-Z]+/, title: `Collection • ${siteName}` },
@@ -195,6 +198,7 @@ function TitleSetter() {
             { test: /^\/auctions\/create/, title: `Create Auction • ${siteName}` },
             { test: /^\/auctions\/[0-9]+/, title: `Auction • ${siteName}` },
             { test: /^\/vibe-dashboard/, title: `VIBE Dashboard • ${siteName}` },
+            { test: /^\/blockshare/, title: `BlockShare • ${siteName}` },
             { test: /^\/admin\/paths/, title: `Admin Paths • ${siteName}` },
             { test: /^\/terms/, title: `Terms • ${siteName}` },
             { test: /^\/privacy/, title: `Privacy • ${siteName}` },
@@ -212,12 +216,14 @@ function useIdleRoutePrefetch() {
             () => import('./pages/MarketplacePage'),
             () => import('./pages/HotListingsPage'),
             () => import('./pages/SellPage'),
+            () => import('./pages/MintPage'),
             () => import('./pages/ProfilePage'),
 
             () => import('./pages/CreateAuctionPage'),
             () => import('./pages/MyAuctionsPage'),
             () => import('./pages/AuctionDetailPage'),
             () => import('./pages/VibeDashboardPage'),
+            () => import('./pages/BlockSharePage'),
             () => import('./pages/CollectionPage'),
             () => import('./pages/TermsPage'),
             () => import('./pages/PrivacyPage'),
@@ -263,6 +269,7 @@ function App() {
                                             <Route path="/marketplace" element={<MarketplacePage />} />
                                             <Route path="/hot-listings" element={<HotListingsPage />} />
                                             <Route path="/sell" element={<SellPage />} />
+                                            <Route path="/mint" element={<MintPage />} />
 
                                             <Route path="/terms" element={<TermsPage />} />
                                             <Route path="/privacy" element={<PrivacyPage />} />
@@ -281,6 +288,7 @@ function App() {
                                             <Route path="/my-auctions" element={<MyAuctionsPage />} />
                                             <Route path="/admin/paths" element={<AdminPathsPage />} />
                                             <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
+                                            <Route path="/blockshare" element={<BlockSharePage />} />
 
                                             {/* Fallback */}
                                             <Route path="*" element={<Navigate to="/" replace />} />
