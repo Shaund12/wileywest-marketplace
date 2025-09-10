@@ -849,7 +849,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             let volume1hUSDC = 0, volume6hUSDC = 0, volume12hUSDC = 0;
             let volume24hUSDC = 0, volume7dUSDC = 0, volume30dUSDC = 0;
             let sales1h = 0, sales6h = 0, sales12h = 0;
-            let sales24h = 0, sales7d = 0, sales30d = 0;
+            let sales24h = 0, sales7d = 0, sales30h = 0;
             
             // Advanced analytics tracking
             let priceSum = 0, priceCount = 0;
@@ -1848,42 +1848,7 @@ const markListingInactive = useCallback((listingId) => {
   });
 }, []);
 
-    return (
-        <MarketplaceContext.Provider value={{
-            marketplace,
-            marketplaceAddress,
-            listings,
-            hotListings,
-            status,
-            persistentStatus,
-            statusType,
-            setStatus: setStatusWithType,
-            clearStatus,
-            clearPersistentStatus,
-            fetchListings,
-            buyListing,
-            createListing,
-            isInitialized,
-            isLoading,
-            markListingInactive, // Add this new function
-            // New marketplace statistics and data
-            salesHistory,
-            canceledListings,
-            marketplaceStats,
-            calculateMarketplaceStats,
-            // Add function to manually trigger sync via API
-            triggerManualSync
-        }}>
-            {children}
-        </MarketplaceContext.Provider>
-    );
-}
-
-export function useMarketplace() {
-    return useContext(MarketplaceContext);
-}
-
-// Add this function to reset allowances
+    // Add this function to reset allowances
 async function resetTokenAllowance(tokenAddress, spender, setStatus) {
   if (!signer) return false;
   
@@ -1913,5 +1878,36 @@ async function resetTokenAllowance(tokenAddress, spender, setStatus) {
   }
 }
 
-// Add this reset button to the UI for marketplace page
-// And modify buyListing to use this reset function when allowance errors occur
+    return (
+        <MarketplaceContext.Provider value={{
+          marketplace,
+          marketplaceAddress,
+          listings,
+          hotListings,
+          status,
+          persistentStatus,
+          statusType,
+          setStatus: setStatusWithType,
+          clearStatus,
+          clearPersistentStatus,
+          fetchListings,
+          buyListing,
+          createListing,
+          isInitialized,
+          isLoading,
+          markListingInactive,
+          salesHistory,
+          canceledListings,
+          marketplaceStats,
+          calculateMarketplaceStats,
+          triggerManualSync,
+          resetTokenAllowance // <-- added
+        }}>
+            {children}
+        </MarketplaceContext.Provider>
+    );
+}
+
+export function useMarketplace() {
+    return useContext(MarketplaceContext);
+}
