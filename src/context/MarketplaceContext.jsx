@@ -25,35 +25,33 @@ const MarketplaceContext = createContext();
 
 export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const { wallet, signer, provider } = useWallet();
-    const { 
-        cacheListings, 
-        getCachedListings, 
+    const {
+        cacheListings,
+        getCachedListings,
         cacheSalesHistory,
         getCachedSalesHistory,
         markListingAsSold,
         removeSoldListings,
         subscribeToListings,
         isConnected: supabaseConnected,
-        supabase 
+        supabase
     } = useSupabase();
     const [marketplace, setMarketplace] = useState(null);
     const [listings, setListings] = useState([]);
     const [hotListings, setHotListings] = useState([]);
     const [status, setStatus] = useState('');
-    const [persistentStatus, setPersistentStatus] = useState(''); // For stale data warnings
-    const [statusType, setStatusType] = useState('info'); // 'info', 'warning', 'error', 'success'
+    const [persistentStatus, setPersistentStatus] = useState('');
+    const [statusType, setStatusType] = useState('info');
     const [isInitialized, setIsInitialized] = useState(false);
     const isConnectedRef = useRef(false);
     const cacheUpdateInterval = useRef(null);
-    
-    // New state for tracking sales and statistics
+
     const [salesHistory, setSalesHistory] = useState([]);
     const [canceledListings, setCanceledListings] = useState(new Set());
     const [marketplaceStats, setMarketplaceStats] = useState({
         totalSales: 0,
         actualSoldVolume: 0,
         currentListingVolume: 0,
-        // Enhanced time-based volume metrics
         volume1h: 0,
         volume6h: 0,
         volume12h: 0,
@@ -61,14 +59,12 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         volume7d: 0,
         volume30d: 0,
         volumeAllTime: 0,
-        // Enhanced sales count metrics
         sales1h: 0,
         sales6h: 0,
         sales12h: 0,
         sales24h: 0,
         sales7d: 0,
         sales30d: 0,
-        // Advanced analytics
         avgPrice: 0,
         highestPrice: 0,
         lowestPrice: 0,
@@ -89,32 +85,120 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         mostActiveSellers: []
     });
 
-    // State for tracking loading operations to prevent race conditions
     const [isLoading, setIsLoading] = useState(false);
     const [lastCacheSignature, setLastCacheSignature] = useState(null);
 
-    // Enhanced status management with persistence for important messages
     const setStatusWithType = (message, type = 'info', persistent = false) => {
         setStatus(message);
         setStatusType(type);
-        
-        if (persistent) {
-            setPersistentStatus(message);
-        }
+        if (persistent) setPersistentStatus(message);
     };
-    
-    const clearStatus = () => {
-        setStatus('');
-        setStatusType('info');
-    };
-    
-    const clearPersistentStatus = () => {
-        setPersistentStatus('');
-    };
+    const clearStatus = () => { setStatus(''); setStatusType('info'); };
+    const clearPersistentStatus = () => { setPersistentStatus(''); };
 
-    // Load sales history from Supabase cache first, fallback to localStorage
-    // Use a ref to prevent infinite loops from function reference changes
     const hasLoadedInitialData = useRef(false);
+
+    // ============================================================
+    // HOISTED sync + listing functions (must be before any useEffect)
+    // ============================================================
+    async function triggerInstantSync(listingId = null) {
+        try {
+            debugLog(`🚀 Triggering instant sync${listingId ? ` for listing ${listingId}` : ''}...`);
+            const res = await fetch('/api/instant-sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    listingId,
+                    checkRecentBlocks: 50,
+                    broadcastUpdate: true
+                })
+            });
+            if (!res.ok) throw new Error(`Instant sync failed: ${res.status}`);
+            await res.json();
+            setTimeout(() => { fetchListings(false); }, 120);
+        } catch (e) {
+            debugWarn('Instant sync failed:', e.message);
+        }
+    }
+
+    async function triggerManualSync() {
+        try {
+            debugLog('🔄 Triggering manual listings sync...');
+            setStatus('Requesting fresh data sync...');
+            const res = await fetch('/api/sync-listings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
+            const result = await res.json();
+            setStatus(`Sync completed: ${result.stats?.found || 0} found, ${result.stats?.cached || 0} cached`);
+            setTimeout(async () => {
+                await fetchListings(false);
+                setStatus('');
+            }, 2000);
+        } catch (e) {
+            debugWarn('Manual sync failed:', e.message);
+            setStatus(`Sync failed: ${e.message}`);
+            setTimeout(() => setStatus(''), 5000);
+        }
+    }
+
+    async function fetchListings(forceRefresh = false) {
+        if (isLoading) {
+            debugLog('Fetch already in progress, skipping');
+            return;
+        }
+        setIsLoading(true);
+        setStatus('Loading listings...');
+        debugLog(`fetchListings(forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected})`);
+        try {
+            if (supabaseConnected && getCachedListings) {
+                setStatus('Loading cached listings...');
+                const cached = await getCachedListings();
+                if (cached?.length) {
+                    const processed = cached.map(l => {
+                        if (l?.nftContract && l?.tokenId) {
+                            const norm = normalizeNFTMetadata(l.metadata, l.nftContract, l.tokenId);
+                            return {
+                                ...l,
+                                metadata: norm,
+                                image: norm.image || l.image,
+                                imageUrl: norm.imageUrl || l.imageUrl || norm.image,
+                                name: norm.name || l.name,
+                                description: norm.description || l.description
+                            };
+                        }
+                        return l;
+                    });
+                    setListings(processed);
+                    setHotListings(processed.slice(0, 5));
+                    setStatus(`${processed.length} listings loaded`);
+                    setTimeout(() => setStatus(''), 2500);
+                } else {
+                    setListings([]);
+                    setHotListings([]);
+                    setStatus('No listings available (cache empty)');
+                }
+                if (forceRefresh) await triggerManualSync();
+            } else {
+                debugWarn('Supabase not connected - listings unavailable');
+                setListings([]);
+                setHotListings([]);
+                setStatus('Supabase not connected - no listings');
+                setTimeout(() => setStatus(''), 4000);
+            }
+        } catch (e) {
+            criticalError('Error loading listings:', e);
+            setStatus('Failed to load listings');
+            setListings([]);
+            setHotListings([]);
+        } finally {
+            setIsLoading(false);
+        }
+    }
+    // ============================================================
+
+
     
     useEffect(() => {
         // Only load once when the component mounts or when Supabase connection status changes
@@ -1113,257 +1197,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const lastCacheUpdateRef = useRef(0);
     const CACHE_UPDATE_COOLDOWN = 30000; // 30 seconds minimum between cache updates
     
-    const fetchListings = async (forceRefresh = false) => {
-        // Prevent concurrent fetches to avoid race conditions
-        if (isLoading) {
-            debugLog("Fetch already in progress, skipping concurrent request");
-            return;
-        }
-        
-        setIsLoading(true);
-        setStatus('Loading listings...');
-        debugLog(`fetchListings called with forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected}`);
-        
-        try {
-            // Load from Supabase cache (updated by cron job)
-            if (supabaseConnected && getCachedListings) {
-                debugLog("🚀 Loading listings from cache...");
-                setStatus('Loading cached listings...');
-                
-                const cachedListings = await getCachedListings();
-                
-                if (cachedListings && cachedListings.length > 0) {
-                    debugLog(`✅ Loaded ${cachedListings.length} cached listings`);
-                    
-                    // Apply V-Share metadata normalization to cached listings
-                    const processedListings = cachedListings.map(listing => {
-                        if (listing?.nftContract && listing?.tokenId) {
-                            // Apply metadata normalization (handles V-Share detection)
-                            const normalizedMetadata = normalizeNFTMetadata(
-                                listing.metadata, 
-                                listing.nftContract, 
-                                listing.tokenId
-                            );
-                            
-                            // Update listing with normalized metadata
-                            return {
-                                ...listing,
-                                metadata: normalizedMetadata,
-                                // Ensure image fields are properly set for V-Share NFTs
-                                image: normalizedMetadata.image || listing.image,
-                                imageUrl: normalizedMetadata.imageUrl || listing.imageUrl || normalizedMetadata.image,
-                                name: normalizedMetadata.name || listing.name,
-                                description: normalizedMetadata.description || listing.description
-                            };
-                        }
-                        return listing;
-                    });
-                    
-                    setListings(processedListings);
-                    setHotListings(processedListings.slice(0, 5));
-                    setStatus(`${processedListings.length} listings loaded (updated by background sync)`);
-                    
-                    // Clear status after 3 seconds
-                    setTimeout(() => setStatus(''), 3000);
-                } else {
-                    debugLog("⚠️ No cached listings found");
-                    setListings([]);
-                    setHotListings([]);
-                    setStatus('No listings available - sync may be in progress');
-                }
-                
-                // If forceRefresh is requested, trigger manual sync
-                if (forceRefresh) {
-                    await triggerManualSync();
-                }
-                
-            } else {
-                debugWarn("Supabase not connected - loading demo listings");
-                setStatus('Loading demo listings (Supabase not configured)');
-                
-                // Provide demo listings when cache is unavailable
-                const demoListings = [
-                    {
-                        id: 1,
-                        seller: '0x742d35Cc6464B4C4F3196f2Ac1bE7C0A90f22C8f',
-                        nftContract: '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906',
-                        tokenId: '1',
-                        quantity: '1',
-                        pricePerUnit: '1000000000000000000', // 1 VTRU
-                        paymentToken: '0x0000000000000000000000000000000000000000',
-                        isERC1155: false,
-                        active: true,
-                        metadata: {
-                            name: 'Demo Pixel Art #1',
-                            description: 'A beautiful pixel art NFT for demonstration purposes',
-                            image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
-                            attributes: [
-                                { trait_type: 'Color', value: 'Blue' },
-                                { trait_type: 'Style', value: 'Pixel' },
-                                { trait_type: 'Rarity', value: 'Common' }
-                            ]
-                        },
-                        image: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
-                        imageUrl: 'ipfs://QmSHzd8MmLcsG8x4yYb4k3dRP6BawJmShmKgxDcvNRtB4i',
-                        name: 'Demo Pixel Art #1',
-                        title: 'Demo Pixel Art #1',
-                        description: 'A beautiful pixel art NFT for demonstration purposes'
-                    },
-                    {
-                        id: 2,
-                        seller: '0x742d35Cc6464B4C4F3196f2Ac1bE7C0A90f22C8f',
-                        nftContract: '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906',
-                        tokenId: '2',
-                        quantity: '1',
-                        pricePerUnit: '2500000000000000000', // 2.5 VTRU
-                        paymentToken: '0x0000000000000000000000000000000000000000',
-                        isERC1155: false,
-                        active: true,
-                        metadata: {
-                            name: 'Demo Digital Art #2',
-                            description: 'A vibrant digital artwork showcasing modern NFT aesthetics',
-                            image: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
-                            attributes: [
-                                { trait_type: 'Color', value: 'Purple' },
-                                { trait_type: 'Style', value: 'Digital' },
-                                { trait_type: 'Rarity', value: 'Rare' }
-                            ]
-                        },
-                        image: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
-                        imageUrl: 'ipfs://QmYHH5k4g1ZqDBsxKz8ZhEQqJXBhFXuUb3Fh4q4YJXXp4',
-                        name: 'Demo Digital Art #2',
-                        title: 'Demo Digital Art #2',
-                        description: 'A vibrant digital artwork showcasing modern NFT aesthetics'
-                    },
-                    {
-                        id: 3,
-                        seller: '0x1234567890123456789012345678901234567890',
-                        nftContract: '0xc5d518d131738481947cFa4670F94eb7b948a1ac', // V-Share contract
-                        tokenId: '1',
-                        quantity: '1',
-                        pricePerUnit: '5000000000000000000', // 5 VTRU
-                        paymentToken: '0x0000000000000000000000000000000000000000',
-                        isERC1155: false,
-                        active: true,
-                        // Remove hardcoded metadata to allow V-Share normalization to work
-                        name: 'V-Share Revenue Pool #1',
-                        title: 'V-Share Revenue Pool #1',
-                        description: 'A revenue sharing NFT that provides returns from marketplace fees'
-                    }
-                ];
-                
-                // Apply V-Share metadata normalization to demo listings
-                const processedDemoListings = demoListings.map(listing => {
-                    if (listing?.nftContract && listing?.tokenId) {
-                        // Apply metadata normalization (handles V-Share detection)
-                        const normalizedMetadata = normalizeNFTMetadata(
-                            listing.metadata, 
-                            listing.nftContract, 
-                            listing.tokenId
-                        );
-                        
-                        // Update listing with normalized metadata  
-                        return {
-                            ...listing,
-                            metadata: normalizedMetadata,
-                            // Ensure image fields are properly set for V-Share NFTs
-                            image: normalizedMetadata.image || listing.image,
-                            imageUrl: normalizedMetadata.imageUrl || listing.imageUrl || normalizedMetadata.image,
-                            name: normalizedMetadata.name || listing.name,
-                            description: normalizedMetadata.description || listing.description
-                        };
-                    }
-                    return listing;
-                });
-                
-                setListings(processedDemoListings);
-                setHotListings(processedDemoListings.slice(0, 2));
-                
-                // Clear status after 3 seconds
-                setTimeout(() => setStatus(''), 3000);
-            }
-            
-        } catch (error) {
-            criticalError("Error loading cached listings:", error);
-            setStatus('Failed to load listings from cache');
-            setListings([]);
-            setHotListings([]);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    // Trigger manual sync via API endpoint (optional - for manual refresh)
-    const triggerManualSync = async () => {
-        try {
-            debugLog("🔄 Triggering manual listings sync...");
-            setStatus('Requesting fresh data sync...');
-            
-            const response = await fetch('/api/sync-listings', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`Sync failed: ${response.status}`);
-            }
-            
-            const result = await response.json();
-            debugLog("✅ Manual sync completed:", result);
-            
-            setStatus(`Sync completed: ${result.stats?.found || 0} listings found, ${result.stats?.cached || 0} cached`);
-            
-            // Refresh the listings after sync
-            setTimeout(async () => {
-                await fetchListings(false); // Reload from cache
-                setStatus('');
-            }, 2000);
-            
-        } catch (error) {
-            debugWarn("Manual sync failed:", error.message);
-            setStatus(`Sync failed: ${error.message}`);
-            setTimeout(() => setStatus(''), 5000);
-        }
-    };
-
-    // Instant sync for immediate updates when specific listing changes
-    const triggerInstantSync = async (listingId = null) => {
-        try {
-            debugLog(`🚀 Triggering instant sync${listingId ? ` for listing ${listingId}` : ' for recent activity'}...`);
-            
-            const response = await fetch('/api/instant-sync', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ 
-                    listingId,
-                    checkRecentBlocks: 50, // Check last 50 blocks for instant updates
-                    broadcastUpdate: true // Enable real-time broadcasting
-                })
-            });
-            
-            if (!response.ok) {
-                throw new Error(`Instant sync failed: ${response.status}`);
-            }
-            
-            const result = await response.json();
-            debugLog("⚡ Instant sync completed:", result);
-            
-            // Immediately refresh listings to reflect changes
-            setTimeout(async () => {
-                await fetchListings(false);
-            }, 100);
-            
-            return result;
-            
-        } catch (error) {
-            debugWarn("Instant sync failed:", error.message);
-            throw error;
-        }
-    };
+    
 
 // Add this ERC20 ABI at the top with your other imports
 const ERC20_ABI = [
