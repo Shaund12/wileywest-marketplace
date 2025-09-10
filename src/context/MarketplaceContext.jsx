@@ -33,7 +33,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         markListingAsSold,
         removeSoldListings,
         subscribeToListings,
-        isConnected: supabaseConnected 
+        isConnected: supabaseConnected,
+        supabase 
     } = useSupabase();
     const [marketplace, setMarketplace] = useState(null);
     const [listings, setListings] = useState([]);
@@ -281,10 +282,12 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     setIsInitialized(true);
                     console.log("[CONTRACT INIT] Marketplace initialization completed successfully");
                     
-                    // Test network connectivity before setting up events
+                    // Test network connectivity and set up instant event listeners
                     try {
                         await provider.getNetwork();
-                        // Event listeners and blockchain scanning disabled for production
+                        // PRODUCTION: Enable real-time event listeners for instant updates
+                        setupEventListeners(contract);
+                        debugLog("✅ Real-time blockchain event listeners enabled for instant updates");
                     } catch (networkError) {
                         debugWarn("Network connectivity issue - event listeners not set up:", networkError.message);
                         setStatus("Network connectivity issue - running in offline mode. Sales tracking unavailable.");
@@ -302,13 +305,38 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
     // Manual refresh functionality if needed
     useEffect(() => {
-        // No automatic periodic updates - user must manually refresh
+        // Set up Supabase real-time subscriptions for instant updates
+        if (supabaseConnected && subscribeToListings) {
+            debugLog("🔄 Setting up Supabase real-time subscriptions for instant listing updates...");
+            
+            const unsubscribe = subscribeToListings((payload) => {
+                debugLog("📡 Real-time listing update received:", payload);
+                
+                // Immediately refresh listings on any database change
+                fetchListings(false);
+                
+                // Show status update
+                setStatusWithType("Listings updated instantly via real-time sync", 'success');
+                setTimeout(() => clearStatus(), 3000);
+            });
+
+            return () => {
+                if (unsubscribe) {
+                    debugLog("🔌 Unsubscribing from real-time listing updates");
+                    unsubscribe.unsubscribe?.();
+                }
+                if (cacheUpdateInterval.current) {
+                    clearInterval(cacheUpdateInterval.current);
+                }
+            };
+        }
+        
         return () => {
             if (cacheUpdateInterval.current) {
                 clearInterval(cacheUpdateInterval.current);
             }
         };
-    }, [marketplace]);
+    }, [supabaseConnected, subscribeToListings, fetchListings, setStatusWithType, clearStatus]);
 
     // Update contract with signer when wallet connects
     useEffect(() => {
@@ -638,6 +666,21 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         debugLog("Total sales history now:", updated.length, "transactions");
                         return updated;
                     });
+                    
+                    // Immediately trigger instant sync for the sold listing
+                    debugLog(`⚡ Purchase detected - triggering instant sync for listing ${listingId.toString()}...`);
+                    try {
+                        await triggerInstantSync(listingId.toString());
+                        debugLog(`✅ Instant sync completed for sold listing ${listingId.toString()}`);
+                        
+                        setStatusWithType(`Listing #${listingId.toString()} sold and updated instantly!`, 'success');
+                        setTimeout(() => clearStatus(), 3000);
+                    } catch (syncError) {
+                        debugWarn("Failed to instant sync after purchase:", syncError);
+                        // Fallback to marking inactive locally
+                        markListingInactive(listingId.toString());
+                    }
+                    
                 } catch (error) {
                     criticalError("Error processing NFTPurchased event:", error);
                     // Fallback without block info
@@ -652,6 +695,13 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     };
                     
                     setSalesHistory(prev => [saleData, ...prev]);
+                    
+                    // Still try instant sync on error
+                    try {
+                        await triggerInstantSync(listingId.toString());
+                    } catch {
+                        markListingInactive(listingId.toString());
+                    }
                 }
             });
 
@@ -662,10 +712,23 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             });
 
             // Listen for new listings
-            contract.on("ListingCreated", (listingId, seller, nftContract, tokenId, quantity, pricePerUnit, paymentToken, isERC1155) => {
+            contract.on("ListingCreated", async (listingId, seller, nftContract, tokenId, quantity, pricePerUnit, paymentToken, isERC1155) => {
                 debugLog("New listing created:", { listingId, seller, nftContract });
-                // Refresh listings when new ones are created
-                setTimeout(fetchListings, 2000);
+                
+                // Immediately trigger instant sync for the new listing
+                debugLog("⚡ New listing detected - triggering instant sync...");
+                try {
+                    const id = listingId.toString();
+                    await triggerInstantSync(id);
+                    debugLog(`✅ Instant sync completed for new listing ${id}`);
+                    
+                    setStatusWithType(`New listing #${id} created and synced instantly!`, 'success');
+                    setTimeout(() => clearStatus(), 3000);
+                } catch (syncError) {
+                    debugWarn("Failed to instant sync after new listing creation:", syncError);
+                    // Fallback to regular refresh
+                    setTimeout(fetchListings, 1000);
+                }
             });
 
             debugLog("Event listeners set up successfully");
@@ -1265,6 +1328,43 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         }
     };
 
+    // Instant sync for immediate updates when specific listing changes
+    const triggerInstantSync = async (listingId = null) => {
+        try {
+            debugLog(`🚀 Triggering instant sync${listingId ? ` for listing ${listingId}` : ' for recent activity'}...`);
+            
+            const response = await fetch('/api/instant-sync', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ 
+                    listingId,
+                    checkRecentBlocks: 50, // Check last 50 blocks for instant updates
+                    broadcastUpdate: true // Enable real-time broadcasting
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Instant sync failed: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            debugLog("⚡ Instant sync completed:", result);
+            
+            // Immediately refresh listings to reflect changes
+            setTimeout(async () => {
+                await fetchListings(false);
+            }, 100);
+            
+            return result;
+            
+        } catch (error) {
+            debugWarn("Instant sync failed:", error.message);
+            throw error;
+        }
+    };
+
     // Add this ERC20 ABI at the top with your other imports
 const ERC20_ABI = [
     'function approve(address spender, uint256 amount) returns (bool)',
@@ -1505,29 +1605,44 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
           throw new Error("Transaction failed during execution");
         }
         
-        // Immediately mark the listing as sold in Supabase
+        // Immediately mark the listing as sold in Supabase and trigger instant sync
         if (markListingAsSold) {
-          try {
-            await markListingAsSold(id, tx.hash);
-            debugLog(`✅ Marked listing ${id} as sold in database`);
-          } catch (dbError) {
-            debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
-          }
+            try {
+                debugLog(`🔄 Immediately marking listing ${id} as sold in database...`);
+                await markListingAsSold(id, tx.hash);
+                debugLog(`✅ Successfully marked listing ${id} as sold in database`);
+                
+                // Trigger instant sync for this specific listing
+                debugLog(`⚡ Triggering instant sync for listing ${id}...`);
+                try {
+                    await triggerInstantSync(id);
+                    debugLog(`✅ Instant sync completed for listing ${id}`);
+                } catch (syncError) {
+                    debugWarn(`⚠️ Instant sync failed, falling back to regular refresh:`, syncError);
+                    // Fallback to regular refresh
+                    setTimeout(async () => {
+                        await fetchListings(true);
+                    }, 100);
+                }
+                
+            } catch (dbError) {
+                debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+            }
         }
         
-        // Mark the listing as inactive locally
+        // Mark the listing as inactive locally for instant UI update
         markListingInactive(id);
 
-        setStatus('Purchase successful! Refreshing listings...');
+        setStatus('Purchase successful! Database and UI updated instantly...');
         
-        // Refresh listings after successful purchase
+        // Additional refresh to ensure data consistency
         setTimeout(() => {
-          if (supabaseConnected && cacheListings) {
-            fetchListings(true);
-          } else {
-            fetchListings();
-          }
-        }, 1000);
+            if (supabaseConnected && cacheListings) {
+                fetchListings(true);
+            } else {
+                fetchListings();
+            }
+        }, 500);
 
         setTimeout(() => {
           setStatus('Purchase completed successfully!');
@@ -1615,29 +1730,44 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         throw new Error("Transaction failed during execution");
       }
       
-      // Immediately mark the listing as sold in Supabase
+      // Immediately mark the listing as sold in Supabase and trigger instant sync
       if (markListingAsSold) {
         try {
+          debugLog(`🔄 Immediately marking listing ${id} as sold in database...`);
           await markListingAsSold(id, tx.hash);
-          debugLog(`✅ Marked listing ${id} as sold in database`);
+          debugLog(`✅ Successfully marked listing ${id} as sold in database`);
+          
+          // Trigger instant sync for this specific listing
+          debugLog(`⚡ Triggering instant sync for listing ${id}...`);
+          try {
+            await triggerInstantSync(id);
+            debugLog(`✅ Instant sync completed for listing ${id}`);
+          } catch (syncError) {
+            debugWarn(`⚠️ Instant sync failed, falling back to regular refresh:`, syncError);
+            // Fallback to regular refresh
+            setTimeout(async () => {
+              await fetchListings(true);
+            }, 100);
+          }
+          
         } catch (dbError) {
           debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
         }
       }
       
-      // Mark the listing as inactive locally
+      // Mark the listing as inactive locally for instant UI update
       markListingInactive(id);
 
-      setStatus('Purchase successful! Refreshing listings...');
+      setStatus('Purchase successful! Database and UI updated instantly...');
       
-      // Refresh listings after successful purchase
+      // Additional refresh to ensure data consistency
       setTimeout(() => {
         if (supabaseConnected && cacheListings) {
           fetchListings(true);
         } else {
           fetchListings();
         }
-      }, 1000);
+      }, 500);
 
       setTimeout(() => {
         setStatus('Purchase completed successfully!');
@@ -1768,14 +1898,38 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
             await tx.wait();
             setStatus("Listing created successfully!");
 
-            // Invalidate cache and refresh listings
-            if (supabaseConnected && cacheListings) {
-                debugLog("💾 Invalidating cache due to new listing...");
-                // Force refresh from blockchain to get latest state
-                await fetchListings(true);
+            // Immediately trigger instant sync to pick up the new listing
+            if (supabaseConnected && triggerInstantSync) {
+                debugLog("⚡ Immediately triggering instant sync for new listing...");
+                setTimeout(async () => {
+                    try {
+                        // Use instant sync to detect and cache the new listing
+                        await triggerInstantSync();
+                        debugLog("✅ Instant sync completed - new listing should be available immediately");
+                        
+                        // Refresh UI to show the new listing
+                        await fetchListings(false);
+                        
+                    } catch (syncError) {
+                        debugWarn("⚠️ Instant sync failed, falling back to manual sync:", syncError);
+                        // Fallback to manual sync
+                        try {
+                            if (triggerManualSync) {
+                                await triggerManualSync();
+                            }
+                            await fetchListings(true);
+                        } catch (fallbackError) {
+                            debugWarn("⚠️ Fallback sync also failed:", fallbackError);
+                            // Final fallback to regular refresh
+                            await fetchListings();
+                        }
+                    }
+                }, 100);
             } else {
-                // Refresh listings normally
-                fetchListings();
+                // Refresh listings normally if Supabase not available
+                setTimeout(() => {
+                    fetchListings();
+                }, 500);
             }
 
         } catch (error) {
@@ -1872,7 +2026,9 @@ const markListingInactive = useCallback((listingId) => {
             marketplaceStats,
             calculateMarketplaceStats,
             // Add function to manually trigger sync via API
-            triggerManualSync
+            triggerManualSync,
+            // Add instant sync function for immediate updates
+            triggerInstantSync
         }}>
             {children}
         </MarketplaceContext.Provider>
