@@ -412,7 +412,173 @@ export function SupabaseProvider({ children }) {
         [supabase]
     );
 
-    // ========== SOLD LISTING CLEANUP ==========
+    // ========== ENHANCED SALE EVENT TRACKING ==========
+    
+    // Comprehensive sale event recording with all analytics updates
+    const recordSaleEvent = useCallback(
+        async (saleData) => {
+            if (!supabase || !saleData) {
+                debugLog('⚠️ Supabase not available or no sale data provided');
+                return false;
+            }
+
+            try {
+                debugLog(`🔄 Recording comprehensive sale event for listing ${saleData.listingId}...`);
+
+                const timestamp = Date.now();
+                const currentDate = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+
+                // Prepare sale breakdown data for analytics
+                const saleBreakdown = {
+                    listing_id: String(saleData.listingId),
+                    platform_fee: saleData.platformFee || '0',
+                    royalty: saleData.royalty || '0', 
+                    proceeds: saleData.proceeds || saleData.totalPrice || '0',
+                    vibe_amount: saleData.vibeAmount || '0',
+                    vibe_portion_in_payment: saleData.vibePortionInPayment || null,
+                    token_address: saleData.paymentToken || '0x0000000000000000000000000000000000000000',
+                    from_address: saleData.buyer || '0x0000000000000000000000000000000000000000',
+                    to_address: saleData.seller || '0x0000000000000000000000000000000000000000',
+                    transaction_hash: saleData.transactionHash || '',
+                    block_number: saleData.blockNumber || 0,
+                    log_index: saleData.logIndex || 0,
+                    timestamp: Math.floor(timestamp / 1000),
+                    transfer_type: saleData.transferType || 'sale',
+                    is_vibe_fee: false,
+                    fee_source: 'marketplace_sale'
+                };
+
+                // Start transaction-like operations (Supabase doesn't support full transactions via JS client)
+                const updates = [];
+
+                // 1. Mark listing as sold
+                const listingUpdate = supabase
+                    .from('marketplace_listings')
+                    .update({
+                        active: false,
+                        sale_status: 'sold',
+                        sale_transaction_hash: saleData.transactionHash,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('listing_id', String(saleData.listingId));
+
+                updates.push(listingUpdate);
+
+                // 2. Record sale breakdown for analytics
+                const saleBreakdownInsert = supabase
+                    .from('sale_breakdowns')
+                    .upsert(saleBreakdown, { 
+                        onConflict: 'transaction_hash,log_index',
+                        ignoreDuplicates: false 
+                    });
+
+                updates.push(saleBreakdownInsert);
+
+                // 3. Record sale in sales history
+                const saleHistoryRecord = {
+                    listing_id: String(saleData.listingId),
+                    buyer: saleData.buyer,
+                    seller: saleData.seller,
+                    quantity: String(saleData.quantity || '1'),
+                    total_price: String(saleData.totalPrice || '0'),
+                    payment_token: saleData.paymentToken || '0x0000000000000000000000000000000000000000',
+                    transaction_hash: saleData.transactionHash,
+                    block_number: saleData.blockNumber || null,
+                    timestamp: Math.floor(timestamp / 1000),
+                    sale_type: 'sale'
+                };
+
+                const salesHistoryInsert = supabase
+                    .from('sales_history')
+                    .upsert(saleHistoryRecord, {
+                        onConflict: 'transaction_hash',
+                        ignoreDuplicates: true
+                    });
+
+                updates.push(salesHistoryInsert);
+
+                // 4. Update collection stats (if collection address available)
+                if (saleData.nftContract) {
+                    const collectionStatsUpsert = supabase
+                        .from('collection_stats')
+                        .upsert({
+                            collection_address: saleData.nftContract.toLowerCase(),
+                            date: currentDate,
+                            platform_fees: saleData.platformFee || '0',
+                            royalties_paid: saleData.royalty || '0',
+                            sales_count: 1,
+                            updated_at: new Date().toISOString()
+                        }, {
+                            onConflict: 'collection_address,date',
+                            ignoreDuplicates: false
+                        });
+
+                    updates.push(collectionStatsUpsert);
+                }
+
+                // 5. Update token fee stats (if non-native payment token)
+                if (saleData.paymentToken && saleData.paymentToken !== '0x0000000000000000000000000000000000000000') {
+                    const tokenStatsUpsert = supabase
+                        .from('token_fee_stats')
+                        .upsert({
+                            token_address: saleData.paymentToken.toLowerCase(),
+                            date: currentDate,
+                            total_amount_in: saleData.totalPrice || '0',
+                            total_wvtru_out: saleData.vibeAmount || '0',
+                            conversion_count: 1,
+                            updated_at: new Date().toISOString()
+                        }, {
+                            onConflict: 'token_address,date',
+                            ignoreDuplicates: false
+                        });
+
+                    updates.push(tokenStatsUpsert);
+                }
+
+                // Execute all updates concurrently for performance
+                debugLog(`📊 Executing ${updates.length} analytics updates concurrently...`);
+                const results = await Promise.allSettled(updates);
+
+                // Check results and log any errors
+                let successCount = 0;
+                let errorCount = 0;
+
+                results.forEach((result, index) => {
+                    if (result.status === 'fulfilled') {
+                        if (result.value.error) {
+                            debugWarn(`❌ Update ${index + 1} failed:`, result.value.error);
+                            errorCount++;
+                        } else {
+                            successCount++;
+                        }
+                    } else {
+                        debugWarn(`❌ Update ${index + 1} rejected:`, result.reason);
+                        errorCount++;
+                    }
+                });
+
+                debugLog(`✅ Sale event recording completed: ${successCount} successful, ${errorCount} failed`);
+
+                // Update in-memory cache
+                const key = getCacheKey('listing', saleData.listingId);
+                cache.current.delete(key);
+                cache.current.delete('all_listings');
+                cache.current.delete('sales_history');
+
+                updateCacheStats('updates');
+                
+                return successCount > 0; // Return true if at least some updates succeeded
+
+            } catch (error) {
+                debugWarn(`❌ Error in recordSaleEvent for listing ${saleData.listingId}:`, error);
+                updateCacheStats('errors');
+                return false;
+            }
+        },
+        [supabase]
+    );
+
+    // Fast listing status update (optimized for speed)
     const markListingAsSold = useCallback(
         async (listingId, transactionHash = null) => {
             if (!supabase || !listingId) {
@@ -421,7 +587,7 @@ export function SupabaseProvider({ children }) {
             }
 
             try {
-                debugLog(`🔄 Marking listing ${listingId} as sold immediately...`);
+                debugLog(`🔄 Fast marking listing ${listingId} as sold...`);
 
                 const updateData = {
                     active: false,
@@ -433,11 +599,19 @@ export function SupabaseProvider({ children }) {
                     updateData.sale_transaction_hash = transactionHash;
                 }
 
-                const { data, error } = await supabase
+                // Use parallel update with optimistic cache invalidation
+                const updatePromise = supabase
                     .from('marketplace_listings')
                     .update(updateData)
                     .eq('listing_id', String(listingId))
                     .select();
+
+                // Immediately update cache (optimistic update)
+                const key = getCacheKey('listing', listingId);
+                cache.current.delete(key);
+                cache.current.delete('all_listings');
+
+                const { data, error } = await updatePromise;
 
                 if (error) {
                     debugWarn(`❌ Error marking listing ${listingId} as sold:`, error);
@@ -445,14 +619,6 @@ export function SupabaseProvider({ children }) {
                     return false;
                 } else {
                     debugLog(`✅ Successfully marked listing ${listingId} as sold in database`);
-                    
-                    // Update in-memory cache
-                    const key = getCacheKey('listing', listingId);
-                    cache.current.delete(key);
-                    
-                    // Invalidate 'all_listings' cache to force refresh
-                    cache.current.delete('all_listings');
-                    
                     updateCacheStats('updates');
                     return true;
                 }
@@ -466,6 +632,236 @@ export function SupabaseProvider({ children }) {
         [supabase]
     );
 
+    // ========== BATCH OPERATIONS FOR PERFORMANCE ==========
+    
+    // Batch update multiple listings (for bulk operations)
+    const batchUpdateListingStatus = useCallback(
+        async (listingUpdates) => {
+            if (!supabase || !Array.isArray(listingUpdates) || listingUpdates.length === 0) {
+                return false;
+            }
+
+            try {
+                debugLog(`🔄 Batch updating ${listingUpdates.length} listing statuses...`);
+
+                const updatePromises = listingUpdates.map(update => 
+                    supabase
+                        .from('marketplace_listings')
+                        .update({
+                            active: update.active,
+                            sale_status: update.status,
+                            sale_transaction_hash: update.transactionHash || null,
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('listing_id', String(update.listingId))
+                );
+
+                const results = await Promise.allSettled(updatePromises);
+                const successCount = results.filter(r => r.status === 'fulfilled' && !r.value.error).length;
+
+                debugLog(`✅ Batch update completed: ${successCount}/${listingUpdates.length} successful`);
+
+                // Clear relevant cache entries
+                listingUpdates.forEach(update => {
+                    const key = getCacheKey('listing', update.listingId);
+                    cache.current.delete(key);
+                });
+                cache.current.delete('all_listings');
+
+                return successCount > 0;
+
+            } catch (error) {
+                debugWarn('❌ Error in batch listing status update:', error);
+                return false;
+            }
+        },
+        [supabase]
+    );
+
+    // Update collection statistics in real-time
+    const updateCollectionStats = useCallback(
+        async (collectionAddress, saleData) => {
+            if (!supabase || !collectionAddress) return false;
+
+            try {
+                const currentDate = new Date().toISOString().split('T')[0];
+                
+                // Use Supabase's built-in increment functionality for atomic updates
+                const { error } = await supabase.rpc('increment_collection_stats', {
+                    p_collection_address: collectionAddress.toLowerCase(),
+                    p_date: currentDate,
+                    p_platform_fee: saleData.platformFee || '0',
+                    p_royalty: saleData.royalty || '0',
+                    p_sales_increment: 1
+                });
+
+                if (error) {
+                    debugWarn('Collection stats update error:', error);
+                    // Fallback to upsert if RPC function doesn't exist
+                    return await fallbackCollectionStatsUpdate(collectionAddress, saleData);
+                }
+
+                debugLog(`✅ Updated collection stats for ${collectionAddress}`);
+                return true;
+
+            } catch (error) {
+                debugWarn('Error updating collection stats:', error);
+                return false;
+            }
+        },
+        [supabase]
+    );
+
+    // Fallback collection stats update using upsert
+    const fallbackCollectionStatsUpdate = async (collectionAddress, saleData) => {
+        try {
+            const currentDate = new Date().toISOString().split('T')[0];
+            
+            // Get existing stats
+            const { data: existing } = await supabase
+                .from('collection_stats')
+                .select('*')
+                .eq('collection_address', collectionAddress.toLowerCase())
+                .eq('date', currentDate)
+                .maybeSingle();
+
+            const newStats = {
+                collection_address: collectionAddress.toLowerCase(),
+                date: currentDate,
+                platform_fees: existing 
+                    ? String(BigInt(existing.platform_fees) + BigInt(saleData.platformFee || '0'))
+                    : saleData.platformFee || '0',
+                royalties_paid: existing
+                    ? String(BigInt(existing.royalties_paid) + BigInt(saleData.royalty || '0'))
+                    : saleData.royalty || '0',
+                sales_count: (existing?.sales_count || 0) + 1,
+                updated_at: new Date().toISOString()
+            };
+
+            const { error } = await supabase
+                .from('collection_stats')
+                .upsert(newStats, {
+                    onConflict: 'collection_address,date',
+                    ignoreDuplicates: false
+                });
+
+            if (error) {
+                debugWarn('Fallback collection stats error:', error);
+                return false;
+            }
+
+            return true;
+        } catch (error) {
+            debugWarn('Fallback collection stats error:', error);
+            return false;
+        }
+    };
+
+    // Real-time analytics dashboard data
+    const getMarketplaceAnalytics = useCallback(
+        async (timeframe = '24h') => {
+            if (!supabase) {
+                const cachedData = getCache(`analytics_${timeframe}`);
+                return cachedData || { sales: 0, volume: '0', fees: '0', collections: 0 };
+            }
+
+            try {
+                debugLog(`📊 Fetching marketplace analytics for ${timeframe}...`);
+
+                const timeframes = {
+                    '1h': 1,
+                    '24h': 24,
+                    '7d': 24 * 7,
+                    '30d': 24 * 30
+                };
+
+                const hours = timeframes[timeframe] || 24;
+                const cutoffTime = Math.floor((Date.now() - hours * 60 * 60 * 1000) / 1000);
+
+                // Parallel queries for performance
+                const [salesQuery, breakdownsQuery, collectionsQuery] = await Promise.allSettled([
+                    supabase
+                        .from('sales_history')
+                        .select('total_price, payment_token')
+                        .gte('timestamp', cutoffTime),
+                    
+                    supabase
+                        .from('sale_breakdowns')
+                        .select('platform_fee, vibe_amount')
+                        .gte('timestamp', cutoffTime),
+                    
+                    supabase
+                        .from('collection_stats')
+                        .select('collection_address')
+                        .gte('created_at', new Date(Date.now() - hours * 60 * 60 * 1000).toISOString())
+                ]);
+
+                const analytics = {
+                    sales: 0,
+                    volume: '0',
+                    fees: '0',
+                    vibeGenerated: '0',
+                    collections: 0,
+                    lastUpdated: Date.now()
+                };
+
+                // Process sales data
+                if (salesQuery.status === 'fulfilled' && salesQuery.value.data) {
+                    analytics.sales = salesQuery.value.data.length;
+                    
+                    let totalVolume = BigInt(0);
+                    salesQuery.value.data.forEach(sale => {
+                        try {
+                            totalVolume += BigInt(sale.total_price || '0');
+                        } catch (e) {
+                            debugWarn('Error parsing sale price:', e);
+                        }
+                    });
+                    analytics.volume = totalVolume.toString();
+                }
+
+                // Process fee breakdowns
+                if (breakdownsQuery.status === 'fulfilled' && breakdownsQuery.value.data) {
+                    let totalFees = BigInt(0);
+                    let totalVibe = BigInt(0);
+                    
+                    breakdownsQuery.value.data.forEach(breakdown => {
+                        try {
+                            totalFees += BigInt(breakdown.platform_fee || '0');
+                            totalVibe += BigInt(breakdown.vibe_amount || '0');
+                        } catch (e) {
+                            debugWarn('Error parsing breakdown amounts:', e);
+                        }
+                    });
+                    
+                    analytics.fees = totalFees.toString();
+                    analytics.vibeGenerated = totalVibe.toString();
+                }
+
+                // Process collections data
+                if (collectionsQuery.status === 'fulfilled' && collectionsQuery.value.data) {
+                    const uniqueCollections = new Set(
+                        collectionsQuery.value.data.map(item => item.collection_address)
+                    );
+                    analytics.collections = uniqueCollections.size;
+                }
+
+                // Cache the result
+                setCache(`analytics_${timeframe}`, analytics, 'analytics');
+                
+                debugLog(`📊 Analytics for ${timeframe}:`, analytics);
+                return analytics;
+
+            } catch (error) {
+                debugWarn('Error fetching marketplace analytics:', error);
+                updateCacheStats('errors');
+                return { sales: 0, volume: '0', fees: '0', collections: 0 };
+            }
+        },
+        [supabase]
+    );
+
+    // Batch removal of sold listings (optimized version)
     const removeSoldListings = useCallback(
         async (salesHistory) => {
             if (!supabase || !Array.isArray(salesHistory) || salesHistory.length === 0) {
@@ -473,7 +869,7 @@ export function SupabaseProvider({ children }) {
             }
 
             try {
-                debugLog(`🧹 Removing ${salesHistory.length} sold listings from marketplace...`);
+                debugLog(`🧹 Batch removing ${salesHistory.length} sold listings from marketplace...`);
 
                 // Get listing IDs from sales
                 const soldListingIds = salesHistory.map(sale => sale.listingId).filter(Boolean);
@@ -483,34 +879,15 @@ export function SupabaseProvider({ children }) {
                     return;
                 }
 
-                // Mark sold listings as inactive in Supabase
-                const { data, error } = await supabase
-                    .from('marketplace_listings')
-                    .update({ 
-                        active: false, 
-                        sale_status: 'sold',
-                        updated_at: new Date().toISOString() 
-                    })
-                    .in('listing_id', soldListingIds)
-                    .select();
+                // Use batch update for better performance
+                const listingUpdates = soldListingIds.map(listingId => ({
+                    listingId,
+                    active: false,
+                    status: 'sold',
+                    transactionHash: salesHistory.find(sale => sale.listingId === listingId)?.transactionHash
+                }));
 
-                if (error) {
-                    debugWarn('❌ Error removing sold listings:', error);
-                    updateCacheStats('errors');
-                } else {
-                    debugLog(`✅ Marked ${data?.length || 0} listings as sold in database`);
-                    
-                    // Update in-memory cache - remove sold listings
-                    soldListingIds.forEach(listingId => {
-                        const key = getCacheKey('listing', listingId);
-                        cache.current.delete(key);
-                    });
-                    
-                    // Invalidate 'all_listings' cache to force refresh
-                    cache.current.delete('all_listings');
-                    
-                    updateCacheStats('updates');
-                }
+                await batchUpdateListingStatus(listingUpdates);
 
                 // Also update user profiles to remove sold NFTs
                 await updateUserProfilesAfterSales(salesHistory);
@@ -520,7 +897,7 @@ export function SupabaseProvider({ children }) {
                 updateCacheStats('errors');
             }
         },
-        [supabase]
+        [supabase, batchUpdateListingStatus]
     );
 
     // Update user profiles after sales to remove sold NFTs
@@ -1274,6 +1651,12 @@ export function SupabaseProvider({ children }) {
         getCachedSalesHistory,
         markListingAsSold,
         removeSoldListings,
+
+        // Enhanced sale tracking and analytics
+        recordSaleEvent,
+        batchUpdateListingStatus,
+        updateCollectionStats,
+        getMarketplaceAnalytics,
 
         // Auction ops
         cacheAuctions,

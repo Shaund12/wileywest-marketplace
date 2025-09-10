@@ -33,6 +33,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         markListingAsSold,
         removeSoldListings,
         subscribeToListings,
+        recordSaleEvent,
+        batchUpdateListingStatus,
+        updateCollectionStats,
+        getMarketplaceAnalytics,
         isConnected: supabaseConnected 
     } = useSupabase();
     const [marketplace, setMarketplace] = useState(null);
@@ -1505,13 +1509,59 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
           throw new Error("Transaction failed during execution");
         }
         
-        // Immediately mark the listing as sold in Supabase
+        
+        // Immediately record comprehensive sale event in Supabase for analytics
+        if (recordSaleEvent) {
+          try {
+            // Extract sale data for comprehensive tracking
+            const saleEventData = {
+              listingId: id,
+              buyer: wallet,
+              seller: l.seller,
+              nftContract: l.nftContract,
+              tokenId: l.tokenId,
+              quantity: qty.toString(),
+              totalPrice: totalWithFees.toString(),
+              paymentToken: l.paymentToken,
+              transactionHash: tx.hash,
+              blockNumber: receipt.blockNumber,
+              timestamp: Date.now(),
+              // Fee breakdown data (simplified for now - contract handles internally)
+              platformFee: platformFeeTotal.toString(),
+              royalty: royaltyAmount.toString(),
+              proceeds: (totalWithFees - platformFeeTotal - royaltyAmount).toString(),
+              vibeAmount: '0', // Contract handles VIBE conversion internally
+              transferType: isNative ? 'native_direct' : 'erc20'
+            };
+
+            await recordSaleEvent(saleEventData);
+            debugLog(`✅ Recorded comprehensive sale event for listing ${id}`);
+          } catch (saleEventError) {
+            debugWarn(`⚠️ Failed to record comprehensive sale event:`, saleEventError);
+          }
+        }
+
+        // Also mark listing as sold for immediate UI updates
         if (markListingAsSold) {
           try {
             await markListingAsSold(id, tx.hash);
             debugLog(`✅ Marked listing ${id} as sold in database`);
           } catch (dbError) {
             debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+          }
+        }
+
+        // Update collection stats if available
+        if (updateCollectionStats && l.nftContract) {
+          try {
+            await updateCollectionStats(l.nftContract, {
+              platformFee: platformFeeTotal.toString(),
+              royalty: royaltyAmount.toString(),
+              totalPrice: totalWithFees.toString()
+            });
+            debugLog(`✅ Updated collection stats for ${l.nftContract}`);
+          } catch (statsError) {
+            debugWarn(`⚠️ Failed to update collection stats:`, statsError);
           }
         }
         
@@ -1615,13 +1665,58 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         throw new Error("Transaction failed during execution");
       }
       
-      // Immediately mark the listing as sold in Supabase
+      // Immediately record comprehensive sale event in Supabase for analytics
+      if (recordSaleEvent) {
+        try {
+          // Extract sale data for comprehensive tracking
+          const saleEventData = {
+            listingId: id,
+            buyer: wallet,
+            seller: l.seller,
+            nftContract: l.nftContract,
+            tokenId: l.tokenId,
+            quantity: qty.toString(),
+            totalPrice: totalWithFees.toString(),
+            paymentToken: l.paymentToken,
+            transactionHash: tx.hash,
+            blockNumber: receipt.blockNumber,
+            timestamp: Date.now(),
+            // Fee breakdown data (simplified for now - contract handles internally)
+            platformFee: platformFeeTotal.toString(),
+            royalty: royaltyAmount.toString(),
+            proceeds: (totalWithFees - platformFeeTotal - royaltyAmount).toString(),
+            vibeAmount: '0', // Contract handles VIBE conversion internally
+            transferType: 'erc20'
+          };
+
+          await recordSaleEvent(saleEventData);
+          debugLog(`✅ Recorded comprehensive sale event for listing ${id}`);
+        } catch (saleEventError) {
+          debugWarn(`⚠️ Failed to record comprehensive sale event:`, saleEventError);
+        }
+      }
+
+      // Also mark listing as sold for immediate UI updates
       if (markListingAsSold) {
         try {
           await markListingAsSold(id, tx.hash);
           debugLog(`✅ Marked listing ${id} as sold in database`);
         } catch (dbError) {
           debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+        }
+      }
+
+      // Update collection stats if available
+      if (updateCollectionStats && l.nftContract) {
+        try {
+          await updateCollectionStats(l.nftContract, {
+            platformFee: platformFeeTotal.toString(),
+            royalty: royaltyAmount.toString(),
+            totalPrice: totalWithFees.toString()
+          });
+          debugLog(`✅ Updated collection stats for ${l.nftContract}`);
+        } catch (statsError) {
+          debugWarn(`⚠️ Failed to update collection stats:`, statsError);
         }
       }
       
@@ -1872,7 +1967,12 @@ const markListingInactive = useCallback((listingId) => {
             marketplaceStats,
             calculateMarketplaceStats,
             // Add function to manually trigger sync via API
-            triggerManualSync
+            triggerManualSync,
+            // Enhanced Supabase integration functions
+            recordSaleEvent,
+            batchUpdateListingStatus,
+            updateCollectionStats,
+            getMarketplaceAnalytics
         }}>
             {children}
         </MarketplaceContext.Provider>
