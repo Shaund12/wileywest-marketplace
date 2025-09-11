@@ -3,6 +3,7 @@ import { useWallet } from '../context/WalletContext';
 import { ethers } from 'ethers';
 import MarketplaceAbi from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { getTokenDecimals, formatTokenAmount } from '../utils/tokenUtils';
 import './AuctionStyles.css';
 
 function VibeDashboardPage() {
@@ -30,16 +31,20 @@ function VibeDashboardPage() {
     const [timeframe, setTimeframe] = useState('7d');
     const [error, setError] = useState(null);
 
-    // Helper function to get vibe amount from breakdown events
+    // Helper function to get vibe amount from breakdown events with correct decimal handling
     const getVibeAmount = useMemo(() => (event) => {
         const args = event.args;
         
-        // For SaleBreakdown and AuctionBreakdown events, get the total vibe amount
-        const vibePortionInPayment = parseFloat(ethers.formatEther(args.vibePortionInPayment || '0'));
-        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));  
-        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
+        // Get the payment token used in this transaction
+        const paymentToken = args.paymentToken;
+        const decimals = getTokenDecimals(paymentToken);
         
-        // Return the total vibe amount (prefer vibePortionInPayment as it's the original amount)
+        // For SaleBreakdown and AuctionBreakdown events, get the total vibe amount with correct decimals
+        const vibePortionInPayment = parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals));
+        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')); // WVTRU is always 18 decimals
+        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0')); // Native VTRU is always 18 decimals
+        
+        // Return the total vibe amount (prefer vibePortionInPayment as it's the original amount in the payment token)
         return vibePortionInPayment > 0 ? vibePortionInPayment : (vibeOutWVTRU + vibeOutNative);
     }, []);
 
@@ -142,6 +147,10 @@ function VibeDashboardPage() {
                     const block = await event.getBlock();
                     const args = event.args;
                     
+                    // Get the payment token and its decimals for proper formatting
+                    const paymentToken = args.paymentToken;
+                    const decimals = getTokenDecimals(paymentToken);
+                    
                     const eventData = {
                         // Event metadata
                         type: event.eventName || (saleBreakdownEvents.includes(event) ? 'sale' : 'auction'),
@@ -149,21 +158,25 @@ function VibeDashboardPage() {
                         transactionHash: event.transactionHash,
                         timestamp: block.timestamp * 1000, // Convert to milliseconds
                         
-                        // Vibe data from event args
-                        vibePortionInPayment: parseFloat(ethers.formatEther(args.vibePortionInPayment || '0')),
-                        vibeOutWVTRU: parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')),
-                        vibeOutNative: parseFloat(ethers.formatEther(args.vibeOutNative || '0')),
+                        // Payment token info
+                        paymentToken: paymentToken,
+                        paymentTokenDecimals: decimals,
+                        
+                        // Vibe data from event args with correct decimal formatting
+                        vibePortionInPayment: parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals)),
+                        vibeOutWVTRU: parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')), // WVTRU is always 18 decimals
+                        vibeOutNative: parseFloat(ethers.formatEther(args.vibeOutNative || '0')), // Native VTRU is always 18 decimals
                         vibeShareBps: parseInt(args.vibeShareBps?.toString() || '0'),
                         
-                        // Platform and royalty data
-                        platformFeeTotal: parseFloat(ethers.formatEther(args.platformFeeTotal || '0')),
-                        royaltyAmount: parseFloat(ethers.formatEther(args.royaltyAmount || '0')),
+                        // Platform and royalty data with correct decimal formatting
+                        platformFeeTotal: parseFloat(ethers.formatUnits(args.platformFeeTotal || '0', decimals)),
+                        royaltyAmount: parseFloat(ethers.formatUnits(args.royaltyAmount || '0', decimals)),
                         royaltyReceiver: args.royaltyReceiver,
                         
-                        // Transaction details
+                        // Transaction details with correct decimal formatting
                         nftContract: args.nftContract,
                         tokenId: args.tokenId?.toString(),
-                        totalPrice: parseFloat(ethers.formatEther(args.totalPrice || '0')),
+                        totalPrice: parseFloat(ethers.formatUnits(args.totalPrice || args.finalPrice || '0', decimals)),
                         quantity: parseInt(args.quantity?.toString() || '1')
                     };
                     
@@ -174,6 +187,23 @@ function VibeDashboardPage() {
             }
             
             debugLog(`✅ Processed ${processedEvents.length} events successfully`);
+            
+            // Debug: Log token breakdown for troubleshooting
+            if (processedEvents.length > 0) {
+                const tokenBreakdown = processedEvents.reduce((acc, event) => {
+                    const token = event.paymentToken || 'Unknown';
+                    const decimals = event.paymentTokenDecimals || 'Unknown';
+                    const vibeAmount = event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative);
+                    if (!acc[token]) {
+                        acc[token] = { count: 0, totalVibe: 0, decimals };
+                    }
+                    acc[token].count++;
+                    acc[token].totalVibe += vibeAmount;
+                    return acc;
+                }, {});
+                
+                debugLog('🔍 Token breakdown for processed events:', tokenBreakdown);
+            }
 
             // Time windows for calculations
             const now = Date.now();
