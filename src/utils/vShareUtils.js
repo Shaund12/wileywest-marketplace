@@ -116,16 +116,54 @@ export function vShareDefaultDescription() {
 
 /**
  * Checks if a contract address is V-Share
- * DISABLED: Always returns false to disable V-Share functionality
  */
 export function isVShareContract(contractAddress) {
-    return false; // Disabled V-Share functionality
+    if (!contractAddress) return false;
+    return contractAddress.toLowerCase() === VSHARE_ADDRESS.toLowerCase();
 }
 
 /**
  * Gets V-Share metadata for a specific token
- * DISABLED: Always returns null to disable V-Share functionality
  */
 export function getVShareMetadata(contractAddress, tokenId, title = null) {
-    return null; // Disabled V-Share functionality
+    if (!isVShareContract(contractAddress)) return null;
+    
+    const tokenIdStr = String(tokenId);
+    const nftTitle = title || `V-Share #${tokenIdStr}`;
+    
+    return {
+        name: nftTitle,
+        description: vShareDefaultDescription(),
+        image: vShareLpSvgDataUrl({ 
+            contract: contractAddress, 
+            tokenId: tokenIdStr, 
+            title: 'V-Share', 
+            subtitle: 'Vmonsters Rev Share' 
+        }),
+        imageUrl: vShareLpSvgDataUrl({ 
+            contract: contractAddress, 
+            tokenId: tokenIdStr, 
+            title: 'V-Share', 
+            subtitle: 'Vmonsters Rev Share' 
+        }),
+        attributes: [
+            {
+                trait_type: 'Collection',
+                value: 'V-Share'
+            },
+            {
+                trait_type: 'Type',
+                value: 'Revenue Share NFT'
+            },
+            {
+                trait_type: 'Contract',
+                value: shortAddress(contractAddress)
+            }
+        ],
+        loaded: true,
+        loading: false,
+        hasMetadata: true,
+        hasImage: true,
+        source: 'V-Share Generator'
+    };
 }
