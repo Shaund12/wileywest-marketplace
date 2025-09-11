@@ -9,12 +9,12 @@ import { debugWarn } from './debugUtils';
 export const TOKEN_ADDRESSES = {
     VTRU: ethers.ZeroAddress, // Native VTRU
     WVTRU: '0x3ccc3F22462cAe34766820894D04a40381201ef9',
-    USDC: '0x0000000000000000000000000000000000000000', // To be filled when deployed
-    VUSD: '0x0000000000000000000000000000000000000000', // To be filled when deployed
-    SEVO: '0x0000000000000000000000000000000000000000', // To be filled when deployed
-    WSEVO: '0x0000000000000000000000000000000000000000', // To be filled when deployed
-    VITEX: '0x0000000000000000000000000000000000000000', // To be filled when deployed
-    VTRO: '0x0000000000000000000000000000000000000000', // To be filled when deployed
+    USDC: '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF', // USDC.pol
+    VUSD: '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA', // VUSD token
+    SEVO: '0x2A34059DF3D60B1864f10F10492746bd26d3D24a', // SEVO token
+    WSEVO: '0x43a36604B6Ad9A4cf8EF600241E90b3DD97E145d', // Wrapped SEVO
+    VITEX: '0x4Ed92A1d95d2092973007197794542A5D51FF5a6', // VITEX token
+    VTRO: '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D', // VTRO token
 };
 
 // Token metadata
@@ -43,7 +43,7 @@ export const TOKEN_REGISTRY = {
     [TOKEN_ADDRESSES.VUSD]: {
         symbol: 'VUSD',
         name: 'Vitruveo USD',
-        decimals: 18,
+        decimals: 6,
         icon: '/icons/vusd.svg',
         isNative: false,
     },
