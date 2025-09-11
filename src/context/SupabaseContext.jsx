@@ -412,38 +412,128 @@ export function SupabaseProvider({ children }) {
         [supabase]
     );
 
-    // ========== SOLD LISTING CLEANUP ==========
+    // ========== CLEANUP ORPHANED LISTINGS ==========
+    const cleanupOrphanedListings = useCallback(
+        async () => {
+            if (!supabase) {
+                debugLog('⚠️ Supabase not available for cleanup');
+                return { cleaned: 0, errors: [] };
+            }
+
+            try {
+                debugLog('🧹 Starting cleanup of orphaned active listings...');
+                
+                // Get all currently active listings from database
+                const { data: activeListings, error: fetchError } = await supabase
+                    .from('marketplace_listings')
+                    .select('listing_id, sale_transaction_hash')
+                    .eq('active', true)
+                    .eq('sale_status', 'active');
+
+                if (fetchError) {
+                    throw new Error(`Failed to fetch active listings: ${fetchError.message}`);
+                }
+
+                if (!activeListings || activeListings.length === 0) {
+                    debugLog('✅ No active listings to check');
+                    return { cleaned: 0, errors: [] };
+                }
+
+                debugLog(`🔍 Checking ${activeListings.length} active listings for orphaned sales...`);
+                
+                // For listings that have a sale_transaction_hash but are still active, mark them as sold
+                const listingsToClean = activeListings.filter(listing => 
+                    listing.sale_transaction_hash && 
+                    listing.sale_transaction_hash !== null &&
+                    listing.sale_transaction_hash.length > 0
+                );
+
+                if (listingsToClean.length === 0) {
+                    debugLog('✅ No orphaned listings found');
+                    return { cleaned: 0, errors: [] };
+                }
+
+                debugLog(`🛠️ Found ${listingsToClean.length} orphaned listings with transaction hashes - marking as sold...`);
+                
+                const errors = [];
+                let cleanedCount = 0;
+
+                for (const listing of listingsToClean) {
+                    try {
+                        const { error: updateError } = await supabase
+                            .from('marketplace_listings')
+                            .update({
+                                active: false,
+                                sale_status: 'sold',
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq('listing_id', listing.listing_id);
+
+                        if (updateError) {
+                            errors.push(`Listing ${listing.listing_id}: ${updateError.message}`);
+                        } else {
+                            cleanedCount++;
+                            debugLog(`✅ Cleaned orphaned listing ${listing.listing_id}`);
+                        }
+                    } catch (error) {
+                        errors.push(`Listing ${listing.listing_id}: ${error.message}`);
+                    }
+                }
+
+                if (cleanedCount > 0) {
+                    // Clear cache after cleanup
+                    cache.current.delete('all_listings');
+                    updateCacheStats('updates');
+                }
+
+                debugLog(`🧹 Cleanup completed: ${cleanedCount} cleaned, ${errors.length} errors`);
+                return { cleaned: cleanedCount, errors };
+
+            } catch (error) {
+                debugWarn('❌ Error during orphaned listings cleanup:', error);
+                updateCacheStats('errors');
+                return { cleaned: 0, errors: [error.message] };
+            }
+        },
+        [supabase]
+    );
     const markListingAsSold = useCallback(
-        async (listingId, transactionHash = null) => {
+        async (listingId, transactionHash = null, retryCount = 3) => {
             if (!supabase || !listingId) {
                 debugLog('⚠️ Supabase not available or no listing ID provided');
                 return false;
             }
 
-            try {
-                debugLog(`🔄 Marking listing ${listingId} as sold immediately...`);
+            let attempt = 0;
+            while (attempt < retryCount) {
+                try {
+                    debugLog(`🔄 Marking listing ${listingId} as sold (attempt ${attempt + 1}/${retryCount})...`);
 
-                const updateData = {
-                    active: false,
-                    sale_status: 'sold',
-                    updated_at: new Date().toISOString()
-                };
+                    const updateData = {
+                        active: false,
+                        sale_status: 'sold',
+                        updated_at: new Date().toISOString()
+                    };
 
-                if (transactionHash) {
-                    updateData.sale_transaction_hash = transactionHash;
-                }
+                    if (transactionHash) {
+                        updateData.sale_transaction_hash = transactionHash;
+                    }
 
-                const { data, error } = await supabase
-                    .from('marketplace_listings')
-                    .update(updateData)
-                    .eq('listing_id', String(listingId))
-                    .select();
+                    const { data, error } = await supabase
+                        .from('marketplace_listings')
+                        .update(updateData)
+                        .eq('listing_id', String(listingId))
+                        .select();
 
-                if (error) {
-                    debugWarn(`❌ Error marking listing ${listingId} as sold:`, error);
-                    updateCacheStats('errors');
-                    return false;
-                } else {
+                    if (error) {
+                        throw new Error(`Database error: ${error.message}`);
+                    }
+
+                    // Verify the update actually happened
+                    if (!data || data.length === 0) {
+                        throw new Error(`No rows updated - listing ${listingId} may not exist`);
+                    }
+
                     debugLog(`✅ Successfully marked listing ${listingId} as sold in database`);
                     
                     // Update in-memory cache immediately
@@ -475,13 +565,25 @@ export function SupabaseProvider({ children }) {
                     
                     updateCacheStats('updates');
                     return true;
-                }
 
-            } catch (error) {
-                debugWarn(`❌ Error in markListingAsSold for listing ${listingId}:`, error);
-                updateCacheStats('errors');
-                return false;
+                } catch (error) {
+                    attempt++;
+                    debugWarn(`❌ Error marking listing ${listingId} as sold (attempt ${attempt}):`, error.message);
+                    updateCacheStats('errors');
+                    
+                    if (attempt >= retryCount) {
+                        debugWarn(`❌ Failed to mark listing ${listingId} as sold after ${retryCount} attempts`);
+                        return false;
+                    }
+                    
+                    // Wait before retrying with exponential backoff
+                    const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+                    debugLog(`⏱️ Waiting ${delay}ms before retry...`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
             }
+            
+            return false;
         },
         [supabase]
     );
@@ -1324,6 +1426,7 @@ export function SupabaseProvider({ children }) {
         getCachedSalesHistory,
         markListingAsSold,
         removeSoldListings,
+        cleanupOrphanedListings,
 
         // Auction ops
         cacheAuctions,
