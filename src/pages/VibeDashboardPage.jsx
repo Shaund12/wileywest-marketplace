@@ -96,8 +96,8 @@ function VibeDashboardPage() {
             const SCAN_BLOCKS = 50000; // Last 50k blocks for performance
             const fromBlock = Math.max(currentBlock - SCAN_BLOCKS, 0);
             
-            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events`);
-            setStatus(`📊 Scanning recent ${SCAN_BLOCKS} blocks for vibe fee data...`);
+            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events (${SCAN_BLOCKS} blocks)`);
+            setStatus(`📊 Scanning recent ${SCAN_BLOCKS.toLocaleString()} blocks for vibe fee data...`);
             
             // Fetch SaleBreakdown events (when NFTs are purchased)
             const saleBreakdownEvents = await marketplace.queryFilter(
@@ -296,17 +296,28 @@ function VibeDashboardPage() {
             
             // Provide more specific error messages based on error type
             let errorMessage = 'Failed to load vibe fee data from blockchain.';
+            let troubleshootingTip = '';
             
             if (error.message && error.message.includes('Failed to fetch')) {
                 errorMessage = 'Network connection failed. Please check your internet connection and try again. The blockchain RPC endpoint may be temporarily unavailable.';
+                troubleshootingTip = 'If this persists, the marketplace may have recent transactions that cannot be displayed due to network connectivity issues.';
             } else if (error.message && error.message.includes('network')) {
                 errorMessage = 'Blockchain network error. Please check if you are connected to the correct network (Vitruveo) and try again.';
+                troubleshootingTip = 'Make sure your wallet is connected to the Vitruveo network (Chain ID: 1490).';
             } else if (error.message && error.message.includes('UNPREDICTABLE_GAS_LIMIT')) {
                 errorMessage = 'Smart contract interaction failed. The marketplace contract may be experiencing issues.';
+                troubleshootingTip = 'This could indicate the contract address is incorrect or the contract is not responding.';
             } else if (error.code === 'NETWORK_ERROR') {
                 errorMessage = 'Blockchain network is unreachable. Please try again later or check your network connection.';
+                troubleshootingTip = 'Recent sales and VIBE payouts may exist but cannot be retrieved at this time.';
             } else {
                 errorMessage = `Failed to load vibe fee data: ${error.message || 'Unknown error'}. Please try again later.`;
+                troubleshootingTip = 'If this error persists, please report it with the error details above.';
+            }
+            
+            // Log troubleshooting information
+            if (troubleshootingTip) {
+                debugLog('Troubleshooting tip:', troubleshootingTip);
             }
             
             setError(errorMessage);
