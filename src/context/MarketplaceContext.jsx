@@ -1978,7 +1978,8 @@ const resetTokenAllowance = useCallback(
             marketplaceStats,
             calculateMarketplaceStats,
             triggerManualSync,
-            resetTokenAllowance // <-- added
+            resetTokenAllowance, // <-- added
+            ensureAllowanceWithBuffer // <-- added for auction bidding
         }}>
             {children}
         </MarketplaceContext.Provider>

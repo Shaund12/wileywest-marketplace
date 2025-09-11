@@ -228,7 +228,7 @@ function AuctionDetailPage() {
     const { id: auctionId } = useParams();
     const navigate = useNavigate();
     const { wallet, connect, provider, signer } = useWallet();
-    const { status, marketplaceAddress } = useMarketplace();
+    const { status, marketplaceAddress, ensureAllowanceWithBuffer, setStatus } = useMarketplace();
     const { getCachedAuctions, getAuctionBids } = useSupabase();
     const [auction, setAuction] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -466,19 +466,47 @@ function AuctionDetailPage() {
             debugLog(`🔨 Placing bid for auction ${auctionId} with amount ${bidAmount} ${isNativeToken ? 'VTRU' : getTokenSymbol(auction.paymentToken)}`);
             debugLog(`💰 Payment token: ${auction.paymentToken}, isNative: ${isNativeToken}`);
 
+            // For ERC20 tokens, ensure approval before bidding
+            if (!isNativeToken) {
+                debugLog(`💡 ERC20 token detected, checking allowance for ${auction.paymentToken}`);
+                setStatus(`Checking token approval for ${getTokenSymbol(auction.paymentToken)}...`);
+                
+                try {
+                    await ensureAllowanceWithBuffer({
+                        tokenAddress: auction.paymentToken,
+                        owner: wallet,
+                        spender: marketplaceAddress,
+                        needed: bidAmountWei,
+                        signer: signer,
+                        setStatus: setStatus
+                    });
+                    debugLog(`✅ Token approval confirmed for ${getTokenSymbol(auction.paymentToken)}`);
+                } catch (approvalError) {
+                    debugLog(`❌ Token approval failed:`, approvalError);
+                    throw new Error(`Token approval failed: ${approvalError.message}`);
+                }
+            }
+
+            setStatus(`Placing bid on auction ${auctionId}...`);
             const tx = isNativeToken
                 ? await marketplace.bid(auctionId, 0, { value: bidAmountWei })
                 : await marketplace.bid(auctionId, bidAmountWei);
 
             debugLog(`✅ Bid transaction submitted: ${tx.hash}`);
+            setStatus(`Bid submitted! Waiting for confirmation...`);
             await tx.wait();
 
+            setStatus(`Bid confirmed successfully!`);
             loadAuction();
             setBidAmount('');
+            
+            // Clear status after a delay
+            setTimeout(() => setStatus(''), 3000);
 
         } catch (error) {
             criticalError('Error placing bid:', error);
             alert(`Error placing bid: ${error.message || 'Transaction failed'}`);
+            setStatus('');
         } finally {
             setBidding(false);
         }
