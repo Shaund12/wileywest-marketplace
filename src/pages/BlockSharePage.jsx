@@ -6,6 +6,83 @@ import RevShareTreasuryAbi from '../abi/RevShareTreasuryActual.json';
 import RevShareNFTAbi from '../abi/RevShareNFT.json';
 import { debugWarn, criticalError } from '../utils/debugUtils';
 
+const MOCK_MODE = import.meta.env.VITE_MOCK_MODE === 'true';
+
+// Mock contract for testing
+class MockContract {
+    constructor(address, abi, provider) {
+        this.address = address;
+        this.interface = {
+            getFunction: (name) => {
+                // Mock interface that has all required functions
+                return { name };
+            }
+        };
+    }
+    
+    connect(signer) {
+        return new MockContract(this.address, null, null);
+    }
+    
+    async balanceOf(address) {
+        return BigInt(1); // Mock: user has 1 NFT
+    }
+    
+    async totalSupply() {
+        return BigInt(1000); // Mock: 1000 total NFTs
+    }
+    
+    async tokenOfOwnerByIndex(address, index) {
+        return BigInt(42); // Mock: user owns token #42
+    }
+    
+    async ownerOf(tokenId) {
+        return '0x1234567890123456789012345678901234567890'; // Mock owner
+    }
+    
+    async claimable(tokenId) {
+        return ethers.parseEther('0.00107'); // Mock claimable amount
+    }
+    
+    async claimedPerTokenX18(tokenId) {
+        return ethers.parseEther('0.0'); // Mock: nothing claimed yet
+    }
+    
+    async cumulativePerTokenX18() {
+        return ethers.parseEther('0.00107'); // Mock cumulative amount
+    }
+    
+    async pendingBeforeMint() {
+        return ethers.parseEther('0.5'); // Mock pending amount
+    }
+    
+    async claim(tokenId) {
+        return { wait: async () => ({ status: 1 }) };
+    }
+    
+    async claimMany(tokenIds) {
+        return { wait: async () => ({ status: 1 }) };
+    }
+    
+    async allocatePending() {
+        return { wait: async () => ({ status: 1 }) };
+    }
+    
+    async forwardNative(options = {}) {
+        return { wait: async () => ({ status: 1 }) };
+    }
+    
+    async estimateGas() {
+        return { claim: () => BigInt(100000) };
+    }
+    
+    callStatic = {
+        claim: async () => true,
+        claimMany: async () => true,
+        allocatePending: async () => true
+    };
+}
+
 const BlockSharePage = () => {
     const { wallet, signer, provider } = useWallet();
 
@@ -26,6 +103,8 @@ const BlockSharePage = () => {
 
     const [status, setStatus] = useState('');
     const [contractError, setContractError] = useState('');
+    const [networkError, setNetworkError] = useState(false);
+    const [retryCount, setRetryCount] = useState(0);
     const [loading, setLoading] = useState(false);
     const [claiming, setClaiming] = useState(false);
     const [calculating, setCalculating] = useState(false);
@@ -77,6 +156,19 @@ const BlockSharePage = () => {
     async function init() {
         try {
             setContractError('');
+            setNetworkError(false);
+            
+            if (MOCK_MODE) {
+                // Use mock contracts for testing
+                const mockTreasury = new MockContract(contractAddress, null, provider);
+                const mockNFT = new MockContract(nftAddress, null, provider);
+                setContract(mockTreasury);
+                setNftContract(mockNFT);
+                await probeCaps(mockTreasury, mockNFT);
+                setDataLoaded(false);
+                setRetryCount(0);
+                return;
+            }
             
             if (useNewContract) {
                 // Use the new combined contract
@@ -104,8 +196,21 @@ const BlockSharePage = () => {
                 await probeCaps(treasuryContract, nftContract);
             }
             setDataLoaded(false);
+            setRetryCount(0); // Reset retry count on success
         } catch (e) {
-            const msg = `Init failed: ${e.message}`;
+            const isNetworkError = e.message?.includes('Failed to fetch') || 
+                                 e.message?.includes('network') || 
+                                 e.code === 'NETWORK_ERROR';
+            
+            setNetworkError(isNetworkError);
+            
+            let msg;
+            if (isNetworkError) {
+                msg = 'Network connection failed. Please check your internet connection and try again.';
+            } else {
+                msg = `Init failed: ${e.message}`;
+            }
+            
             setContractError(msg);
             setStatus(msg);
             criticalError(msg, e);
@@ -134,6 +239,18 @@ const BlockSharePage = () => {
             })();
         }
     }, [contract, nftContract, wallet, dataLoaded]);
+
+    async function retryConnection() {
+        if (retryCount >= 3) {
+            setStatus('Maximum retry attempts reached. Please refresh the page.');
+            return;
+        }
+        
+        setRetryCount(prev => prev + 1);
+        setStatus('Retrying connection...');
+        await new Promise(resolve => setTimeout(resolve, 1000 * retryCount)); // Progressive delay
+        await init();
+    }
 
     async function refreshAll() {
         await loadUser();
@@ -482,7 +599,30 @@ const BlockSharePage = () => {
                 <p style={{ color: 'var(--hp-muted)' }}>Claim your marketplace revenue share.</p>
             </div>
 
-            {contractError && <Msg kind="error">{contractError}</Msg>}
+            {contractError && (
+                <div>
+                    <Msg kind="error">
+                        {contractError}
+                        {networkError && retryCount < 3 && (
+                            <div style={{ marginTop: '0.75rem' }}>
+                                <button 
+                                    className="hp-btn hp-btn--secondary" 
+                                    onClick={retryConnection}
+                                    disabled={loading}
+                                    style={{ fontSize: '0.9rem' }}
+                                >
+                                    🔄 Retry Connection (Attempt {retryCount + 1}/3)
+                                </button>
+                            </div>
+                        )}
+                        {networkError && retryCount >= 3 && (
+                            <div style={{ marginTop: '0.75rem', fontSize: '0.9rem', opacity: 0.8 }}>
+                                💡 Try refreshing the page or check if you have an ad blocker blocking the RPC connection.
+                            </div>
+                        )}
+                    </Msg>
+                </div>
+            )}
             {status && !contractError && <Msg kind="info">{status}</Msg>}
 
             {wallet && (

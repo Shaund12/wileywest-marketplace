@@ -5,7 +5,13 @@ import { ethers } from 'ethers';
 const WalletContext = createContext();
 
 // ======= ENV / CONFIG =========
-const RPC_URL = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
+const PRIMARY_RPC_URL = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
+const FALLBACK_RPC_URLS = [
+    'https://rpc.vitruveo.xyz',
+    'https://rpc-evm.vitruveo.xyz',
+    'https://vitruveo-mainnet.rpc.thirdweb.com'
+];
+const MOCK_MODE = import.meta.env.VITE_MOCK_MODE === 'true';
 const RAW_CHAIN_ID = import.meta.env.VITE_CHAIN_ID || '0x5d2'; // accepts "0x.." or decimal string
 const CHAIN_NAME = import.meta.env.VITE_CHAIN_NAME || 'Vitruveo';
 const NATIVE_NAME = import.meta.env.VITE_NATIVE_NAME || 'VTRU';
@@ -33,10 +39,56 @@ const ADD_CHAIN_PARAMS = TARGET.hex
         chainId: TARGET.hex,
         chainName: CHAIN_NAME,
         nativeCurrency: { name: NATIVE_NAME, symbol: NATIVE_SYMBOL, decimals: NATIVE_DECIMALS },
-        rpcUrls: [RPC_URL],
+        rpcUrls: FALLBACK_RPC_URLS,
         blockExplorerUrls: EXPLORER_URL ? [EXPLORER_URL] : []
     }
     : null;
+
+// ============ MOCK PROVIDER FOR TESTING ============
+class MockProvider {
+    constructor() {
+        this.chainId = TARGET.num || 1490;
+    }
+    
+    async getNetwork() {
+        return { chainId: BigInt(this.chainId) };
+    }
+    
+    async getBalance(address) {
+        // Mock balance of 1.0750 VTRU as mentioned in the issue
+        return ethers.parseEther('1.0750');
+    }
+    
+    async getCode(address) {
+        // Mock deployed contracts
+        return '0x608060405234801561001057600080fd5b50';
+    }
+    
+    async getSigner() {
+        return new MockSigner();
+    }
+}
+
+class MockSigner {
+    constructor() {
+        this.address = '0x1234567890123456789012345678901234567890';
+    }
+    
+    getAddress() {
+        return this.address;
+    }
+    
+    async signMessage(message) {
+        return '0xmocksignature';
+    }
+    
+    async sendTransaction(tx) {
+        return { 
+            wait: async () => ({ status: 1, hash: '0xmocktx' }),
+            hash: '0xmocktx' 
+        };
+    }
+}
 
 // ============ PROVIDER HELPERS ============
 async function makeBrowserProvider() {
@@ -48,10 +100,28 @@ async function makeBrowserProvider() {
 }
 
 async function makeReadonlyProvider() {
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
-    // probe to surface misconfig early
-    await provider.getNetwork().catch(() => { });
-    return provider;
+    if (MOCK_MODE) {
+        console.log('[Wallet] Using mock provider for testing');
+        return new MockProvider();
+    }
+    
+    // Try primary RPC first, then fallbacks
+    const urlsToTry = [PRIMARY_RPC_URL, ...FALLBACK_RPC_URLS.filter(url => url !== PRIMARY_RPC_URL)];
+    
+    for (const url of urlsToTry) {
+        try {
+            const provider = new ethers.JsonRpcProvider(url);
+            // probe to surface misconfig early
+            await provider.getNetwork();
+            console.log(`[Wallet] Connected to RPC: ${url}`);
+            return provider;
+        } catch (error) {
+            console.warn(`[Wallet] Failed to connect to RPC ${url}:`, error.message);
+            continue;
+        }
+    }
+    
+    throw new Error('All RPC endpoints failed. Please check your internet connection.');
 }
 
 // ============ CONTEXT PROVIDER ============
@@ -266,6 +336,27 @@ export function WalletProvider({ children }) {
     // ======= Public API =======
     const connect = useCallback(
         async ({ forceSwitchToTarget = !!TARGET.num } = {}) => {
+            if (MOCK_MODE) {
+                // Mock wallet connection for testing
+                try {
+                    _setIsConnecting(true);
+                    _setConnectionError(null);
+                    
+                    const mockProvider = new MockProvider();
+                    const mockAddress = '0x1234567890123456789012345678901234567890';
+                    
+                    await updateWalletState(mockAddress, mockProvider);
+                    localStorage.setItem('walletConnected', 'true');
+                    return true;
+                } catch (e) {
+                    console.error('[Wallet] mock connect error:', e);
+                    _setConnectionError(e.message || String(e));
+                    return false;
+                } finally {
+                    _setIsConnecting(false);
+                }
+            }
+            
             if (!window.ethereum) {
                 _setConnectionError('No injected wallet found. Please install MetaMask or a compatible wallet.');
                 return false;

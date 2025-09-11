@@ -7,7 +7,11 @@ const VITRUVEO = {
     chainIdHex: '0x5d2', // 1490
     chainIdDec: 1490,
     chainName: 'Vitruveo',
-    rpcUrls: ['https://rpc.vitruveo.xyz'],
+    rpcUrls: [
+        'https://rpc.vitruveo.xyz',
+        'https://rpc-evm.vitruveo.xyz',
+        'https://vitruveo-mainnet.rpc.thirdweb.com'
+    ],
     blockExplorerUrls: ['https://explorer.vitruveo.xyz'],
     nativeCurrency: { name: 'Vitruveo', symbol: 'VTRU', decimals: 18 },
 };
