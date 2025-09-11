@@ -345,7 +345,7 @@ function CreateAuctionPage() {
   const navigate = useNavigate();
   const { wallet, connect, provider, signer, isCorrectNetwork } = useWallet();
   const { status, setStatus, marketplaceAddress } = useMarketplace();
-  const { cacheAuctions, getCachedProfile } = useSupabase();
+  const { cacheAuctions } = useSupabase();
   const [searchParams] = useSearchParams();
 
   const [formData, setFormData] = useState({
@@ -371,11 +371,6 @@ function CreateAuctionPage() {
   // NEW: “canTransfer” = you are owner OR approved (721) OR operator (721) OR have 1155 balance > 0
   const [canTransfer, setCanTransfer] = useState(false);
   const [auctionSuccess, setAuctionSuccess] = useState(false);
-
-  // User's NFT collection from Supabase
-  const [userNFTs, setUserNFTs] = useState([]);
-  const [loadingUserNFTs, setLoadingUserNFTs] = useState(false);
-  const [showNFTCollection, setShowNFTCollection] = useState(true);
 
   // Token system state
   const [startPriceUSD, setStartPriceUSD] = useState('0.00');
@@ -426,81 +421,9 @@ function CreateAuctionPage() {
 
   const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
 
-  // Load user's NFT collection from Supabase
-  const loadUserNFTs = async () => {
-    if (!wallet) return;
-    
-    setLoadingUserNFTs(true);
-    try {
-      debugLog(`Loading NFT collection for wallet: ${wallet}`);
-      const profileData = await getCachedProfile(wallet);
-      
-      if (profileData && profileData.nfts && Array.isArray(profileData.nfts)) {
-        // Filter out NFTs that are currently listed to avoid duplicates
-        const availableNFTs = profileData.nfts.filter(nft => {
-          // Check if this NFT is currently listed
-          const isListed = profileData.listings && profileData.listings.some(listing => 
-            listing.nftContract?.toLowerCase() === nft.contract?.toLowerCase() && 
-            listing.tokenId === nft.tokenId &&
-            listing.active !== false
-          );
-          return !isListed;
-        });
-        
-        debugLog(`Found ${availableNFTs.length} available NFTs in user collection`);
-        setUserNFTs(availableNFTs);
-      } else {
-        debugLog('No NFTs found in user profile');
-        setUserNFTs([]);
-      }
-    } catch (error) {
-      debugWarn('Error loading user NFTs:', error);
-      setUserNFTs([]);
-    } finally {
-      setLoadingUserNFTs(false);
-    }
-  };
-
-  // Function to select an NFT from the user's collection
-  const selectNFTFromCollection = (nft) => {
-    debugLog('Selected NFT from collection:', nft);
-    
-    setFormData(prev => ({
-      ...prev,
-      nftContract: nft.contract || '',
-      tokenId: nft.tokenId || '',
-      quantity: nft.isERC1155 ? '1' : '1' // Can be adjusted later based on balance
-    }));
-
-    // If we have metadata, populate it directly
-    if (nft.metadata) {
-      setMetadata(nft.metadata);
-      setNftName(nft.metadata.name || nft.name || `NFT #${nft.tokenId}`);
-      setNftImage(nft.metadata.image || nft.image || '');
-      setNftType(nft.isERC1155 ? 'ERC1155' : 'ERC721');
-      setBalance(nft.balance || '1');
-      setCanTransfer(true);
-    }
-
-    // Scroll to the form
-    const formElement = document.querySelector('.sell-form');
-    if (formElement) {
-      formElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
   useEffect(() => {
     return () => { if (priceIntervalRef.current) clearInterval(priceIntervalRef.current); };
   }, []);
-
-  // Load user's NFT collection when wallet connects
-  useEffect(() => {
-    if (wallet) {
-      loadUserNFTs();
-    } else {
-      setUserNFTs([]);
-    }
-  }, [wallet]);
 
   /* =========================
      Token init + price fetching
@@ -1188,130 +1111,6 @@ function CreateAuctionPage() {
           </div>
         </div>
       )}
-
-      {/* User's NFT Collection */}
-      {wallet && showNFTCollection && (
-        <div className="nft-collection-section">
-          <div className="collection-header">
-            <h2>Your NFT Collection</h2>
-            <div className="collection-actions">
-              <button 
-                type="button" 
-                className="secondary-button"
-                onClick={loadUserNFTs}
-                disabled={loadingUserNFTs}
-              >
-                {loadingUserNFTs ? 'Refreshing...' : '🔄 Refresh Collection'}
-              </button>
-              <button 
-                type="button" 
-                className="secondary-button"
-                onClick={() => setShowNFTCollection(false)}
-              >
-                Hide Collection
-              </button>
-            </div>
-          </div>
-          
-          {loadingUserNFTs ? (
-            <div className="collection-loading">
-              <div className="loader"></div>
-              <p>Loading your NFT collection...</p>
-            </div>
-          ) : userNFTs.length > 0 ? (
-            <div className="nft-collection-grid">
-              {userNFTs.map((nft, index) => (
-                <div 
-                  key={`${nft.contract}-${nft.tokenId}-${index}`}
-                  className="nft-collection-card"
-                  onClick={() => selectNFTFromCollection(nft)}
-                  title="Click to select this NFT for auction"
-                >
-                  <div className="nft-card-image">
-                    <SmartMedia
-                      srcList={[
-                        nft.image,
-                        nft.metadata?.image,
-                        nft.metadata?.image_url,
-                        nft.metadata?.imageUrl,
-                        nft.metadata?.animation_url,
-                        nft.metadata?.animationUrl,
-                      ]}
-                      alt={nft.name || `NFT #${nft.tokenId}`}
-                      width={200}
-                      height={200}
-                      seed={`${nft.contract}-${nft.tokenId}`}
-                      title={nft.name || `NFT #${nft.tokenId}`}
-                      className="nft-card-media"
-                    />
-                  </div>
-                  <div className="nft-card-info">
-                    <h4 className="nft-card-name">
-                      {nft.name || nft.metadata?.name || `NFT #${nft.tokenId}`}
-                    </h4>
-                    <p className="nft-card-details">
-                      <span className="nft-card-token-id">#{nft.tokenId}</span>
-                      {nft.isERC1155 && (
-                        <span className="nft-card-quantity">Qty: {nft.balance || '1'}</span>
-                      )}
-                    </p>
-                    <p className="nft-card-contract">
-                      {nft.contract ? `${nft.contract.slice(0, 6)}...${nft.contract.slice(-4)}` : 'Unknown Contract'}
-                    </p>
-                    <div className="nft-card-type">
-                      {nft.isERC1155 ? 'ERC-1155' : 'ERC-721'}
-                    </div>
-                  </div>
-                  <div className="nft-card-overlay">
-                    <span>Click to Auction</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="collection-empty">
-              <div className="empty-collection-icon">📦</div>
-              <h3>No NFTs Found</h3>
-              <p>Your NFT collection appears to be empty or not yet cached.</p>
-              <p>You can still create auctions by manually entering the contract address and token ID below.</p>
-              <button 
-                type="button" 
-                className="secondary-button"
-                onClick={loadUserNFTs}
-                disabled={loadingUserNFTs}
-              >
-                Refresh Collection
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {!wallet && (
-        <div className="wallet-connect-prompt">
-          <h2>Connect Your Wallet</h2>
-          <p>Connect your wallet to view your NFT collection and create auctions.</p>
-          <button onClick={connect} className="primary-button">
-            Connect Wallet
-          </button>
-        </div>
-      )}
-
-      {wallet && !showNFTCollection && (
-        <div className="collection-collapsed">
-          <button 
-            type="button" 
-            className="secondary-button"
-            onClick={() => setShowNFTCollection(true)}
-          >
-            📂 Show Your NFT Collection
-          </button>
-        </div>
-      )}
-
-      <div className="section-divider">
-        <span>Or manually enter NFT details</span>
-      </div>
 
       {/* NFT Preview */}
       {metadata && (
