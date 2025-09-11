@@ -118,7 +118,7 @@ export function getTokenDecimals(tokenAddress) {
         if (addr === ethers.ZeroAddress.toLowerCase()) return 18;
         if (addr === USDC_POL_ADDRESS.toLowerCase()) return 6;
         if (addr === WVTRU_ADDRESS.toLowerCase()) return 18;
-        if (addr === VUSD_ADDRESS.toLowerCase()) return 18;
+        if (addr === VUSD_ADDRESS.toLowerCase()) return 6;
         if (addr === SEVO_ADDRESS.toLowerCase()) return 18;
         if (addr === WSEVO_ADDRESS.toLowerCase()) return 18;
         if (addr === VITEX_ADDRESS.toLowerCase()) return 18;

@@ -748,7 +748,7 @@ function CreateAuctionPage() {
         }
       };
 
-      await addToken(VUSD_ADDRESS,  'VUSD',  'VUSD Token');
+      await addToken(VUSD_ADDRESS,  'VUSD',  'VUSD Token', 6);
       await addToken(SEVO_ADDRESS,  'SEVO',  'SEVO Token');
       await addToken(WSEVO_ADDRESS, 'WSEVO', 'Wrapped SEVO');
       await addToken(VITEX_ADDRESS, 'VITEX', 'VITEX Token');
