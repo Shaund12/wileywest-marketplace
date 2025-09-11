@@ -1,16 +1,19 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useSupabase } from '../context/SupabaseContext';
+import { useWallet } from '../context/WalletContext';
+import { ethers } from 'ethers';
+import MarketplaceAbi from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
 
 function VibeDashboardPage() {
-    const { supabase, isConnected } = useSupabase();
+    const { provider } = useWallet();
+    const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS;
     const [stats, setStats] = useState({
-        // VIBE (VTRU) payouts computed from marketplace breakdowns only
+        // VIBE (VTRU) payouts computed from blockchain events directly
         totalVTRUSent: '0',
         vtruSent24h: '0',
         vtruSent7d: '0',
-        // Added stats (no fee processor): all derived from marketplace events
+        // Added stats from blockchain events
         totalTransactions: 0,
         totalPlatformFees: '0',
         totalRoyalties: '0',
@@ -23,26 +26,21 @@ function VibeDashboardPage() {
     });
     const [recentEvents, setRecentEvents] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [status, setStatus] = useState('');
     const [timeframe, setTimeframe] = useState('7d');
     const [error, setError] = useState(null);
 
-    const toMs = useMemo(() => (t) => (typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : 0), []);
-
-    // Updated to match the contract event fields - memoized to prevent dependency changes
-    const getVibeAmount = useMemo(() => (row) => {
-        // Check for the direct fields from the contract event
-        const vibePortionInPayment = parseFloat(row?.vibe_portion_in_payment ?? row?.vibePortionInPayment ?? '0') || 0;
-        if (vibePortionInPayment > 0) return vibePortionInPayment;
-
-        // Fall back to the output metrics that track what was actually sent
-        const wvtru = parseFloat(row?.vibe_out_wvtru ?? row?.vibeOutWVTRU ?? '0') || 0;
-        const native = parseFloat(row?.vibe_out_native ?? row?.vibeOutNative ?? '0') || 0;
-
-        // If either exists, use them
-        if (wvtru > 0 || native > 0) return wvtru + native;
-
-        // Legacy field for backward compatibility
-        return parseFloat(row?.vibe_amount ?? '0') || 0;
+    // Helper function to get vibe amount from breakdown events
+    const getVibeAmount = useMemo(() => (event) => {
+        const args = event.args;
+        
+        // For SaleBreakdown and AuctionBreakdown events, get the total vibe amount
+        const vibePortionInPayment = parseFloat(ethers.formatEther(args.vibePortionInPayment || '0'));
+        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));  
+        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
+        
+        // Return the total vibe amount (prefer vibePortionInPayment as it's the original amount)
+        return vibePortionInPayment > 0 ? vibePortionInPayment : (vibeOutWVTRU + vibeOutNative);
     }, []);
 
     const loadDashboardData = useCallback(async () => {
@@ -50,8 +48,8 @@ function VibeDashboardPage() {
             setLoading(true);
             setError(null);
 
-            if (!isConnected || !supabase) {
-                debugWarn('Supabase not connected, showing no data');
+            if (!provider || !marketplaceAddress) {
+                debugWarn('Provider or marketplace address not available, showing no data');
                 setStats({
                     totalVTRUSent: '0',
                     vtruSent24h: '0',
@@ -67,78 +65,43 @@ function VibeDashboardPage() {
                 return;
             }
 
-            // Time windows
-            const now = new Date();
-            const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-            const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-            let timeframeBoundary;
-            switch (timeframe) {
-                case '30d': timeframeBoundary = thirtyDaysAgo; break;
-                case '90d': timeframeBoundary = ninetyDaysAgo; break;
-                default: timeframeBoundary = sevenDaysAgo;
-            }
-
-            // Try all table options that might contain our data
-            const possibleTables = [
-                'sale_breakdowns',
-                'auction_breakdowns',
-                'SaleBreakdown',
-                'AuctionBreakdown',
-                'nft_sales',
-                'marketplace_events'
-            ];
-
-            // Try each table and collect any valid data
-            let allBreakdowns = [];
-
-            for (const tableName of possibleTables) {
-                try {
-                    debugLog(`Attempting to fetch data from table: ${tableName}`);
-                    const { data, error } = await supabase
-                        .from(tableName)
-                        .select('*')
-                        .limit(1000);
-
-                    // Skip if table doesn't exist or has no data
-                    if (error) {
-                        if (error.code === '404' || error.code === 'PGRST116') {
-                            debugLog(`Table ${tableName} not found`);
-                        } else {
-                            debugWarn(`Error fetching from ${tableName}:`, error);
-                        }
-                        continue;
-                    }
-
-                    if (data && data.length > 0) {
-                        debugLog(`Found ${data.length} records in ${tableName}`);
-
-                        // Normalize the data to handle different field naming conventions
-                        const normalized = data.map(row => ({
-                            ...row,
-                            // Normalize common field names that may vary
-                            kind: tableName.includes('sale') ? 'sale' : 'auction',
-                            id: row.listing_id || row.listingId || row.auction_id || row.auctionId || row.id,
-                            nft_contract: row.nft_contract || row.nftContract || row.contract_address,
-                            timestamp: row.timestamp || row.created_at || row.createdAt || row.block_timestamp,
-                            transaction_hash: row.transaction_hash || row.transactionHash || row.tx_hash
-                        }));
-
-                        allBreakdowns = [...allBreakdowns, ...normalized];
-                    }
-                } catch (e) {
-                    debugWarn(`Exception when fetching from ${tableName}:`, e);
-                    // Continue to next table on error
-                }
-            }
-
-            // If we found no data, show empty state
-            if (allBreakdowns.length === 0) {
-                debugWarn('No marketplace data found in any table');
+            debugLog('🚀 Fetching vibe fee data directly from blockchain events...');
+            setStatus('🚀 Connecting to blockchain to fetch vibe fee data...');
+            
+            // Create marketplace contract instance
+            const marketplace = new ethers.Contract(marketplaceAddress, MarketplaceAbi.abi, provider);
+            
+            // Get current block and determine scan range
+            const currentBlock = await provider.getBlockNumber();
+            const SCAN_BLOCKS = 50000; // Last 50k blocks for performance
+            const fromBlock = Math.max(currentBlock - SCAN_BLOCKS, 0);
+            
+            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events`);
+            setStatus(`📊 Scanning recent ${SCAN_BLOCKS} blocks for vibe fee data...`);
+            
+            // Fetch SaleBreakdown events (when NFTs are purchased)
+            const saleBreakdownEvents = await marketplace.queryFilter(
+                marketplace.filters.SaleBreakdown(),
+                fromBlock,
+                currentBlock
+            );
+            
+            // Fetch AuctionBreakdown events (when auctions are settled)  
+            const auctionBreakdownEvents = await marketplace.queryFilter(
+                marketplace.filters.AuctionBreakdown(),
+                fromBlock,  
+                currentBlock
+            );
+            
+            const allBreakdownEvents = [...saleBreakdownEvents, ...auctionBreakdownEvents];
+            debugLog(`📈 Found ${saleBreakdownEvents.length} sale breakdowns and ${auctionBreakdownEvents.length} auction breakdowns`);
+            setStatus(`📈 Processing ${allBreakdownEvents.length} vibe fee events...`);
+            
+            if (allBreakdownEvents.length === 0) {
+                debugWarn('No breakdown events found in recent blocks');
                 setStats({
                     totalVTRUSent: '0',
-                    vtruSent24h: '0',
+                    vtruSent24h: '0', 
                     vtruSent7d: '0',
                     totalTransactions: 0,
                     totalPlatformFees: '0',
@@ -152,30 +115,71 @@ function VibeDashboardPage() {
                 return;
             }
 
-            debugLog(`Processing ${allBreakdowns.length} total marketplace events`);
+            // Process events and extract data with timestamps
+            const processedEvents = [];
+            for (const event of allBreakdownEvents) {
+                try {
+                    const block = await event.getBlock();
+                    const args = event.args;
+                    
+                    const eventData = {
+                        // Event metadata
+                        type: event.eventName || (saleBreakdownEvents.includes(event) ? 'sale' : 'auction'),
+                        blockNumber: event.blockNumber,
+                        transactionHash: event.transactionHash,
+                        timestamp: block.timestamp * 1000, // Convert to milliseconds
+                        
+                        // Vibe data from event args
+                        vibePortionInPayment: parseFloat(ethers.formatEther(args.vibePortionInPayment || '0')),
+                        vibeOutWVTRU: parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')),
+                        vibeOutNative: parseFloat(ethers.formatEther(args.vibeOutNative || '0')),
+                        vibeShareBps: parseInt(args.vibeShareBps?.toString() || '0'),
+                        
+                        // Platform and royalty data
+                        platformFeeTotal: parseFloat(ethers.formatEther(args.platformFeeTotal || '0')),
+                        royaltyAmount: parseFloat(ethers.formatEther(args.royaltyAmount || '0')),
+                        royaltyReceiver: args.royaltyReceiver,
+                        
+                        // Transaction details
+                        nftContract: args.nftContract,
+                        tokenId: args.tokenId?.toString(),
+                        totalPrice: parseFloat(ethers.formatEther(args.totalPrice || '0')),
+                        quantity: parseInt(args.quantity?.toString() || '1')
+                    };
+                    
+                    processedEvents.push(eventData);
+                } catch (err) {
+                    debugWarn('Error processing event:', err);
+                }
+            }
+            
+            debugLog(`✅ Processed ${processedEvents.length} events successfully`);
 
-            // Aggregate stats
-            const totalVTRUSentNum = allBreakdowns.reduce((sum, b) => sum + getVibeAmount(b), 0);
-            const vtruSent24hNum = allBreakdowns
-                .filter(b => toMs(b.timestamp) >= oneDayAgo.getTime())
-                .reduce((sum, b) => sum + getVibeAmount(b), 0);
-            const vtruSent7dNum = allBreakdowns
-                .filter(b => toMs(b.timestamp) >= sevenDaysAgo.getTime())
-                .reduce((sum, b) => sum + getVibeAmount(b), 0);
+            // Time windows for calculations
+            const now = Date.now();
+            const oneDayAgo = now - (24 * 60 * 60 * 1000);
+            const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
 
-            const totalTransactions = allBreakdowns.length;
-
-            // Use the correct field names from smart contract events
-            const totalPlatformFeesNum = allBreakdowns.reduce((s, b) => {
-                const fee = parseFloat(b.platform_fee_total || b.platformFeeTotal || b.platform_fee || '0') || 0;
-                return s + fee;
+            // Calculate aggregated stats
+            const totalVTRUSentNum = processedEvents.reduce((sum, event) => {
+                return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
             }, 0);
 
-            const totalRoyaltiesNum = allBreakdowns.reduce((s, b) => {
-                const royalty = parseFloat(b.royalty_amount || b.royaltyAmount || b.royalty || '0') || 0;
-                return s + royalty;
-            }, 0);
+            const vtruSent24hNum = processedEvents
+                .filter(event => event.timestamp >= oneDayAgo)
+                .reduce((sum, event) => {
+                    return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                }, 0);
 
+            const vtruSent7dNum = processedEvents
+                .filter(event => event.timestamp >= sevenDaysAgo)
+                .reduce((sum, event) => {
+                    return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                }, 0);
+
+            const totalTransactions = processedEvents.length;
+            const totalPlatformFeesNum = processedEvents.reduce((sum, event) => sum + event.platformFeeTotal, 0);
+            const totalRoyaltiesNum = processedEvents.reduce((sum, event) => sum + event.royaltyAmount, 0);
             const avgPayoutNum = totalTransactions > 0 ? totalVTRUSentNum / totalTransactions : 0;
 
             setStats({
@@ -188,55 +192,44 @@ function VibeDashboardPage() {
                 avgPayout: avgPayoutNum.toFixed(4)
             });
 
-            // Chart (by day) from marketplace breakdowns
+            // Generate chart data (daily aggregation)
             const chartDataMap = new Map();
-            const timeframeRows = allBreakdowns.filter(b => {
-                const ts = toMs(b.timestamp);
-                return !isNaN(ts) && ts >= timeframeBoundary.getTime();
-            });
-
-            timeframeRows.forEach(b => {
-                const date = new Date(toMs(b.timestamp)).toISOString().split('T')[0];
-                if (!chartDataMap.has(date)) {
-                    chartDataMap.set(date, { vtruSent: 0, transactions: 0 });
-                }
-                const entry = chartDataMap.get(date);
-                entry.vtruSent += getVibeAmount(b);
-                entry.transactions += 1;
-            });
+            const timeframeBoundary = sevenDaysAgo; // Default to 7 days
+            
+            processedEvents
+                .filter(event => event.timestamp >= timeframeBoundary)
+                .forEach(event => {
+                    const date = new Date(event.timestamp).toISOString().split('T')[0];
+                    if (!chartDataMap.has(date)) {
+                        chartDataMap.set(date, { vtruSent: 0, transactions: 0 });
+                    }
+                    const entry = chartDataMap.get(date);
+                    entry.vtruSent += (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                    entry.transactions += 1;
+                });
 
             const chartDataArray = Array.from(chartDataMap.entries())
                 .map(([date, data]) => ({ date, ...data }))
                 .sort((a, b) => a.date.localeCompare(b.date));
             setChartData(chartDataArray);
 
-            // Leaderboards by NFT contract (collection)
+            // Generate leaderboards
             const platformFeeMap = new Map();
             const royaltyMap = new Map();
-
-            // Track collections by nftContract instead of listing ID
-            allBreakdowns.forEach(b => {
-                const nftContract = b.nft_contract || b.nftContract || 'Unknown';
-                if (!nftContract || nftContract === 'Unknown') return;
-
-                const key = String(nftContract);
-
-                const pf = parseFloat(b.platform_fee_total || b.platformFeeTotal || b.platform_fee || '0') || 0;
-                const ry = parseFloat(b.royalty_amount || b.royaltyAmount || b.royalty || '0') || 0;
-
-                platformFeeMap.set(key, (platformFeeMap.get(key) || 0) + pf);
-                royaltyMap.set(key, (royaltyMap.get(key) || 0) + ry);
-            });
-
-            // Group by royalty recipient for royalty leaderboard
             const royaltyRecipientMap = new Map();
-            allBreakdowns.forEach(b => {
-                const recipient = b.royalty_receiver || b.royaltyReceiver || '';
-                if (!recipient || recipient === '0x0000000000000000000000000000000000000000') return;
 
-                const amount = parseFloat(b.royalty_amount || b.royaltyAmount || b.royalty || '0') || 0;
-                if (amount > 0) {
-                    royaltyRecipientMap.set(recipient, (royaltyRecipientMap.get(recipient) || 0) + amount);
+            processedEvents.forEach(event => {
+                // Collections by platform fees
+                const nftContract = event.nftContract || 'Unknown';
+                if (nftContract && nftContract !== 'Unknown') {
+                    platformFeeMap.set(nftContract, (platformFeeMap.get(nftContract) || 0) + event.platformFeeTotal);
+                    royaltyMap.set(nftContract, (royaltyMap.get(nftContract) || 0) + event.royaltyAmount);
+                }
+
+                // Royalty recipients
+                const recipient = event.royaltyReceiver;
+                if (recipient && recipient !== ethers.ZeroAddress && event.royaltyAmount > 0) {
+                    royaltyRecipientMap.set(recipient, (royaltyRecipientMap.get(recipient) || 0) + event.royaltyAmount);
                 }
             });
 
@@ -261,57 +254,26 @@ function VibeDashboardPage() {
 
             setLeaderboards({ collections: topCollections, royalties: topRoyalties });
 
-            // Recent events: VIBE payouts (from breakdowns) + royalty payments
-            const payoutEvents = allBreakdowns.map(row => {
-                const ts = toMs(row.timestamp);
-                const amt = getVibeAmount(row);
-                if (isNaN(ts) || amt <= 0) return null;
-
-                return {
-                    ts,
-                    time: formatTimeAgo(ts),
-                    description: `VIBE payout ${amt.toFixed(2)} VTRU from ${row.kind || 'transaction'} ${String(row.id || '—').slice(0, 10)}...`,
-                    hash: row.transaction_hash || row.transactionHash || row.tx_hash,
-                    type: 'vibe_payout'
-                };
-            }).filter(Boolean); // Filter out nulls
-
-            // Try to fetch royalty payments, but don't fail if the table doesn't exist
-            let royaltyEvents = [];
-            try {
-                const { data: royaltyPayments, error: royaltyError } = await supabase
-                    .from('royalty_payments')
-                    .select('recipient, amount, timestamp, transaction_hash')
-                    .order('timestamp', { ascending: false })
-                    .limit(50);
-
-                if (!royaltyError && royaltyPayments?.length) {
-                    royaltyEvents = royaltyPayments.map(r => {
-                        const ts = toMs(r.timestamp);
-                        if (isNaN(ts)) return null;
-
-                        return {
-                            ts,
-                            time: formatTimeAgo(ts),
-                            description: `Royalty payment: ${parseFloat(r.amount || '0').toFixed(2)} VTRU`,
-                            hash: r.transaction_hash || r.transactionHash || r.tx_hash,
-                            type: 'royalty'
-                        };
-                    }).filter(Boolean);
-                }
-            } catch (e) {
-                debugWarn('Error fetching royalty payments:', e);
-            }
-
-            const allEvents = [...payoutEvents, ...royaltyEvents]
-                .sort((a, b) => b.ts - a.ts)
+            // Generate recent events feed
+            const recentEvents = processedEvents
+                .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 10)
-                .map(({ ts, ...rest }) => rest);
+                .map(event => {
+                    const vibeAmount = event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative);
+                    return {
+                        time: formatTimeAgo(event.timestamp),
+                        description: `VIBE payout ${vibeAmount.toFixed(2)} VTRU from ${event.type} transaction`,
+                        hash: event.transactionHash,
+                        type: 'vibe_payout'
+                    };
+                });
 
-            setRecentEvents(allEvents);
+            setRecentEvents(recentEvents);
+            setStatus('✅ Vibe fee data loaded successfully from blockchain!');
+            
         } catch (error) {
-            criticalError('Error loading dashboard data:', error);
-            setError('Failed to load dashboard data. Please try again later.');
+            criticalError('Error loading vibe dashboard data from blockchain:', error);
+            setError('Failed to load vibe fee data from blockchain. Please try again later.');
             setStats({
                 totalVTRUSent: '0',
                 vtruSent24h: '0',
@@ -326,15 +288,16 @@ function VibeDashboardPage() {
             setRecentEvents([]);
         } finally {
             setLoading(false);
+            setTimeout(() => setStatus(''), 3000); // Clear status after 3 seconds
         }
-    }, [isConnected, supabase, timeframe, toMs, getVibeAmount]); // Fixed dependencies
+    }, [provider, marketplaceAddress, timeframe, getVibeAmount]); // Updated dependencies
 
     // Add useEffect with proper dependencies and error boundaries
     useEffect(() => {
         let cancelled = false;
         
         const loadData = async () => {
-            if (!cancelled) {
+            if (!cancelled && provider && marketplaceAddress) {
                 await loadDashboardData();
             }
         };
@@ -344,7 +307,7 @@ function VibeDashboardPage() {
         return () => {
             cancelled = true;
         };
-    }, [loadDashboardData]); // Only depend on loadDashboardData which is properly memoized
+    }, [provider, marketplaceAddress, timeframe]); // Depend on primitive values instead of memoized function
 
     const formatTimeAgo = useCallback((timestamp) => {
         if (!timestamp || isNaN(timestamp)) return 'Unknown';
@@ -366,7 +329,7 @@ function VibeDashboardPage() {
         <div className="hp" style={{ maxWidth: 1400, margin: '3rem auto', padding: '0 1.25rem' }}>
             <div className="hp-section__head">
                 <h2>VIBE Dashboard</h2>
-                <p>Real-time analytics from Marketplace payouts (no fee-processor)</p>
+                <p>Real-time analytics from blockchain events (direct from smart contract)</p>
             </div>
 
             {error && (
@@ -532,9 +495,9 @@ function VibeDashboardPage() {
                             ) : (
                                 <div className="no-data-message">
                                     <p>No recent payout events available</p>
-                                    {!isConnected && (
+                                    {!provider && (
                                         <p style={{ fontSize: '0.9em', opacity: 0.7 }}>
-                                            Connect to Supabase to see real-time event data
+                                            Connect wallet to see real-time event data from blockchain
                                         </p>
                                     )}
                                 </div>
