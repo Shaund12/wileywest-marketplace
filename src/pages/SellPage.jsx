@@ -3,6 +3,7 @@ import { ethers } from 'ethers';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
+import { useSupabase } from '../context/SupabaseContext';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './SellPage.css';
@@ -302,11 +303,15 @@ function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 
 const ERC721_ABI = [
     'function tokenURI(uint256 tokenId) view returns (string)',
     'function ownerOf(uint256 tokenId) view returns (address)',
+    'function name() view returns (string)',
+    'function symbol() view returns (string)',
 ];
 
 const ERC1155_ABI = [
     'function uri(uint256 id) view returns (string)',
     'function balanceOf(address account, uint256 id) view returns (uint256)',
+    'function name() view returns (string)',
+    'function symbol() view returns (string)',
 ];
 
 const UNISWAP_V3_FACTORY_ABI = [
@@ -358,6 +363,7 @@ const ERC1155_APPROVAL_ABI = [
 function SellPage() {
     const { createListing, status, setStatus, marketplaceAddress } = useMarketplace();
     const { wallet, connect, provider, signer } = useWallet();
+    const { getCachedProfile } = useSupabase();
     const [searchParams] = useSearchParams();
     const priceIntervalRef = useRef(null);
     const sellContainerRef = useRef(null);
@@ -379,6 +385,14 @@ function SellPage() {
         price: '',
         paymentToken: ethers.ZeroAddress,
     });
+
+    // New dropdown states
+    const [userNftCollections, setUserNftCollections] = useState([]);
+    const [selectedContract, setSelectedContract] = useState('');
+    const [availableTokenIds, setAvailableTokenIds] = useState([]);
+    const [loadingCollections, setLoadingCollections] = useState(false);
+    const [contractNames, setContractNames] = useState({});
+    const [inputMode, setInputMode] = useState('manual'); // 'dropdown' or 'manual'
 
     const [metadata, setMetadata] = useState(null);
     const [nftImage, setNftImage] = useState('');
@@ -408,6 +422,130 @@ function SellPage() {
     // New: marketplace fee (bps) and vibe share (bps) from contract
     const [platformFeeBps, setPlatformFeeBps] = useState(null);
     const [vibeShareBps, setVibeShareBps] = useState(null);
+
+    // Load user's NFT collections from Supabase
+    const loadUserCollections = async () => {
+        if (!wallet || !getCachedProfile) return;
+        
+        setLoadingCollections(true);
+        try {
+            const cachedProfile = await getCachedProfile(wallet);
+            if (cachedProfile && cachedProfile.nfts && cachedProfile.nfts.length > 0) {
+                // Group NFTs by contract address
+                const collections = {};
+                cachedProfile.nfts.forEach(nft => {
+                    const contract = nft.contractAddress.toLowerCase();
+                    if (!collections[contract]) {
+                        collections[contract] = {
+                            contractAddress: nft.contractAddress,
+                            tokens: []
+                        };
+                    }
+                    collections[contract].tokens.push({
+                        tokenId: nft.tokenId,
+                        balance: nft.balance,
+                        type: nft.type
+                    });
+                });
+                
+                const collectionsArray = Object.values(collections);
+                setUserNftCollections(collectionsArray);
+                
+                // Get contract names for all collections
+                await fetchContractNames(collectionsArray.map(c => c.contractAddress));
+            } else {
+                setUserNftCollections([]);
+            }
+        } catch (error) {
+            debugWarn('Error loading user collections:', error);
+            setUserNftCollections([]);
+        } finally {
+            setLoadingCollections(false);
+        }
+    };
+
+    // Fetch contract names for display
+    const fetchContractNames = async (contractAddresses) => {
+        if (!provider) return;
+        
+        const names = {};
+        
+        for (const address of contractAddresses) {
+            try {
+                // Try ERC721 first
+                try {
+                    const contract721 = new ethers.Contract(address, ERC721_ABI, provider);
+                    const [name, symbol] = await Promise.all([
+                        contract721.name().catch(() => ''),
+                        contract721.symbol().catch(() => '')
+                    ]);
+                    names[address] = name || symbol || 'Unknown Collection';
+                } catch {
+                    // Try ERC1155
+                    try {
+                        const contract1155 = new ethers.Contract(address, ERC1155_ABI, provider);
+                        const [name, symbol] = await Promise.all([
+                            contract1155.name().catch(() => ''),
+                            contract1155.symbol().catch(() => '')
+                        ]);
+                        names[address] = name || symbol || 'Unknown Collection';
+                    } catch {
+                        names[address] = 'Unknown Collection';
+                    }
+                }
+            } catch {
+                names[address] = 'Unknown Collection';
+            }
+        }
+        
+        setContractNames(names);
+    };
+
+    // Handle contract selection from dropdown
+    const handleContractSelection = (contractAddress) => {
+        setSelectedContract(contractAddress);
+        
+        if (contractAddress === 'manual') {
+            setInputMode('manual');
+            setAvailableTokenIds([]);
+            setFormData(prev => ({ ...prev, nftContract: '', tokenId: '' }));
+            return;
+        }
+        
+        setInputMode('dropdown');
+        
+        // Find the selected collection and populate token IDs
+        const collection = userNftCollections.find(c => 
+            c.contractAddress.toLowerCase() === contractAddress.toLowerCase()
+        );
+        
+        if (collection) {
+            setAvailableTokenIds(collection.tokens);
+            setFormData(prev => ({ 
+                ...prev, 
+                nftContract: collection.contractAddress,
+                tokenId: '' 
+            }));
+        }
+    };
+
+    // Handle token ID selection from dropdown
+    const handleTokenIdSelection = (tokenId) => {
+        setFormData(prev => ({ ...prev, tokenId }));
+        
+        // Also set quantity for ERC1155 tokens
+        const selectedToken = availableTokenIds.find(t => t.tokenId === tokenId);
+        if (selectedToken && selectedToken.type === 'ERC1155') {
+            setFormData(prev => ({ ...prev, quantity: selectedToken.balance }));
+        }
+    };
+
+    // Load user collections when wallet changes
+    useEffect(() => {
+        if (wallet && provider) {
+            loadUserCollections();
+        }
+    }, [wallet, provider, getCachedProfile]);
 
     const formatTime = (date) => (date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
 
@@ -1187,33 +1325,123 @@ function SellPage() {
                             <div className="form-section">
                                 <h3>NFT Details</h3>
 
+                                {/* Input mode selector */}
                                 <div className="form-group">
-                                    <label htmlFor="nftContract">NFT Contract Address</label>
-                                    <input
-                                        type="text"
-                                        id="nftContract"
-                                        className="input"
-                                        value={formData.nftContract}
-                                        onChange={handleChange}
-                                        placeholder="0x..."
-                                        required
-                                    />
+                                    <label>Select NFT Input Method</label>
+                                    <div className="input-mode-selector">
+                                        <label className="radio-option">
+                                            <input
+                                                type="radio"
+                                                name="inputMode"
+                                                value="dropdown"
+                                                checked={inputMode === 'dropdown'}
+                                                onChange={() => setInputMode('dropdown')}
+                                                disabled={userNftCollections.length === 0}
+                                            />
+                                            <span>From My Collection</span>
+                                            {userNftCollections.length === 0 && (
+                                                <small>(No cached NFTs found)</small>
+                                            )}
+                                        </label>
+                                        <label className="radio-option">
+                                            <input
+                                                type="radio"
+                                                name="inputMode"
+                                                value="manual"
+                                                checked={inputMode === 'manual'}
+                                                onChange={() => setInputMode('manual')}
+                                            />
+                                            <span>Manual Entry</span>
+                                        </label>
+                                    </div>
                                 </div>
 
-                                <div className="form-group">
-                                    <label htmlFor="tokenId">Token ID</label>
-                                    <input
-                                        type="text"
-                                        id="tokenId"
-                                        className="input"
-                                        value={formData.tokenId}
-                                        onChange={handleChange}
-                                        placeholder="1"
-                                        required
-                                    />
-                                </div>
+                                {/* Dropdown mode */}
+                                {inputMode === 'dropdown' && (
+                                    <>
+                                        <div className="form-group">
+                                            <label htmlFor="contractDropdown">Select Collection</label>
+                                            {loadingCollections ? (
+                                                <div className="loading-collections">
+                                                    <div className="loader"></div>
+                                                    <span>Loading your collections...</span>
+                                                </div>
+                                            ) : (
+                                                <select
+                                                    id="contractDropdown"
+                                                    className="input"
+                                                    value={selectedContract}
+                                                    onChange={(e) => handleContractSelection(e.target.value)}
+                                                    required
+                                                >
+                                                    <option value="">Select a collection</option>
+                                                    {userNftCollections.map((collection) => (
+                                                        <option key={collection.contractAddress} value={collection.contractAddress}>
+                                                            {contractNames[collection.contractAddress] || 'Loading...'} 
+                                                            ({collection.contractAddress.slice(0, 6)}...{collection.contractAddress.slice(-4)})
+                                                            {' - '}{collection.tokens.length} NFT{collection.tokens.length !== 1 ? 's' : ''}
+                                                        </option>
+                                                    ))}
+                                                    <option value="manual">⚙️ Manual Entry</option>
+                                                </select>
+                                            )}
+                                        </div>
 
-                                {!metadata && !loading && (
+                                        {availableTokenIds.length > 0 && (
+                                            <div className="form-group">
+                                                <label htmlFor="tokenIdDropdown">Select Token ID</label>
+                                                <select
+                                                    id="tokenIdDropdown"
+                                                    className="input"
+                                                    value={formData.tokenId}
+                                                    onChange={(e) => handleTokenIdSelection(e.target.value)}
+                                                    required
+                                                >
+                                                    <option value="">Select a token ID</option>
+                                                    {availableTokenIds.map((token) => (
+                                                        <option key={token.tokenId} value={token.tokenId}>
+                                                            Token ID #{token.tokenId}
+                                                            {token.type === 'ERC1155' ? ` (Balance: ${token.balance})` : ''}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {/* Manual mode */}
+                                {inputMode === 'manual' && (
+                                    <>
+                                        <div className="form-group">
+                                            <label htmlFor="nftContract">NFT Contract Address</label>
+                                            <input
+                                                type="text"
+                                                id="nftContract"
+                                                className="input"
+                                                value={formData.nftContract}
+                                                onChange={handleChange}
+                                                placeholder="0x..."
+                                                required
+                                            />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="tokenId">Token ID</label>
+                                            <input
+                                                type="text"
+                                                id="tokenId"
+                                                className="input"
+                                                value={formData.tokenId}
+                                                onChange={handleChange}
+                                                placeholder="1"
+                                                required
+                                            />
+                                        </div>
+                                    </>
+                                )}
+
+                                {!metadata && !loading && formData.nftContract && formData.tokenId && (
                                     <button type="button" className="secondary-button fetch-button" onClick={fetchNftMetadata}>
                                         Fetch NFT Data
                                     </button>
