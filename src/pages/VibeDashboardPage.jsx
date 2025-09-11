@@ -48,8 +48,28 @@ function VibeDashboardPage() {
             setLoading(true);
             setError(null);
 
-            if (!provider || !marketplaceAddress) {
-                debugWarn('Provider or marketplace address not available, showing no data');
+            // Check for marketplace address configuration
+            if (!marketplaceAddress || marketplaceAddress === '0x0000000000000000000000000000000000000000') {
+                setError('Marketplace contract address not configured. Please check environment configuration.');
+                debugWarn('Marketplace address not configured:', marketplaceAddress);
+                setStats({
+                    totalVTRUSent: '0',
+                    vtruSent24h: '0',
+                    vtruSent7d: '0',
+                    totalTransactions: 0,
+                    totalPlatformFees: '0',
+                    totalRoyalties: '0',
+                    avgPayout: '0'
+                });
+                setChartData([]);
+                setLeaderboards({ collections: [], royalties: [] });
+                setRecentEvents([]);
+                return;
+            }
+
+            if (!provider) {
+                setError('No blockchain provider available. Please connect your wallet or check network connection.');
+                debugWarn('Provider not available, showing no data');
                 setStats({
                     totalVTRUSent: '0',
                     vtruSent24h: '0',
@@ -273,7 +293,23 @@ function VibeDashboardPage() {
             
         } catch (error) {
             criticalError('Error loading vibe dashboard data from blockchain:', error);
-            setError('Failed to load vibe fee data from blockchain. Please try again later.');
+            
+            // Provide more specific error messages based on error type
+            let errorMessage = 'Failed to load vibe fee data from blockchain.';
+            
+            if (error.message && error.message.includes('Failed to fetch')) {
+                errorMessage = 'Network connection failed. Please check your internet connection and try again. The blockchain RPC endpoint may be temporarily unavailable.';
+            } else if (error.message && error.message.includes('network')) {
+                errorMessage = 'Blockchain network error. Please check if you are connected to the correct network (Vitruveo) and try again.';
+            } else if (error.message && error.message.includes('UNPREDICTABLE_GAS_LIMIT')) {
+                errorMessage = 'Smart contract interaction failed. The marketplace contract may be experiencing issues.';
+            } else if (error.code === 'NETWORK_ERROR') {
+                errorMessage = 'Blockchain network is unreachable. Please try again later or check your network connection.';
+            } else {
+                errorMessage = `Failed to load vibe fee data: ${error.message || 'Unknown error'}. Please try again later.`;
+            }
+            
+            setError(errorMessage);
             setStats({
                 totalVTRUSent: '0',
                 vtruSent24h: '0',
@@ -330,6 +366,40 @@ function VibeDashboardPage() {
             <div className="hp-section__head">
                 <h2>VIBE Dashboard</h2>
                 <p>Real-time analytics from blockchain events (direct from smart contract)</p>
+                {marketplaceAddress && marketplaceAddress !== '0x0000000000000000000000000000000000000000' && (
+                    <p style={{ fontSize: '0.9em', opacity: 0.7, marginTop: '0.5rem' }}>
+                        Contract: {marketplaceAddress.slice(0, 8)}...{marketplaceAddress.slice(-6)}
+                    </p>
+                )}
+                <div style={{ marginTop: '1rem' }}>
+                    <button 
+                        onClick={loadDashboardData} 
+                        disabled={loading}
+                        style={{
+                            padding: '0.5rem 1rem',
+                            background: loading ? '#666' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem'
+                        }}
+                    >
+                        {loading ? '🔄 Loading...' : '🔄 Refresh Data'}
+                    </button>
+                </div>
+                {status && (
+                    <div style={{ 
+                        marginTop: '1rem', 
+                        padding: '0.5rem', 
+                        background: 'rgba(102, 126, 234, 0.1)', 
+                        border: '1px solid rgba(102, 126, 234, 0.3)', 
+                        borderRadius: '6px',
+                        fontSize: '0.9rem'
+                    }}>
+                        {status}
+                    </div>
+                )}
             </div>
 
             {error && (
