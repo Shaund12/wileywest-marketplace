@@ -32,6 +32,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         getCachedSalesHistory,
         markListingAsSold,
         removeSoldListings,
+        cleanupOrphanedListings,
         subscribeToListings,
         isConnected: supabaseConnected,
         supabase
@@ -1439,28 +1440,46 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
           throw new Error("Transaction failed during execution");
         }
         
-        // Immediately mark the listing as sold in Supabase and trigger instant sync
+        // CRITICAL: Mark the listing as sold in database - this must succeed for production
+        let databaseUpdateSuccess = false;
+        
         if (markListingAsSold) {
             try {
-                debugLog(`🔄 Immediately marking listing ${id} as sold in database...`);
-                await markListingAsSold(id, tx.hash);
-                debugLog(`✅ Successfully marked listing ${id} as sold in database`);
+                debugLog(`🔄 CRITICAL: Marking listing ${id} as sold in database...`);
+                databaseUpdateSuccess = await markListingAsSold(id, tx.hash);
                 
-                // Trigger instant sync for this specific listing
-                debugLog(`⚡ Triggering instant sync for listing ${id}...`);
-                try {
-                    await triggerInstantSync(id);
-                    debugLog(`✅ Instant sync completed for listing ${id}`);
-                } catch (syncError) {
-                    debugWarn(`⚠️ Instant sync failed, falling back to regular refresh:`, syncError);
-                    // Fallback to regular refresh
-                    setTimeout(async () => {
-                        await fetchListings(true);
-                    }, 100);
+                if (databaseUpdateSuccess) {
+                    debugLog(`✅ Successfully marked listing ${id} as sold in database`);
+                } else {
+                    throw new Error('markListingAsSold returned false');
                 }
                 
             } catch (dbError) {
-                debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+                debugWarn(`❌ CRITICAL: Failed to update listing status in database:`, dbError);
+                
+                // FALLBACK: Use instant-sync API as backup method
+                debugLog(`🆘 Attempting fallback via instant-sync API for listing ${id}...`);
+                try {
+                    await triggerInstantSync(id);
+                    debugLog(`✅ Fallback instant sync completed for listing ${id}`);
+                    databaseUpdateSuccess = true; // Consider it successful if instant sync worked
+                } catch (syncError) {
+                    debugWarn(`❌ CRITICAL: Fallback instant sync also failed:`, syncError);
+                    // This is a critical failure - the listing won't be marked as sold
+                    setStatus(`⚠️ Purchase successful but listing may still appear active. Please refresh in a few minutes.`);
+                }
+            }
+        }
+        
+        // Additional instant sync for real-time updates (only if primary database update succeeded)
+        if (databaseUpdateSuccess) {
+            try {
+                debugLog(`⚡ Triggering additional instant sync for real-time updates...`);
+                await triggerInstantSync(id);
+                debugLog(`✅ Additional instant sync completed`);
+            } catch (syncError) {
+                debugWarn(`⚠️ Additional instant sync failed (non-critical):`, syncError);
+                // Non-critical - the listing is already marked as sold
             }
         }
         
@@ -1564,28 +1583,46 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         throw new Error("Transaction failed during execution");
       }
       
-      // Immediately mark the listing as sold in Supabase and trigger instant sync
+      // CRITICAL: Mark the listing as sold in database - this must succeed for production
+      let databaseUpdateSuccess = false;
+      
       if (markListingAsSold) {
         try {
-          debugLog(`🔄 Immediately marking listing ${id} as sold in database...`);
-          await markListingAsSold(id, tx.hash);
-          debugLog(`✅ Successfully marked listing ${id} as sold in database`);
+          debugLog(`🔄 CRITICAL: Marking listing ${id} as sold in database...`);
+          databaseUpdateSuccess = await markListingAsSold(id, tx.hash);
           
-          // Trigger instant sync for this specific listing
-          debugLog(`⚡ Triggering instant sync for listing ${id}...`);
-          try {
-            await triggerInstantSync(id);
-            debugLog(`✅ Instant sync completed for listing ${id}`);
-          } catch (syncError) {
-            debugWarn(`⚠️ Instant sync failed, falling back to regular refresh:`, syncError);
-            // Fallback to regular refresh
-            setTimeout(async () => {
-              await fetchListings(true);
-            }, 100);
+          if (databaseUpdateSuccess) {
+            debugLog(`✅ Successfully marked listing ${id} as sold in database`);
+          } else {
+            throw new Error('markListingAsSold returned false');
           }
           
         } catch (dbError) {
-          debugWarn(`⚠️ Failed to update listing status in database:`, dbError);
+          debugWarn(`❌ CRITICAL: Failed to update listing status in database:`, dbError);
+          
+          // FALLBACK: Use instant-sync API as backup method
+          debugLog(`🆘 Attempting fallback via instant-sync API for listing ${id}...`);
+          try {
+            await triggerInstantSync(id);
+            debugLog(`✅ Fallback instant sync completed for listing ${id}`);
+            databaseUpdateSuccess = true; // Consider it successful if instant sync worked
+          } catch (syncError) {
+            debugWarn(`❌ CRITICAL: Fallback instant sync also failed:`, syncError);
+            // This is a critical failure - the listing won't be marked as sold
+            setStatus(`⚠️ Purchase successful but listing may still appear active. Please refresh in a few minutes.`);
+          }
+        }
+      }
+      
+      // Additional instant sync for real-time updates (only if primary database update succeeded)
+      if (databaseUpdateSuccess) {
+        try {
+          debugLog(`⚡ Triggering additional instant sync for real-time updates...`);
+          await triggerInstantSync(id);
+          debugLog(`✅ Additional instant sync completed`);
+        } catch (syncError) {
+          debugWarn(`⚠️ Additional instant sync failed (non-critical):`, syncError);
+          // Non-critical - the listing is already marked as sold
         }
       }
       
@@ -1789,6 +1826,52 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
             fetchListings();
         }
     }, [marketplace]);
+
+    // Periodic cleanup for production reliability
+    useEffect(() => {
+        if (!supabaseConnected || !cleanupOrphanedListings) return;
+
+        // Run initial cleanup after 30 seconds
+        const initialCleanup = setTimeout(async () => {
+            try {
+                debugLog('🧹 Running initial orphaned listings cleanup...');
+                const result = await cleanupOrphanedListings();
+                if (result.cleaned > 0) {
+                    debugLog(`✅ Initial cleanup: fixed ${result.cleaned} orphaned listings`);
+                    // Refresh listings if we cleaned anything
+                    setTimeout(() => fetchListings(false), 1000);
+                }
+                if (result.errors.length > 0) {
+                    debugWarn(`⚠️ Initial cleanup errors:`, result.errors);
+                }
+            } catch (error) {
+                debugWarn('Initial cleanup failed:', error);
+            }
+        }, 30000);
+
+        // Run periodic cleanup every 5 minutes
+        const cleanupInterval = setInterval(async () => {
+            try {
+                debugLog('🧹 Running periodic orphaned listings cleanup...');
+                const result = await cleanupOrphanedListings();
+                if (result.cleaned > 0) {
+                    debugLog(`✅ Periodic cleanup: fixed ${result.cleaned} orphaned listings`);
+                    // Refresh listings if we cleaned anything
+                    setTimeout(() => fetchListings(false), 1000);
+                }
+                if (result.errors.length > 0) {
+                    debugWarn(`⚠️ Periodic cleanup errors:`, result.errors);
+                }
+            } catch (error) {
+                debugWarn('Periodic cleanup failed:', error);
+            }
+        }, 5 * 60 * 1000); // 5 minutes
+
+        return () => {
+            clearTimeout(initialCleanup);
+            clearInterval(cleanupInterval);
+        };
+    }, [supabaseConnected, cleanupOrphanedListings, fetchListings]);
 
     // Add helper near the top (below imports)
 function hasAbiFn(abi, name) {
