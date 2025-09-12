@@ -31,21 +31,19 @@ function VibeDashboardPage() {
     const [timeframe, setTimeframe] = useState('7d');
     const [error, setError] = useState(null);
 
-    // Helper function to get vibe amount from breakdown events with correct decimal handling
+    // Helper function to get vibe amount from breakdown events - always returns VTRU sent to VIBE
     const getVibeAmount = useMemo(() => (event) => {
         const args = event.args;
         
-        // Get the payment token used in this transaction
-        const paymentToken = args.paymentToken;
-        const decimals = getTokenDecimals(paymentToken);
+        // Always use the VTRU amounts that were actually sent to the VIBE contract
+        // vibeOutWVTRU: VTRU from unwrapped wVTRU sent to VIBE
+        // vibeOutNative: VTRU directly sent to VIBE
+        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')); // Always 18 decimals
+        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0')); // Always 18 decimals
         
-        // For SaleBreakdown and AuctionBreakdown events, get the total vibe amount with correct decimals
-        const vibePortionInPayment = parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals));
-        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')); // WVTRU is always 18 decimals
-        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0')); // Native VTRU is always 18 decimals
-        
-        // Return the total vibe amount (prefer vibePortionInPayment as it's the original amount in the payment token)
-        return vibePortionInPayment > 0 ? vibePortionInPayment : (vibeOutWVTRU + vibeOutNative);
+        // Return the total VTRU amount that was sent to the VIBE contract
+        // This represents the actual VTRU amount regardless of what token was used for payment
+        return vibeOutWVTRU + vibeOutNative;
     }, []);
 
     const loadDashboardData = useCallback(async () => {
@@ -188,21 +186,23 @@ function VibeDashboardPage() {
             
             debugLog(`✅ Processed ${processedEvents.length} events successfully`);
             
-            // Debug: Log token breakdown for troubleshooting
+            // Debug: Log token breakdown and VTRU amounts sent to VIBE for troubleshooting
             if (processedEvents.length > 0) {
                 const tokenBreakdown = processedEvents.reduce((acc, event) => {
                     const token = event.paymentToken || 'Unknown';
                     const decimals = event.paymentTokenDecimals || 'Unknown';
-                    const vibeAmount = event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative);
+                    const vtruSentToVibe = event.vibeOutWVTRU + event.vibeOutNative; // Always track VTRU sent to VIBE
+                    const paymentAmount = event.vibePortionInPayment || 0; // Original payment amount
                     if (!acc[token]) {
-                        acc[token] = { count: 0, totalVibe: 0, decimals };
+                        acc[token] = { count: 0, totalVTRUSentToVibe: 0, totalPaymentAmount: 0, decimals };
                     }
                     acc[token].count++;
-                    acc[token].totalVibe += vibeAmount;
+                    acc[token].totalVTRUSentToVibe += vtruSentToVibe;
+                    acc[token].totalPaymentAmount += paymentAmount;
                     return acc;
                 }, {});
                 
-                debugLog('🔍 Token breakdown for processed events:', tokenBreakdown);
+                debugLog('🔍 Payment token breakdown (tracking VTRU sent to VIBE):', tokenBreakdown);
             }
 
             // Time windows for calculations
@@ -210,21 +210,21 @@ function VibeDashboardPage() {
             const oneDayAgo = now - (24 * 60 * 60 * 1000);
             const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
 
-            // Calculate aggregated stats
+            // Calculate aggregated stats - always use VTRU amounts sent to VIBE
             const totalVTRUSentNum = processedEvents.reduce((sum, event) => {
-                return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                return sum + (event.vibeOutWVTRU + event.vibeOutNative);
             }, 0);
 
             const vtruSent24hNum = processedEvents
                 .filter(event => event.timestamp >= oneDayAgo)
                 .reduce((sum, event) => {
-                    return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                    return sum + (event.vibeOutWVTRU + event.vibeOutNative);
                 }, 0);
 
             const vtruSent7dNum = processedEvents
                 .filter(event => event.timestamp >= sevenDaysAgo)
                 .reduce((sum, event) => {
-                    return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                    return sum + (event.vibeOutWVTRU + event.vibeOutNative);
                 }, 0);
 
             const totalTransactions = processedEvents.length;
@@ -254,7 +254,7 @@ function VibeDashboardPage() {
                         chartDataMap.set(date, { vtruSent: 0, transactions: 0 });
                     }
                     const entry = chartDataMap.get(date);
-                    entry.vtruSent += (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                    entry.vtruSent += (event.vibeOutWVTRU + event.vibeOutNative);
                     entry.transactions += 1;
                 });
 
@@ -309,10 +309,10 @@ function VibeDashboardPage() {
                 .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 10)
                 .map(event => {
-                    const vibeAmount = event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative);
+                    const vibeAmount = event.vibeOutWVTRU + event.vibeOutNative;
                     return {
                         time: formatTimeAgo(event.timestamp),
-                        description: `VIBE payout ${vibeAmount.toFixed(2)} VTRU from ${event.type} transaction`,
+                        description: `VIBE payout ${vibeAmount.toFixed(4)} VTRU from ${event.type} transaction`,
                         hash: event.transactionHash,
                         type: 'vibe_payout'
                     };
