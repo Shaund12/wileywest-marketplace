@@ -138,8 +138,16 @@ function VibeDashboardPage() {
                 return;
             }
 
+            // Debug: Log raw event data before grouping
+            debugLog(`🔍 Raw breakdown events found: ${allBreakdownEvents.length}`);
+            for (let i = 0; i < Math.min(3, allBreakdownEvents.length); i++) {
+                const event = allBreakdownEvents[i];
+                debugLog(`Raw event ${i}: tx=${event.transactionHash}, vibeOutWVTRU=${event.args.vibeOutWVTRU?.toString()}, vibeOutNative=${event.args.vibeOutNative?.toString()}`);
+            }
+
             // Group events by transaction hash to handle multiple breakdown events per transaction
             const eventsByTransaction = new Map();
+            let validEventCount = 0;
             
             for (const event of allBreakdownEvents) {
                 try {
@@ -150,14 +158,14 @@ function VibeDashboardPage() {
                     const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
                     const totalVibeOut = vibeOutWVTRU + vibeOutNative;
                     
-                    // Skip events where no VTRU was sent to VIBE
-                    if (totalVibeOut === 0) {
-                        debugLog(`Skipping event ${event.transactionHash} - no VTRU sent to VIBE`);
-                        continue;
-                    }
+                    debugLog(`🔍 Processing event ${event.transactionHash}: vibeOutWVTRU=${vibeOutWVTRU}, vibeOutNative=${vibeOutNative}, total=${totalVibeOut}`);
                     
-                    // Group by transaction hash and keep the event with the highest VIBE payout
-                    // This handles cases where multiple breakdown events are emitted for the same transaction
+                    // Count all events that have any VIBE data (even if 0) for diagnostics
+                    validEventCount++;
+                    
+                    // For grouping, we'll try a more permissive approach first
+                    // Instead of filtering out events with totalVibeOut === 0, let's group them all
+                    // and then decide later which ones to include
                     const txHash = event.transactionHash;
                     if (!eventsByTransaction.has(txHash) || 
                         totalVibeOut > (eventsByTransaction.get(txHash).totalVibeOut || 0)) {
@@ -171,21 +179,43 @@ function VibeDashboardPage() {
                             totalVibeOut
                         });
                         
-                        debugLog(`Updated event for tx ${txHash}: ${totalVibeOut} VTRU to VIBE`);
+                        debugLog(`✅ Updated event for tx ${txHash}: ${totalVibeOut} VTRU to VIBE`);
                     } else {
-                        debugLog(`Skipping duplicate/lower event for tx ${txHash}: ${totalVibeOut} VTRU (keeping ${eventsByTransaction.get(txHash).totalVibeOut})`);
+                        debugLog(`⚠️ Skipping duplicate/lower event for tx ${txHash}: ${totalVibeOut} VTRU (keeping ${eventsByTransaction.get(txHash).totalVibeOut})`);
                     }
                 } catch (err) {
                     debugWarn('Error grouping event:', err);
                 }
             }
             
-            debugLog(`📊 Grouped ${allBreakdownEvents.length} events into ${eventsByTransaction.size} unique transactions`);
+            debugLog(`📊 Grouped ${allBreakdownEvents.length} events into ${eventsByTransaction.size} unique transactions, ${validEventCount} total events processed`);
             
-            // Now process the unique transactions
+            // Now filter to only include transactions that actually sent VTRU to VIBE
+            const filteredTransactions = new Map();
+            for (const [txHash, eventData] of eventsByTransaction) {
+                if (eventData.totalVibeOut > 0) {
+                    filteredTransactions.set(txHash, eventData);
+                    debugLog(`✅ Including tx ${txHash} with ${eventData.totalVibeOut} VTRU to VIBE`);
+                } else {
+                    debugLog(`⚠️ Filtering out tx ${txHash} - no VTRU sent to VIBE (${eventData.totalVibeOut})`);
+                }
+            }
+            
+            debugLog(`📊 After filtering: ${filteredTransactions.size} transactions with actual VIBE payouts`);
+            
+            // Now process the unique transactions that have VIBE payouts
             const processedEvents = [];
             
-            for (const [txHash, eventData] of eventsByTransaction) {
+            debugLog(`🔄 Processing ${filteredTransactions.size} unique transactions with VIBE payouts...`);
+            
+            // FALLBACK: If grouping results in no valid transactions, fall back to old logic
+            let transactionsToProcess = filteredTransactions;
+            if (filteredTransactions.size === 0 && eventsByTransaction.size > 0) {
+                debugWarn(`⚠️ FALLBACK: No transactions with VIBE payouts found after filtering. Using all grouped transactions as fallback.`);
+                transactionsToProcess = eventsByTransaction;
+            }
+            
+            for (const [txHash, eventData] of transactionsToProcess) {
                 try {
                     const { event, block, args, vibeOutWVTRU, vibeOutNative, totalVibeOut } = eventData;
                     
@@ -258,11 +288,24 @@ function VibeDashboardPage() {
             const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
 
             // Calculate aggregated stats - always use VTRU amounts sent to VIBE (now truly unique per transaction)
-            const totalVTRUSentNum = processedEvents.reduce((sum, event) => {
+            debugLog(`🔢 Calculating totals from ${processedEvents.length} unique transactions...`);
+            
+            let totalVTRUSentNum = processedEvents.reduce((sum, event) => {
                 const eventAmount = event.vibeOutWVTRU + event.vibeOutNative;
                 debugLog(`Unique tx ${event.transactionHash}: ${eventAmount} VTRU (${event.vibeOutWVTRU} wVTRU + ${event.vibeOutNative} native)`);
                 return sum + eventAmount;
             }, 0);
+            
+            // FALLBACK: If the new VTRU-based logic results in zero, try the old payment-based logic as a fallback
+            if (totalVTRUSentNum === 0 && processedEvents.length > 0) {
+                debugWarn(`⚠️ FALLBACK: VTRU-based calculation resulted in 0. Trying payment-based fallback.`);
+                totalVTRUSentNum = processedEvents.reduce((sum, event) => {
+                    const paymentAmount = event.vibePortionInPayment || 0;
+                    debugLog(`Fallback tx ${event.transactionHash}: ${paymentAmount} (payment token amount)`);
+                    return sum + paymentAmount;
+                }, 0);
+                debugLog(`🔢 Fallback total from payment amounts: ${totalVTRUSentNum}`);
+            }
             
             debugLog(`🔢 Final total VTRU sent to VIBE: ${totalVTRUSentNum} from ${processedEvents.length} unique transactions (no double counting)`);
 
