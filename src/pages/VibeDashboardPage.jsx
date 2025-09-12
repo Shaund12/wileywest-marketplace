@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet } from '../context/WalletContext';
+import { useMarketplace } from '../context/MarketplaceContext';
 import { ethers } from 'ethers';
 import MarketplaceAbi from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { getTokenDecimals, formatTokenAmount } from '../utils/tokenUtils';
+import MarketplaceStats from '../components/MarketplaceStats';
+import { motion } from 'framer-motion';
 import './AuctionStyles.css';
 
 function VibeDashboardPage() {
     const { provider } = useWallet();
+    const { marketplaceStats = {}, refreshBlockchainData, salesHistory = [], status = '' } = useMarketplace();
     const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS;
     const [stats, setStats] = useState({
         // VIBE (VTRU) payouts computed from blockchain events directly
@@ -27,7 +31,6 @@ function VibeDashboardPage() {
     });
     const [recentEvents, setRecentEvents] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [status, setStatus] = useState('');
     const [timeframe, setTimeframe] = useState('7d');
     const [error, setError] = useState(null);
 
@@ -89,7 +92,6 @@ function VibeDashboardPage() {
             }
 
             debugLog('🚀 Fetching vibe fee data directly from blockchain events...');
-            setStatus('🚀 Connecting to blockchain to fetch vibe fee data...');
             
             // Create marketplace contract instance
             const marketplace = new ethers.Contract(marketplaceAddress, MarketplaceAbi.abi, provider);
@@ -100,7 +102,6 @@ function VibeDashboardPage() {
             const fromBlock = Math.max(currentBlock - SCAN_BLOCKS, 0);
             
             debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events (${SCAN_BLOCKS} blocks)`);
-            setStatus(`📊 Scanning recent ${SCAN_BLOCKS.toLocaleString()} blocks for vibe fee data...`);
             
             // Fetch SaleBreakdown events (when NFTs are purchased)
             const saleBreakdownEvents = await marketplace.queryFilter(
@@ -118,7 +119,6 @@ function VibeDashboardPage() {
             
             const allBreakdownEvents = [...saleBreakdownEvents, ...auctionBreakdownEvents];
             debugLog(`📈 Found ${saleBreakdownEvents.length} sale breakdowns and ${auctionBreakdownEvents.length} auction breakdowns`);
-            setStatus(`📈 Processing ${allBreakdownEvents.length} vibe fee events...`);
             
             if (allBreakdownEvents.length === 0) {
                 debugWarn('No breakdown events found in recent blocks');
@@ -228,7 +228,6 @@ function VibeDashboardPage() {
                     setRecentEvents(recentEventsMock);
                     
                     setLeaderboards({ collections: [], royalties: [] });
-                    setStatus('🧪 Development mode: Showing mock VIBE data for testing');
                     setLoading(false);
                     return;
                 }
@@ -512,7 +511,6 @@ function VibeDashboardPage() {
                 });
 
             setRecentEvents(recentEvents);
-            setStatus('✅ Vibe fee data loaded successfully from blockchain!');
             
         } catch (error) {
             criticalError('Error loading vibe dashboard data from blockchain:', error);
@@ -600,7 +598,6 @@ function VibeDashboardPage() {
             setRecentEvents([]);
         } finally {
             setLoading(false);
-            setTimeout(() => setStatus(''), 3000); // Clear status after 3 seconds
         }
     }, [provider, marketplaceAddress, timeframe, getVibeAmount]); // Updated dependencies
 
@@ -664,18 +661,6 @@ function VibeDashboardPage() {
                         {loading ? '🔄 Loading...' : '🔄 Refresh Data'}
                     </button>
                 </div>
-                {status && (
-                    <div style={{ 
-                        marginTop: '1rem', 
-                        padding: '0.5rem', 
-                        background: 'rgba(102, 126, 234, 0.1)', 
-                        border: '1px solid rgba(102, 126, 234, 0.3)', 
-                        borderRadius: '6px',
-                        fontSize: '0.9rem'
-                    }}>
-                        {status}
-                    </div>
-                )}
             </div>
 
             {error && (
@@ -815,6 +800,119 @@ function VibeDashboardPage() {
                             </div>
                         </div>
                     </section>
+
+                    {/* Marketplace Overview Stats */}
+                    <motion.section 
+                        className="marketplace-overview-section"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.6, delay: 0.2 }}
+                        style={{ marginTop: '2rem' }}
+                    >
+                        <div className="section-header" style={{ marginBottom: '1.5rem' }}>
+                            <h3 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📊 Marketplace Overview</h3>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Current marketplace statistics and activity</p>
+                        </div>
+                        
+                        <div className="marketplace-stats-grid" style={{
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+                            gap: '1rem',
+                            marginBottom: '2rem'
+                        }}>
+                            <motion.div 
+                                className="stat-card enhanced"
+                                whileHover={{ scale: 1.02, y: -5 }}
+                                transition={{ duration: 0.2 }}
+                                style={{
+                                    background: 'linear-gradient(135deg, rgba(85, 51, 255, 0.1) 0%, rgba(255, 51, 102, 0.1) 100%)',
+                                    border: '1px solid rgba(85, 51, 255, 0.2)',
+                                    borderRadius: '12px',
+                                    padding: '1.5rem',
+                                    textAlign: 'center'
+                                }}
+                            >
+                                <h3 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', color: '#5533ff' }}>
+                                    {marketplaceStats.totalListings || 0}
+                                </h3>
+                                <p style={{ margin: '0 0 0.25rem 0', fontWeight: '600' }}>Active Listings</p>
+                                <small style={{ color: 'var(--text-secondary)' }}>(Excluding canceled)</small>
+                            </motion.div>
+                            
+                            <motion.div 
+                                className="stat-card enhanced"
+                                whileHover={{ scale: 1.02, y: -5 }}
+                                transition={{ duration: 0.2 }}
+                                style={{
+                                    background: 'linear-gradient(135deg, rgba(34, 204, 136, 0.1) 0%, rgba(85, 51, 255, 0.1) 100%)',
+                                    border: '1px solid rgba(34, 204, 136, 0.2)',
+                                    borderRadius: '12px',
+                                    padding: '1.5rem',
+                                    textAlign: 'center'
+                                }}
+                            >
+                                <h3 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', color: '#22cc88' }}>
+                                    {marketplaceStats.hasUSDCRates ? `$${marketplaceStats.currentListingVolume || '0.00'}` : (marketplaceStats.currentListingVolume || '0')}
+                                </h3>
+                                <p style={{ margin: '0 0 0.25rem 0', fontWeight: '600' }}>Current Listing Volume</p>
+                                <small style={{ color: 'var(--text-secondary)' }}>{marketplaceStats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
+                            </motion.div>
+                            
+                            <motion.div 
+                                className="stat-card enhanced"
+                                whileHover={{ scale: 1.02, y: -5 }}
+                                transition={{ duration: 0.2 }}
+                                style={{
+                                    background: 'linear-gradient(135deg, rgba(255, 170, 51, 0.1) 0%, rgba(255, 51, 102, 0.1) 100%)',
+                                    border: '1px solid rgba(255, 170, 51, 0.2)',
+                                    borderRadius: '12px',
+                                    padding: '1.5rem',
+                                    textAlign: 'center'
+                                }}
+                            >
+                                <h3 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', color: '#ffaa33' }}>
+                                    {marketplaceStats.hasUSDCRates ? `$${marketplaceStats.actualSoldVolume || '0.00'}` : (marketplaceStats.actualSoldVolume || '0')}
+                                </h3>
+                                <p style={{ margin: '0 0 0.25rem 0', fontWeight: '600' }}>Actual Sold Volume</p>
+                                <small style={{ color: 'var(--text-secondary)' }}>{marketplaceStats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
+                            </motion.div>
+                            
+                            <motion.div 
+                                className="stat-card enhanced"
+                                whileHover={{ scale: 1.02, y: -5 }}
+                                transition={{ duration: 0.2 }}
+                                style={{
+                                    background: 'linear-gradient(135deg, rgba(255, 51, 102, 0.1) 0%, rgba(85, 51, 255, 0.1) 100%)',
+                                    border: '1px solid rgba(255, 51, 102, 0.2)',
+                                    borderRadius: '12px',
+                                    padding: '1.5rem',
+                                    textAlign: 'center'
+                                }}
+                            >
+                                <h3 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', color: '#ff3366' }}>
+                                    {marketplaceStats.hasUSDCRates ? `$${marketplaceStats.floorPrice || '0.00'}` : (marketplaceStats.floorPrice || '0')}
+                                </h3>
+                                <p style={{ margin: '0 0 0.25rem 0', fontWeight: '600' }}>Floor Price</p>
+                                <small style={{ color: 'var(--text-secondary)' }}>{marketplaceStats.hasUSDCRates ? 'USDC' : 'Estimated'}</small>
+                            </motion.div>
+                        </div>
+                    </motion.section>
+
+                    {/* Full Marketplace Analytics */}
+                    <motion.section 
+                        className="full-marketplace-analytics"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.6, delay: 0.4 }}
+                        style={{ marginTop: '2rem' }}
+                    >
+                        <div className="section-header" style={{ marginBottom: '1.5rem' }}>
+                            <h3 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📈 Advanced Marketplace Analytics</h3>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Comprehensive marketplace metrics and insights</p>
+                        </div>
+                        
+                        <MarketplaceStats />
+                    </motion.section>
 
                     {/* Events Feed */}
                     <section className="events-section">
