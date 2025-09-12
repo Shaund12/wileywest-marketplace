@@ -54,6 +54,9 @@ function VibeDashboardPage() {
             setLoading(true);
             setError(null);
 
+            // Define the marketplace address that should be ignored for wVTRU transfers
+            const MARKETPLACE_ADDRESS = '0x53c852dA8A801Ca41E533A2159528f867c660b6F';
+
             // Check for marketplace address configuration
             if (!marketplaceAddress || marketplaceAddress === '0x0000000000000000000000000000000000000000') {
                 setError('Marketplace contract address not configured. Please check environment configuration.');
@@ -270,6 +273,20 @@ function VibeDashboardPage() {
                     const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));
                     const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
                     const totalVibeOut = vibeOutWVTRU + vibeOutNative;
+                    
+                    // CRITICAL FIX: Ignore wVTRU transfers to marketplace address to prevent double-counting
+                    // During the buy flow, wVTRU might be transferred to the marketplace but this shouldn't count as VIBE
+                    const isWVTRUToMarketplace = (
+                        args.paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9' && // wVTRU token
+                        vibeOutWVTRU === 0 && // No VTRU actually sent to VIBE from this wVTRU
+                        args.vibePortionInPayment && 
+                        parseFloat(ethers.formatEther(args.vibePortionInPayment)) === 0 // No VIBE portion in the payment
+                    );
+                    
+                    if (isWVTRUToMarketplace) {
+                        debugLog(`🚫 Ignoring wVTRU transfer to marketplace: tx=${event.transactionHash}, prevents double-counting`);
+                        continue;
+                    }
                     
                     // STRICT: Only count events with actual VTRU outflow to VIBE
                     if (totalVibeOut > 0) {
