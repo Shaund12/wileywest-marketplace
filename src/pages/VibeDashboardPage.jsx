@@ -138,33 +138,56 @@ function VibeDashboardPage() {
                 return;
             }
 
-            // Process events and extract data with timestamps
-            const processedEvents = [];
-            const seenTransactions = new Set(); // Track unique transactions to prevent double counting
+            // Group events by transaction hash to handle multiple breakdown events per transaction
+            const eventsByTransaction = new Map();
             
             for (const event of allBreakdownEvents) {
                 try {
                     const block = await event.getBlock();
                     const args = event.args;
                     
-                    // Only process events where VTRU was actually sent to VIBE contract
-                    // This avoids double counting marketplace transactions vs VIBE payouts
                     const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));
                     const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
+                    const totalVibeOut = vibeOutWVTRU + vibeOutNative;
                     
-                    // Skip events where no VTRU was sent to VIBE (avoid double counting)
-                    if (vibeOutWVTRU === 0 && vibeOutNative === 0) {
+                    // Skip events where no VTRU was sent to VIBE
+                    if (totalVibeOut === 0) {
                         debugLog(`Skipping event ${event.transactionHash} - no VTRU sent to VIBE`);
                         continue;
                     }
                     
-                    // Prevent double counting the same transaction
-                    // Some transactions may emit multiple breakdown events, but we only want to count the VTRU sent to VIBE once
-                    if (seenTransactions.has(event.transactionHash)) {
-                        debugLog(`Skipping duplicate transaction ${event.transactionHash} - already processed`);
-                        continue;
+                    // Group by transaction hash and keep the event with the highest VIBE payout
+                    // This handles cases where multiple breakdown events are emitted for the same transaction
+                    const txHash = event.transactionHash;
+                    if (!eventsByTransaction.has(txHash) || 
+                        totalVibeOut > (eventsByTransaction.get(txHash).totalVibeOut || 0)) {
+                        
+                        eventsByTransaction.set(txHash, {
+                            event,
+                            block,
+                            args,
+                            vibeOutWVTRU,
+                            vibeOutNative,
+                            totalVibeOut
+                        });
+                        
+                        debugLog(`Updated event for tx ${txHash}: ${totalVibeOut} VTRU to VIBE`);
+                    } else {
+                        debugLog(`Skipping duplicate/lower event for tx ${txHash}: ${totalVibeOut} VTRU (keeping ${eventsByTransaction.get(txHash).totalVibeOut})`);
                     }
-                    seenTransactions.add(event.transactionHash);
+                } catch (err) {
+                    debugWarn('Error grouping event:', err);
+                }
+            }
+            
+            debugLog(`📊 Grouped ${allBreakdownEvents.length} events into ${eventsByTransaction.size} unique transactions`);
+            
+            // Now process the unique transactions
+            const processedEvents = [];
+            
+            for (const [txHash, eventData] of eventsByTransaction) {
+                try {
+                    const { event, block, args, vibeOutWVTRU, vibeOutNative, totalVibeOut } = eventData;
                     
                     // Get the payment token and its decimals for proper formatting
                     const paymentToken = args.paymentToken;
@@ -199,16 +222,16 @@ function VibeDashboardPage() {
                         quantity: parseInt(args.quantity?.toString() || '1')
                     };
                     
-                    // Debug log each event we're including
-                    debugLog(`✅ Including event ${event.transactionHash}: vibeOutWVTRU=${vibeOutWVTRU}, vibeOutNative=${vibeOutNative}, total=${vibeOutWVTRU + vibeOutNative} VTRU`);
+                    // Debug log each unique transaction we're including
+                    debugLog(`✅ Including unique tx ${event.transactionHash}: vibeOutWVTRU=${vibeOutWVTRU}, vibeOutNative=${vibeOutNative}, total=${totalVibeOut} VTRU`);
                     
                     processedEvents.push(eventData);
                 } catch (err) {
-                    debugWarn('Error processing event:', err);
+                    debugWarn('Error processing unique transaction:', err);
                 }
             }
             
-            debugLog(`✅ Processed ${processedEvents.length} events successfully`);
+            debugLog(`✅ Processed ${processedEvents.length} unique transactions successfully`);
             
             // Debug: Log token breakdown and VTRU amounts sent to VIBE for troubleshooting
             if (processedEvents.length > 0) {
@@ -226,7 +249,7 @@ function VibeDashboardPage() {
                     return acc;
                 }, {});
                 
-                debugLog('🔍 Payment token breakdown (tracking VTRU sent to VIBE):', tokenBreakdown);
+                debugLog('🔍 Payment token breakdown (tracking VTRU sent to VIBE, 1 event per unique transaction):', tokenBreakdown);
             }
 
             // Time windows for calculations
@@ -234,14 +257,14 @@ function VibeDashboardPage() {
             const oneDayAgo = now - (24 * 60 * 60 * 1000);
             const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
 
-            // Calculate aggregated stats - always use VTRU amounts sent to VIBE
+            // Calculate aggregated stats - always use VTRU amounts sent to VIBE (now truly unique per transaction)
             const totalVTRUSentNum = processedEvents.reduce((sum, event) => {
                 const eventAmount = event.vibeOutWVTRU + event.vibeOutNative;
-                debugLog(`Event ${event.transactionHash}: ${eventAmount} VTRU (${event.vibeOutWVTRU} wVTRU + ${event.vibeOutNative} native)`);
+                debugLog(`Unique tx ${event.transactionHash}: ${eventAmount} VTRU (${event.vibeOutWVTRU} wVTRU + ${event.vibeOutNative} native)`);
                 return sum + eventAmount;
             }, 0);
             
-            debugLog(`🔢 Final total VTRU sent to VIBE: ${totalVTRUSentNum} from ${processedEvents.length} unique transactions`);
+            debugLog(`🔢 Final total VTRU sent to VIBE: ${totalVTRUSentNum} from ${processedEvents.length} unique transactions (no double counting)`);
 
             const vtruSent24hNum = processedEvents
                 .filter(event => event.timestamp >= oneDayAgo)
