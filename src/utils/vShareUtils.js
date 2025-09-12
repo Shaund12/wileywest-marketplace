@@ -130,22 +130,13 @@ export function getVShareMetadata(contractAddress, tokenId, title = null) {
     
     const tokenIdStr = String(tokenId);
     const nftTitle = title || `V-Share #${tokenIdStr}`;
+    const vShareImage = 'https://gray-quickest-flamingo-554.mypinata.cloud/ipfs/bafybeidx6nttea5wqnutb2eleermxvtj45bqnd7zbh3d5tiedmgfw46eaa';
     
     return {
         name: nftTitle,
         description: vShareDefaultDescription(),
-        image: vShareLpSvgDataUrl({ 
-            contract: contractAddress, 
-            tokenId: tokenIdStr, 
-            title: 'V-Share', 
-            subtitle: 'Vmonsters Rev Share' 
-        }),
-        imageUrl: vShareLpSvgDataUrl({ 
-            contract: contractAddress, 
-            tokenId: tokenIdStr, 
-            title: 'V-Share', 
-            subtitle: 'Vmonsters Rev Share' 
-        }),
+        image: vShareImage,
+        imageUrl: vShareImage,
         attributes: [
             {
                 trait_type: 'Collection',

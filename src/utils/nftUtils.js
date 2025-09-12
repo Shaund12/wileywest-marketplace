@@ -5,7 +5,7 @@
 
 import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from './debugUtils';
-import { isVShareContract, getVShareMetadata } from './vShareUtils';
+import { isVShareContract, getVShareMetadata, vShareLpSvgDataUrl } from './vShareUtils';
 
 /**
  * Configuration for marketplace scanning and display
@@ -596,6 +596,46 @@ export const generateCollectionStats = (listings) => {
  */
 export const scopedClass = (baseClass, component) => {
     return `${component}__${baseClass}`;
+};
+
+/**
+ * Generate a custom LP-style placeholder SVG for NFTs
+ * @param {string} contractAddress - Contract address
+ * @param {string} tokenId - Token ID
+ * @param {Object} contractInfo - Optional contract info for symbol/name
+ * @returns {string} Data URL for generated SVG
+ */
+export const generateFallbackImage = (contractAddress, tokenId, contractInfo = {}) => {
+    try {
+        // Special handling for V-Share contracts
+        if (isVShareContract(contractAddress)) {
+            return vShareLpSvgDataUrl({ 
+                contract: contractAddress, 
+                tokenId: tokenId.toString(), 
+                title: 'V-Share', 
+                subtitle: 'Vmonsters Rev Share' 
+            });
+        }
+
+        const hash = contractAddress.toLowerCase() + tokenId.toString();
+        let hashNum = 0;
+        for (let i = 0; i < hash.length; i++) {
+            hashNum = ((hashNum << 5) - hashNum) + hash.charCodeAt(i);
+            hashNum = hashNum & hashNum;
+        }
+
+        const angle = Math.abs(hashNum % 360);
+        const hue1 = Math.abs(hashNum % 360);
+        const hue2 = (hue1 + 180) % 360;
+
+        const symbol = contractInfo.symbol || '';
+        const shortName = (symbol || contractInfo.name || '').substring(0, 8);
+
+        return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Crect width='300' height='300' fill='%230f0f0f'/%3E%3Ccircle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/%3E%3Ccircle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/%3E%3Cpath d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/%3E%3Cpath d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/%3E%3Ccircle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/%3E%3Ctext x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'%3E%23${tokenId}%3C/text%3E%3Ctext x='150' y='170' font-family='monospace' font-size='18' fill='hsl(${hue1},80%,60%)' text-anchor='middle'%3E${shortName}%3C/text%3E%3Ctext x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'%3EWNFT%3C/text%3E%3C/svg%3E`;
+    } catch (err) {
+        criticalError("Error generating fallback SVG:", err);
+        return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
+    }
 };
 
 // Export configuration for external use

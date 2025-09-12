@@ -1313,3 +1313,175 @@
 .action-button {
     white-space: nowrap;
 }
+
+/* Bulk Operations Styles */
+.nft-card.selected,
+.nft-list-item.selected {
+    border: 2px solid var(--primary);
+    background-color: rgba(85, 51, 255, 0.1);
+}
+
+.nft-card-selection,
+.nft-list-selection {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    z-index: 10;
+    background-color: rgba(0, 0, 0, 0.8);
+    border-radius: 4px;
+    padding: 4px;
+}
+
+.nft-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.action-button.active {
+    background-color: var(--primary);
+    color: white;
+}
+
+/* Transfer Modal Styles */
+.transfer-modal {
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.transfer-modal-header h2 {
+    margin-bottom: 8px;
+}
+
+.transfer-modal-header p {
+    color: var(--text-muted);
+    margin-bottom: 20px;
+}
+
+.transfer-form {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.form-group label {
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.selected-nfts-list {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.selected-nft-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.selected-nft-item:last-child {
+    border-bottom: none;
+}
+
+.nft-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.nft-name {
+    font-weight: 600;
+}
+
+.nft-collection {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.quantity-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.9rem;
+}
+
+.quantity-input input {
+    width: 60px;
+    padding: 4px;
+}
+
+.max-available {
+    color: var(--text-muted);
+}
+
+.transfer-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+/* NFT Quick Actions */
+.nft-quick-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.small-button {
+    padding: 4px 8px;
+    font-size: 0.8rem;
+    min-height: auto;
+}
+
+/* Danger Button */
+.danger-button {
+    background-color: #dc3545;
+    border-color: #dc3545;
+    color: white;
+}
+
+.danger-button:hover {
+    background-color: #c82333;
+    border-color: #bd2130;
+}
+
+.danger-button:disabled {
+    background-color: #6c757d;
+    border-color: #6c757d;
+    opacity: 0.6;
+}
+
+/* Responsive adjustments for bulk operations */
+@media (max-width: 768px) {
+    .action-buttons {
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .transfer-modal {
+        width: 95%;
+        margin: 20px auto;
+    }
+    
+    .nft-quick-actions {
+        flex-direction: column;
+        gap: 4px;
+    }
+    
+    .transfer-actions {
+        flex-direction: column;
+    }
+}
