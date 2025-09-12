@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getCachedMetadata, getProxyImageUrl, batchPrewarm } from '../utils/edgeCacheUtils';
 import { debugLog, debugWarn } from '../utils/debugUtils';
+import { isVShareContract, getVShareMetadata, vShareLpSvgDataUrl } from '../utils/vShareUtils';
 import LoadingSkeleton from './LoadingSkeleton';
 import './LazyNftGrid.css';
 
@@ -97,7 +98,14 @@ function LazyNftGrid({
                         return { key, metadata: loadedMetadata[key] };
                     }
 
-                    // Load from edge cache
+                    // Special handling for V-Share contracts - use V-Share metadata
+                    if (isVShareContract(nft.contractAddress)) {
+                        debugLog(`🎯 [LAZY GRID] Using V-Share metadata for ${key}`);
+                        const vShareMetadata = getVShareMetadata(nft.contractAddress, nft.tokenId);
+                        return { key, metadata: vShareMetadata };
+                    }
+
+                    // Load from edge cache for non-V-Share NFTs
                     const metadata = await getCachedMetadata(nft.contractAddress, nft.tokenId);
                     
                     // Process image URL through proxy
@@ -110,6 +118,14 @@ function LazyNftGrid({
                     return { key, metadata };
                 } catch (error) {
                     debugWarn(`Failed to load metadata for ${key}:`, error);
+                    
+                    // Special handling for V-Share contracts on error
+                    if (isVShareContract(nft.contractAddress)) {
+                        debugLog(`🎯 [LAZY GRID] Using V-Share metadata fallback for ${key}`);
+                        const vShareMetadata = getVShareMetadata(nft.contractAddress, nft.tokenId);
+                        return { key, metadata: vShareMetadata };
+                    }
+                    
                     return {
                         key,
                         metadata: {
@@ -209,6 +225,16 @@ function LazyNftGrid({
     // Generate fallback image for NFTs without images
     const generateFallbackImage = useCallback((contractAddress, tokenId) => {
         try {
+            // Special handling for V-Share contracts - use V-Share SVG
+            if (isVShareContract(contractAddress)) {
+                return vShareLpSvgDataUrl({ 
+                    contract: contractAddress, 
+                    tokenId: tokenId.toString(), 
+                    title: 'V-Share',
+                    subtitle: 'Vmonsters Rev Share' 
+                });
+            }
+
             const hash = contractAddress.toLowerCase() + tokenId.toString();
             let hashNum = 0;
             for (let i = 0; i < hash.length; i++) {
