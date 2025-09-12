@@ -145,6 +145,17 @@ function VibeDashboardPage() {
                     const block = await event.getBlock();
                     const args = event.args;
                     
+                    // Only process events where VTRU was actually sent to VIBE contract
+                    // This avoids double counting marketplace transactions vs VIBE payouts
+                    const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));
+                    const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
+                    
+                    // Skip events where no VTRU was sent to VIBE (avoid double counting)
+                    if (vibeOutWVTRU === 0 && vibeOutNative === 0) {
+                        debugLog(`Skipping event ${event.transactionHash} - no VTRU sent to VIBE`);
+                        continue;
+                    }
+                    
                     // Get the payment token and its decimals for proper formatting
                     const paymentToken = args.paymentToken;
                     const decimals = getTokenDecimals(paymentToken);
@@ -162,8 +173,8 @@ function VibeDashboardPage() {
                         
                         // Vibe data from event args with correct decimal formatting
                         vibePortionInPayment: parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals)),
-                        vibeOutWVTRU: parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')), // WVTRU is always 18 decimals
-                        vibeOutNative: parseFloat(ethers.formatEther(args.vibeOutNative || '0')), // Native VTRU is always 18 decimals
+                        vibeOutWVTRU: vibeOutWVTRU, // WVTRU is always 18 decimals
+                        vibeOutNative: vibeOutNative, // Native VTRU is always 18 decimals
                         vibeShareBps: parseInt(args.vibeShareBps?.toString() || '0'),
                         
                         // Platform and royalty data with correct decimal formatting
