@@ -15,6 +15,7 @@ import { NFTScanner } from '../utils/nftScanner';
 import { loadNFTMetadata, batchLoadMetadata } from '../utils/metadataLoader';
 import { getCachedMetadata, getProxyImageUrl, batchPrewarm } from '../utils/edgeCacheUtils';
 import { VSHARE_ADDRESS, vShareLpSvgDataUrl, vShareDefaultDescription, isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
+import { generateFallbackImage } from '../utils/nftUtils';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -632,38 +633,8 @@ function ProfilePage() {
     };
 
     // Generate a custom LP-style placeholder SVG for NFTs
-    const generateFallbackImage = (contractAddress, tokenId) => {
-        try {
-            // Special handling for V-Share
-            if (isVShareContract(contractAddress)) {
-                return vShareLpSvgDataUrl({ 
-                    contract: contractAddress, 
-                    tokenId: tokenId.toString(), 
-                    title: 'V-Share', 
-                    subtitle: 'Vmonsters Rev Share' 
-                });
-            }
-
-            const hash = contractAddress.toLowerCase() + tokenId.toString();
-            let hashNum = 0;
-            for (let i = 0; i < hash.length; i++) {
-                hashNum = ((hashNum << 5) - hashNum) + hash.charCodeAt(i);
-                hashNum = hashNum & hashNum;
-            }
-
-            const angle = Math.abs(hashNum % 360);
-            const hue1 = Math.abs(hashNum % 360);
-            const hue2 = (hue1 + 180) % 360;
-
-            const collectionInfo = contractInfo[contractAddress] || {};
-            const symbol = collectionInfo.symbol || '';
-            const shortName = (symbol || collectionInfo.name || '').substring(0, 8);
-
-            return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Crect width='300' height='300' fill='%230f0f0f'/%3E%3Ccircle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/%3E%3Ccircle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/%3E%3Cpath d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/%3E%3Cpath d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/%3E%3Ccircle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/%3E%3Ctext x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'%3E%23${tokenId}%3C/text%3E%3Ctext x='150' y='170' font-family='monospace' font-size='18' fill='hsl(${hue1},80%,60%)' text-anchor='middle'%3E${shortName}%3C/text%3E%3Ctext x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'%3EWNFT%3C/text%3E%3C/svg%3E`;
-        } catch (err) {
-            criticalError("Error generating SVG:", err);
-            return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
-        }
+    const generateFallbackImageForNft = (contractAddress, tokenId) => {
+        return generateFallbackImage(contractAddress, tokenId, contractInfo);
     };
 
     // Safe SVG URI validation to prevent crashes
@@ -745,7 +716,7 @@ function ProfilePage() {
                 return;
             }
             
-            const fallbackImg = generateFallbackImage(contractAddress, tokenId);
+            const fallbackImg = generateFallbackImageForNft(contractAddress, tokenId);
             setNftMetadata(prev => ({
                 ...prev,
                 [key]: {
@@ -823,14 +794,14 @@ function ProfilePage() {
                     return { key, metadata: vShareMetadata };
                 }
                 
-                // Return fallback metadata to prevent crashes
+                    // Return fallback metadata to prevent crashes
                 return {
                     key,
                     metadata: {
                         name: `NFT #${nft.tokenId}`,
                         description: 'Metadata unavailable',
-                        image: generateFallbackImage(nft.contractAddress, nft.tokenId),
-                        imageUrl: generateFallbackImage(nft.contractAddress, nft.tokenId),
+                        image: generateFallbackImageForNft(nft.contractAddress, nft.tokenId),
+                        imageUrl: generateFallbackImageForNft(nft.contractAddress, nft.tokenId),
                         error: error.message,
                         loaded: true,
                         loading: false
@@ -2853,7 +2824,7 @@ function ProfilePage() {
         const metadata = nftMetadata[key] || {};
         const isLoading = metadata.loading;
         const error = metadata.error;
-        const fallbackImg = generateFallbackImage(nft.contractAddress, nft.tokenId);
+        const fallbackImg = generateFallbackImageForNft(nft.contractAddress, nft.tokenId);
         const imageUrl = metadata.imageUrl || fallbackImg;
         const name = metadata.name || `NFT #${nft.tokenId}`;
         const collectionInfo = contractInfo[nft.contractAddress] || {};
@@ -2894,7 +2865,7 @@ function ProfilePage() {
                                     onError={(e) => {
                                         // Comprehensive error handling for image loading
                                         e.target.onerror = null;
-                                        const fallbackSrc = generateFallbackImage(nft.contractAddress, nft.tokenId);
+                                        const fallbackSrc = generateFallbackImageForNft(nft.contractAddress, nft.tokenId);
                                         if (e.target.src !== fallbackSrc) {
                                             e.target.src = fallbackSrc;
                                             e.target.classList.add('fallback');
@@ -3011,7 +2982,7 @@ function ProfilePage() {
                                 onError={(e) => {
                                     // Comprehensive error handling for image loading
                                     e.target.onerror = null;
-                                    const fallbackSrc = generateFallbackImage(nft.contractAddress, nft.tokenId);
+                                    const fallbackSrc = generateFallbackImageForNft(nft.contractAddress, nft.tokenId);
                                     if (e.target.src !== fallbackSrc) {
                                         e.target.src = fallbackSrc;
                                         e.target.classList.add('fallback');
@@ -3105,35 +3076,10 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {}, transferNft, bur
 
     if (!nft) return null;
 
-    // Helper to generate fallback image - simple but reliable version
-    // Generate a custom LP-style placeholder SVG for NFTs
-    const generateFallbackImage = (contractAddress, tokenId) => {
-        try {
-            const hash = contractAddress.toLowerCase() + tokenId.toString();
-            let hashNum = 0;
-            for (let i = 0; i < hash.length; i++) {
-                hashNum = ((hashNum << 5) - hashNum) + hash.charCodeAt(i);
-                hashNum = hashNum & hashNum;
-            }
-
-            const angle = Math.abs(hashNum % 360);
-            const hue1 = Math.abs(hashNum % 360);
-            const hue2 = (hue1 + 180) % 360;
-
-            const collectionInfo = contractInfo[contractAddress] || {};
-            const symbol = collectionInfo.symbol || '';
-            const shortName = (symbol || collectionInfo.name || '').substring(0, 8);
-
-            return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 300'%3E%3Crect width='300' height='300' fill='%230f0f0f'/%3E%3Ccircle cx='150' cy='150' r='120' fill='none' stroke='hsl(${hue1},80%,50%)' stroke-width='2' stroke-opacity='0.3'/%3E%3Ccircle cx='150' cy='150' r='90' fill='none' stroke='hsl(${hue2},80%,60%)' stroke-width='2'/%3E%3Cpath d='M150,60 A90,90 0 0 1 ${150 + 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue1},80%,60%)' stroke-width='8' fill='none'/%3E%3Cpath d='M150,60 A90,90 0 0 0 ${150 - 90 * Math.cos(angle * Math.PI / 180)},${150 - 90 * Math.sin(angle * Math.PI / 180)}' stroke='hsl(${hue2},80%,60%)' stroke-width='8' fill='none'/%3E%3Ccircle cx='150' cy='150' r='40' fill='%230f0f0f' stroke='%23ffffff' stroke-width='1' stroke-opacity='0.4'/%3E%3Ctext x='150' y='140' font-family='monospace' font-size='22' fill='%23ffffff' text-anchor='middle' font-weight='bold'%3E%23${tokenId}%3C/text%3E%3Ctext x='150' y='170' font-family='monospace' font-size='18' fill='hsl(${hue1},80%,60%)' text-anchor='middle'%3E${shortName}%3C/text%3E%3Ctext x='150' y='230' font-family='monospace' font-size='12' fill='%23ffffff' text-anchor='middle' font-weight='bold' opacity='0.7'%3EWNFT%3C/text%3E%3C/svg%3E`;
-        } catch (err) {
-            return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
-        }
-    };
-
     const name = metadata.name || `NFT #${nft.tokenId}`;
     const description = metadata.description || 'No description available';
     const attributes = metadata.attributes || [];
-    const imageUrl = metadata.imageUrl || generateFallbackImage(nft.contractAddress, nft.tokenId);
+    const imageUrl = metadata.imageUrl || generateFallbackImage(nft.contractAddress, nft.tokenId, contractInfo);
     const collectionName = contractInfo.name || 'Unknown Collection';
     const collectionSymbol = contractInfo.symbol || '';
 
@@ -3156,7 +3102,7 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {}, transferNft, bur
                         onError={(e) => {
                             // Comprehensive error handling for detailed view
                             e.target.onerror = null;
-                            const fallbackSrc = generateFallbackImage(nft.contractAddress, nft.tokenId);
+                            const fallbackSrc = generateFallbackImage(nft.contractAddress, nft.tokenId, contractInfo);
                             if (e.target.src !== fallbackSrc) {
                                 e.target.src = fallbackSrc;
                                 e.target.classList.add('fallback');
