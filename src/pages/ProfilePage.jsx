@@ -24,6 +24,10 @@ const ERC721_ABI = [
     'function ownerOf(uint256 tokenId) view returns (address)',
     'function name() view returns (string)',
     'function symbol() view returns (string)',
+    'function transferFrom(address from, address to, uint256 tokenId)',
+    'function safeTransferFrom(address from, address to, uint256 tokenId)',
+    'function safeTransferFrom(address from, address to, uint256 tokenId, bytes data)',
+    'function burn(uint256 tokenId)',
     'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)'
 ];
 
@@ -33,6 +37,10 @@ const ERC1155_ABI = [
     'function uri(uint256 id) view returns (string)',
     'function name() view returns (string)',
     'function symbol() view returns (string)',
+    'function safeTransferFrom(address from, address to, uint256 id, uint256 amount, bytes data)',
+    'function safeBatchTransferFrom(address from, address to, uint256[] ids, uint256[] amounts, bytes data)',
+    'function burn(address account, uint256 id, uint256 value)',
+    'function burnBatch(address account, uint256[] ids, uint256[] values)',
     'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ];
@@ -186,6 +194,12 @@ function ProfilePage() {
     const [collectionStats, setCollectionStats] = useState({});
     const [sortOption, setSortOption] = useState('default');
     const [collapsedCollections, setCollapsedCollections] = useState({});
+    const [selectedNfts, setSelectedNfts] = useState(new Set());
+    const [bulkMode, setBulkMode] = useState(false);
+    const [showTransferModal, setShowTransferModal] = useState(false);
+    const [transferToAddress, setTransferToAddress] = useState('');
+    const [transferQuantities, setTransferQuantities] = useState({});
+    const [isTransferring, setIsTransferring] = useState(false);
     // Pagination removed - using lazy loading instead
     // const [currentPage, setCurrentPage] = useState(1);
     // const [itemsPerPage, setItemsPerPage] = useState(12);
@@ -1550,6 +1564,345 @@ function ProfilePage() {
         }));
     };
 
+    // Toggle NFT selection for bulk operations
+    const toggleNftSelection = (nft) => {
+        const nftKey = `${nft.contractAddress}-${nft.tokenId}`;
+        setSelectedNfts(prev => {
+            const newSelection = new Set(prev);
+            if (newSelection.has(nftKey)) {
+                newSelection.delete(nftKey);
+            } else {
+                newSelection.add(nftKey);
+            }
+            return newSelection;
+        });
+    };
+
+    // Select all NFTs for bulk operations
+    const selectAllNfts = () => {
+        const allNftKeys = userNfts.map(nft => `${nft.contractAddress}-${nft.tokenId}`);
+        setSelectedNfts(new Set(allNftKeys));
+    };
+
+    // Clear all selections
+    const clearAllSelections = () => {
+        setSelectedNfts(new Set());
+    };
+
+    // Check if contract supports burn function
+    const checkBurnSupport = async (contractAddress, nftType) => {
+        try {
+            const contract = new ethers.Contract(
+                contractAddress,
+                nftType === 'ERC721' ? ERC721_ABI : ERC1155_ABI,
+                provider
+            );
+            
+            // Try to get the function selector to see if burn exists
+            const burnFunction = nftType === 'ERC721' ? 'burn' : 'burn';
+            const hasFunction = contract.interface.fragments.some(
+                fragment => fragment.type === 'function' && fragment.name === burnFunction
+            );
+            
+            return hasFunction;
+        } catch (error) {
+            debugWarn(`Error checking burn support for ${contractAddress}:`, error);
+            return false;
+        }
+    };
+
+    // Transfer single NFT
+    const transferNft = async (nft, toAddress, quantity = null) => {
+        if (!signer || !toAddress) return false;
+
+        try {
+            const contract = new ethers.Contract(
+                nft.contractAddress,
+                nft.type === 'ERC721' ? ERC721_ABI : ERC1155_ABI,
+                signer
+            );
+
+            let tx;
+            if (nft.type === 'ERC721') {
+                // ERC721 transfer
+                tx = await contract.safeTransferFrom(wallet, toAddress, nft.tokenId);
+            } else {
+                // ERC1155 transfer
+                const amount = quantity || nft.balance || 1;
+                tx = await contract.safeTransferFrom(
+                    wallet, 
+                    toAddress, 
+                    nft.tokenId, 
+                    amount, 
+                    '0x'
+                );
+            }
+
+            setStatus(`Transfer transaction submitted: ${tx.hash}`);
+            await tx.wait();
+            setStatus(`✅ NFT transferred successfully!`);
+            
+            // Refresh collection after transfer
+            setTimeout(() => {
+                findAllUserNfts(false, false, false);
+                setStatus('');
+            }, 2000);
+
+            return true;
+        } catch (error) {
+            criticalError('Transfer failed:', error);
+            setStatus(`❌ Transfer failed: ${error.message}`);
+            setTimeout(() => setStatus(''), 5000);
+            return false;
+        }
+    };
+
+    // Burn single NFT
+    const burnNft = async (nft, quantity = null) => {
+        if (!signer) return false;
+
+        try {
+            // Check if burn is supported
+            const burnSupported = await checkBurnSupport(nft.contractAddress, nft.type);
+            if (!burnSupported) {
+                setStatus(`❌ Burn not supported by this NFT contract`);
+                setTimeout(() => setStatus(''), 5000);
+                return false;
+            }
+
+            const contract = new ethers.Contract(
+                nft.contractAddress,
+                nft.type === 'ERC721' ? ERC721_ABI : ERC1155_ABI,
+                signer
+            );
+
+            let tx;
+            if (nft.type === 'ERC721') {
+                // ERC721 burn
+                tx = await contract.burn(nft.tokenId);
+            } else {
+                // ERC1155 burn
+                const amount = quantity || nft.balance || 1;
+                tx = await contract.burn(wallet, nft.tokenId, amount);
+            }
+
+            setStatus(`Burn transaction submitted: ${tx.hash}`);
+            await tx.wait();
+            setStatus(`🔥 NFT burned successfully!`);
+            
+            // Refresh collection after burn
+            setTimeout(() => {
+                findAllUserNfts(false, false, false);
+                setStatus('');
+            }, 2000);
+
+            return true;
+        } catch (error) {
+            criticalError('Burn failed:', error);
+            setStatus(`❌ Burn failed: ${error.message}`);
+            setTimeout(() => setStatus(''), 5000);
+            return false;
+        }
+    };
+
+    // Bulk transfer selected NFTs
+    const bulkTransferNfts = async () => {
+        if (!signer || !transferToAddress || selectedNfts.size === 0) return;
+
+        try {
+            setIsTransferring(true);
+            setStatus(`Starting bulk transfer of ${selectedNfts.size} NFTs...`);
+
+            const selectedNftList = Array.from(selectedNfts).map(nftKey => {
+                const [contractAddress, tokenId] = nftKey.split('-');
+                return userNfts.find(nft => 
+                    nft.contractAddress === contractAddress && 
+                    nft.tokenId === tokenId
+                );
+            }).filter(Boolean);
+
+            let successCount = 0;
+            let failCount = 0;
+
+            // Group by contract for batch operations where possible
+            const nftsByContract = {};
+            selectedNftList.forEach(nft => {
+                if (!nftsByContract[nft.contractAddress]) {
+                    nftsByContract[nft.contractAddress] = [];
+                }
+                nftsByContract[nft.contractAddress].push(nft);
+            });
+
+            for (const [contractAddress, nfts] of Object.entries(nftsByContract)) {
+                const firstNft = nfts[0];
+                
+                if (firstNft.type === 'ERC1155' && nfts.length > 1) {
+                    // Try batch transfer for ERC1155
+                    try {
+                        const contract = new ethers.Contract(contractAddress, ERC1155_ABI, signer);
+                        
+                        const ids = nfts.map(nft => nft.tokenId);
+                        const amounts = nfts.map(nft => {
+                            const key = `${nft.contractAddress}-${nft.tokenId}`;
+                            return transferQuantities[key] || nft.balance || 1;
+                        });
+
+                        const tx = await contract.safeBatchTransferFrom(
+                            wallet,
+                            transferToAddress,
+                            ids,
+                            amounts,
+                            '0x'
+                        );
+
+                        setStatus(`Batch transfer transaction submitted: ${tx.hash}`);
+                        await tx.wait();
+                        successCount += nfts.length;
+                        setStatus(`✅ Batch transferred ${nfts.length} ERC1155 tokens from ${contractAddress}`);
+                    } catch (batchError) {
+                        debugWarn('Batch transfer failed, falling back to individual transfers:', batchError);
+                        
+                        // Fallback to individual transfers
+                        for (const nft of nfts) {
+                            const key = `${nft.contractAddress}-${nft.tokenId}`;
+                            const quantity = transferQuantities[key];
+                            const success = await transferNft(nft, transferToAddress, quantity);
+                            if (success) successCount++;
+                            else failCount++;
+                        }
+                    }
+                } else {
+                    // Individual transfers for ERC721 or single ERC1155
+                    for (const nft of nfts) {
+                        const key = `${nft.contractAddress}-${nft.tokenId}`;
+                        const quantity = transferQuantities[key];
+                        const success = await transferNft(nft, transferToAddress, quantity);
+                        if (success) successCount++;
+                        else failCount++;
+                    }
+                }
+            }
+
+            if (successCount > 0) {
+                setStatus(`✅ Bulk transfer completed: ${successCount} successful${failCount > 0 ? `, ${failCount} failed` : ''}`);
+                clearAllSelections();
+                setShowTransferModal(false);
+                setBulkMode(false);
+                
+                // Refresh collection
+                setTimeout(() => {
+                    findAllUserNfts(false, false, false);
+                }, 2000);
+            } else {
+                setStatus(`❌ Bulk transfer failed: all ${failCount} transfers failed`);
+            }
+
+        } catch (error) {
+            criticalError('Bulk transfer failed:', error);
+            setStatus(`❌ Bulk transfer failed: ${error.message}`);
+        } finally {
+            setIsTransferring(false);
+            setTimeout(() => setStatus(''), 5000);
+        }
+    };
+
+    // Bulk burn selected NFTs
+    const bulkBurnNfts = async () => {
+        if (!signer || selectedNfts.size === 0) return;
+
+        const confirmed = window.confirm(
+            `Are you sure you want to burn ${selectedNfts.size} NFTs? This action cannot be undone!`
+        );
+        if (!confirmed) return;
+
+        try {
+            setStatus(`Starting bulk burn of ${selectedNfts.size} NFTs...`);
+
+            const selectedNftList = Array.from(selectedNfts).map(nftKey => {
+                const [contractAddress, tokenId] = nftKey.split('-');
+                return userNfts.find(nft => 
+                    nft.contractAddress === contractAddress && 
+                    nft.tokenId === tokenId
+                );
+            }).filter(Boolean);
+
+            let successCount = 0;
+            let failCount = 0;
+            let unsupportedCount = 0;
+
+            // Group by contract for batch operations where possible
+            const nftsByContract = {};
+            selectedNftList.forEach(nft => {
+                if (!nftsByContract[nft.contractAddress]) {
+                    nftsByContract[nft.contractAddress] = [];
+                }
+                nftsByContract[nft.contractAddress].push(nft);
+            });
+
+            for (const [contractAddress, nfts] of Object.entries(nftsByContract)) {
+                const firstNft = nfts[0];
+                const burnSupported = await checkBurnSupport(contractAddress, firstNft.type);
+                
+                if (!burnSupported) {
+                    unsupportedCount += nfts.length;
+                    continue;
+                }
+                
+                if (firstNft.type === 'ERC1155' && nfts.length > 1) {
+                    // Try batch burn for ERC1155
+                    try {
+                        const contract = new ethers.Contract(contractAddress, ERC1155_ABI, signer);
+                        
+                        const ids = nfts.map(nft => nft.tokenId);
+                        const amounts = nfts.map(nft => nft.balance || 1);
+
+                        const tx = await contract.burnBatch(wallet, ids, amounts);
+                        setStatus(`Batch burn transaction submitted: ${tx.hash}`);
+                        await tx.wait();
+                        successCount += nfts.length;
+                    } catch (batchError) {
+                        debugWarn('Batch burn failed, falling back to individual burns:', batchError);
+                        
+                        // Fallback to individual burns
+                        for (const nft of nfts) {
+                            const success = await burnNft(nft);
+                            if (success) successCount++;
+                            else failCount++;
+                        }
+                    }
+                } else {
+                    // Individual burns for ERC721 or single ERC1155
+                    for (const nft of nfts) {
+                        const success = await burnNft(nft);
+                        if (success) successCount++;
+                        else failCount++;
+                    }
+                }
+            }
+
+            let statusMsg = `🔥 Bulk burn completed: ${successCount} burned`;
+            if (failCount > 0) statusMsg += `, ${failCount} failed`;
+            if (unsupportedCount > 0) statusMsg += `, ${unsupportedCount} not supported`;
+            
+            setStatus(statusMsg);
+            clearAllSelections();
+            setBulkMode(false);
+            
+            // Refresh collection
+            if (successCount > 0) {
+                setTimeout(() => {
+                    findAllUserNfts(false, false, false);
+                }, 2000);
+            }
+
+        } catch (error) {
+            criticalError('Bulk burn failed:', error);
+            setStatus(`❌ Bulk burn failed: ${error.message}`);
+        } finally {
+            setTimeout(() => setStatus(''), 5000);
+        }
+    };
+
     // Function to sort NFTs based on the current sort option
     const sortNfts = (nfts) => {
         if (sortOption === 'default') return nfts;
@@ -1959,6 +2312,66 @@ function ProfilePage() {
                                 </div>
                                 <div className="action-buttons">
                                     <button
+                                        className={`secondary-button action-button ${bulkMode ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setBulkMode(!bulkMode);
+                                            if (bulkMode) {
+                                                clearAllSelections();
+                                            }
+                                        }}
+                                        disabled={isLoading || userNfts.length === 0}
+                                        title="Toggle bulk operations mode"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                            <path fill="currentColor" d="M3 5h2V3c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2v2h2c1.1 0 2 .9 2 2v10c0 1.1-.9 2-2 2H5c-1.1 0-2-.9-2-2V7c0-1.1.9-2 2-2zM7 3v2h10V3H7zm12 14V7H5v10h14z"/>
+                                        </svg>
+                                        {bulkMode ? 'Exit Bulk Mode' : 'Bulk Operations'}
+                                    </button>
+                                    
+                                    {bulkMode && (
+                                        <>
+                                            <button
+                                                className="tertiary-button action-button"
+                                                onClick={selectAllNfts}
+                                                disabled={userNfts.length === 0}
+                                                title="Select all NFTs"
+                                            >
+                                                Select All ({userNfts.length})
+                                            </button>
+                                            <button
+                                                className="tertiary-button action-button"
+                                                onClick={clearAllSelections}
+                                                disabled={selectedNfts.size === 0}
+                                                title="Clear all selections"
+                                            >
+                                                Clear ({selectedNfts.size})
+                                            </button>
+                                            <button
+                                                className="primary-button action-button"
+                                                onClick={() => setShowTransferModal(true)}
+                                                disabled={selectedNfts.size === 0}
+                                                title="Transfer selected NFTs"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                                    <path fill="currentColor" d="M14,12L10,8V11H2V13H10V16M20,12L16,8V11H12V13H16V16"/>
+                                                </svg>
+                                                Transfer ({selectedNfts.size})
+                                            </button>
+                                            <button
+                                                className="danger-button action-button"
+                                                onClick={bulkBurnNfts}
+                                                disabled={selectedNfts.size === 0}
+                                                title="Burn selected NFTs (irreversible)"
+                                            >
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="18" height="18">
+                                                    <path fill="currentColor" d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/>
+                                                </svg>
+                                                Burn ({selectedNfts.size})
+                                            </button>
+                                        </>
+                                    )}
+                                    
+                                    <button
                                         className="primary-button action-button"
                                         onClick={() => findAllUserNfts(false, true, false)}
                                         disabled={isLoading}
@@ -2226,12 +2639,113 @@ function ProfilePage() {
             {/* Edge Cache Performance Monitor */}
             <EdgeCacheMonitor isVisible={showCacheMonitor} />
 
+            {/* Transfer Modal */}
+            {showTransferModal && (
+                <div className="modal-overlay">
+                    <div className="transfer-modal card" ref={modalRef}>
+                        <button className="modal-close" onClick={() => setShowTransferModal(false)}>×</button>
+                        <div className="transfer-modal-header">
+                            <h2>Transfer NFTs</h2>
+                            <p>Transfer {selectedNfts.size} selected NFTs to another address</p>
+                        </div>
+                        <div className="transfer-modal-content">
+                            <div className="transfer-form">
+                                <div className="form-group">
+                                    <label htmlFor="transfer-address">Recipient Address:</label>
+                                    <input
+                                        id="transfer-address"
+                                        type="text"
+                                        placeholder="0x..."
+                                        value={transferToAddress}
+                                        onChange={(e) => setTransferToAddress(e.target.value)}
+                                        className="input"
+                                    />
+                                </div>
+                                
+                                <div className="selected-nfts-list">
+                                    <h3>Selected NFTs:</h3>
+                                    {Array.from(selectedNfts).map(nftKey => {
+                                        const [contractAddress, tokenId] = nftKey.split('-');
+                                        const nft = userNfts.find(n => 
+                                            n.contractAddress === contractAddress && 
+                                            n.tokenId === tokenId
+                                        );
+                                        if (!nft) return null;
+                                        
+                                        const metadata = nftMetadata[nftKey] || {};
+                                        const name = metadata.name || `NFT #${nft.tokenId}`;
+                                        
+                                        return (
+                                            <div key={nftKey} className="selected-nft-item">
+                                                <div className="nft-info">
+                                                    <span className="nft-name">{name}</span>
+                                                    <span className="nft-collection">
+                                                        {contractInfo[nft.contractAddress]?.name || 'Unknown'}
+                                                    </span>
+                                                </div>
+                                                {nft.type === 'ERC1155' && nft.balance > 1 && (
+                                                    <div className="quantity-input">
+                                                        <label>Quantity:</label>
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            max={nft.balance}
+                                                            value={transferQuantities[nftKey] || nft.balance}
+                                                            onChange={(e) => setTransferQuantities(prev => ({
+                                                                ...prev,
+                                                                [nftKey]: parseInt(e.target.value) || 1
+                                                            }))}
+                                                            className="input quantity-input"
+                                                        />
+                                                        <span className="max-available">/ {nft.balance}</span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                
+                                <div className="transfer-actions">
+                                    <button
+                                        className="secondary-button"
+                                        onClick={() => setShowTransferModal(false)}
+                                        disabled={isTransferring}
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        className="primary-button"
+                                        onClick={bulkTransferNfts}
+                                        disabled={!transferToAddress || isTransferring || selectedNfts.size === 0}
+                                    >
+                                        {isTransferring ? (
+                                            <>
+                                                <span className="spinner"></span>
+                                                Transferring...
+                                            </>
+                                        ) : (
+                                            `Transfer ${selectedNfts.size} NFTs`
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* NFT Detail Modal */}
             {showNftModal && selectedNft && (
                 <div className="modal-overlay">
                     <div className="nft-modal card" ref={modalRef}>
                         <button className="modal-close" onClick={() => setShowNftModal(false)}>×</button>
-                        <NftDetailView nft={selectedNft} metadata={nftMetadata[`${selectedNft.contractAddress.toLowerCase()}-${selectedNft.tokenId}`]} contractInfo={contractInfo[selectedNft.contractAddress]} />
+                        <NftDetailView 
+                            nft={selectedNft} 
+                            metadata={nftMetadata[`${selectedNft.contractAddress.toLowerCase()}-${selectedNft.tokenId}`]} 
+                            contractInfo={contractInfo[selectedNft.contractAddress]}
+                            transferNft={transferNft}
+                            burnNft={burnNft}
+                        />
                     </div>
                 </div>
             )}
@@ -2321,11 +2835,22 @@ function ProfilePage() {
         const imageUrl = metadata.imageUrl || fallbackImg;
         const name = metadata.name || `NFT #${nft.tokenId}`;
         const collectionInfo = contractInfo[nft.contractAddress] || {};
+        const isSelected = selectedNfts.has(key);
 
         if (currentView === 'grid') {
             return (
-                <div key={key} className="nft-card" onClick={() => openNftModal(nft)}>
-                    <div className="nft-card-inner">
+                <div key={key} className={`nft-card ${isSelected ? 'selected' : ''}`}>
+                    {bulkMode && (
+                        <div className="nft-card-selection">
+                            <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleNftSelection(nft)}
+                                className="nft-checkbox"
+                            />
+                        </div>
+                    )}
+                    <div className="nft-card-inner" onClick={() => bulkMode ? toggleNftSelection(nft) : openNftModal(nft)}>
                         <div className="nft-image">
                             {isLoading ? (
                                 <div className="loading-image">
@@ -2375,35 +2900,75 @@ function ProfilePage() {
                                 )}
                             </div>
                         </div>
-                        <div className="nft-actions">
-                            <button
-                                className="primary-button full-width"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    window.location.href = `/sell?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`;
-                                }}
-                            >
-                                List for Sale
-                            </button>
-                            <button
-                                className="secondary-button full-width"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`);
-                                }}
-                                style={{ marginTop: '0.5rem' }}
-                            >
-                                Create Auction
-                            </button>
-                        </div>
+                        {!bulkMode && (
+                            <div className="nft-actions">
+                                <button
+                                    className="primary-button full-width"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.location.href = `/sell?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`;
+                                    }}
+                                >
+                                    List for Sale
+                                </button>
+                                <button
+                                    className="secondary-button full-width"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`);
+                                    }}
+                                    style={{ marginTop: '0.5rem' }}
+                                >
+                                    Create Auction
+                                </button>
+                                <div className="nft-quick-actions" style={{ marginTop: '0.5rem', display: 'flex', gap: '0.25rem' }}>
+                                    <button
+                                        className="tertiary-button small-button"
+                                        onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const toAddress = prompt('Transfer to address:');
+                                            if (toAddress) {
+                                                await transferNft(nft, toAddress);
+                                            }
+                                        }}
+                                        title="Transfer this NFT"
+                                    >
+                                        Transfer
+                                    </button>
+                                    <button
+                                        className="danger-button small-button"
+                                        onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const confirmed = window.confirm('Are you sure you want to burn this NFT? This action cannot be undone!');
+                                            if (confirmed) {
+                                                await burnNft(nft);
+                                            }
+                                        }}
+                                        title="Burn this NFT (irreversible)"
+                                    >
+                                        Burn
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             );
         } else {
             // List view
             return (
-                <div key={key} className="nft-list-item">
-                    <div className="nft-list-image" onClick={() => openNftModal(nft)}>
+                <div key={key} className={`nft-list-item ${isSelected ? 'selected' : ''}`}>
+                    {bulkMode && (
+                        <div className="nft-list-selection">
+                            <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleNftSelection(nft)}
+                                className="nft-checkbox"
+                            />
+                        </div>
+                    )}
+                    <div className="nft-list-image" onClick={() => bulkMode ? toggleNftSelection(nft) : openNftModal(nft)}>
                         {isLoading ? (
                             <div className="loading-image">
                                 <div className="loading-spinner small"></div>
@@ -2439,7 +3004,7 @@ function ProfilePage() {
                             />
                         )}
                     </div>
-                    <div className="nft-list-details" onClick={() => openNftModal(nft)}>
+                    <div className="nft-list-details" onClick={() => bulkMode ? toggleNftSelection(nft) : openNftModal(nft)}>
                         <h3>{name}</h3>
                         <p className="collection-name">
                             {collectionInfo.name || 'Unknown Collection'}
@@ -2453,29 +3018,57 @@ function ProfilePage() {
                             <span className="token-id">ID: {nft.tokenId}</span>
                         </div>
                     </div>
-                    <div className="nft-list-actions">
-                        <button
-                            className="primary-button"
-                            onClick={() => window.location.href = `/sell?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`}
-                        >
-                            List for Sale
-                        </button>
-                        <button
-                            className="secondary-button"
-                            onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
-                        >
-                            Create Auction
-                        </button>
-                        <button
-                            className="secondary-button"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                openNftModal(nft);
-                            }}
-                        >
-                            View Details
-                        </button>
-                    </div>
+                    {!bulkMode && (
+                        <div className="nft-list-actions">
+                            <button
+                                className="primary-button"
+                                onClick={() => window.location.href = `/sell?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`}
+                            >
+                                List for Sale
+                            </button>
+                            <button
+                                className="secondary-button"
+                                onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
+                            >
+                                Create Auction
+                            </button>
+                            <button
+                                className="secondary-button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    openNftModal(nft);
+                                }}
+                            >
+                                View Details
+                            </button>
+                            <button
+                                className="tertiary-button"
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const toAddress = prompt('Transfer to address:');
+                                    if (toAddress) {
+                                        await transferNft(nft, toAddress);
+                                    }
+                                }}
+                                title="Transfer this NFT"
+                            >
+                                Transfer
+                            </button>
+                            <button
+                                className="danger-button"
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const confirmed = window.confirm('Are you sure you want to burn this NFT? This action cannot be undone!');
+                                    if (confirmed) {
+                                        await burnNft(nft);
+                                    }
+                                }}
+                                title="Burn this NFT (irreversible)"
+                            >
+                                Burn
+                            </button>
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -2484,7 +3077,7 @@ function ProfilePage() {
 }
 
 // NFT Detail View Component for the modal
-function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
+function NftDetailView({ nft, metadata = {}, contractInfo = {}, transferNft, burnNft }) {
     const [activeTab, setActiveTab] = useState('details');
 
     if (!nft) return null;
@@ -2600,6 +3193,28 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {} }) {
                                         onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
                                     >
                                         Create Auction
+                                    </button>
+                                    <button
+                                        className="tertiary-button"
+                                        onClick={async () => {
+                                            const toAddress = prompt('Transfer to address:');
+                                            if (toAddress) {
+                                                await transferNft(nft, toAddress);
+                                            }
+                                        }}
+                                    >
+                                        Transfer NFT
+                                    </button>
+                                    <button
+                                        className="danger-button"
+                                        onClick={async () => {
+                                            const confirmed = window.confirm('Are you sure you want to burn this NFT? This action cannot be undone!');
+                                            if (confirmed) {
+                                                await burnNft(nft);
+                                            }
+                                        }}
+                                    >
+                                        Burn NFT
                                     </button>
                                 </div>
                             </div>
