@@ -257,138 +257,139 @@ function VibeDashboardPage() {
                 debugLog(`Raw event ${i}: tx=${event.transactionHash}, vibeOutWVTRU=${event.args.vibeOutWVTRU?.toString()}, vibeOutNative=${event.args.vibeOutNative?.toString()}, vibePortionInPayment=${event.args.vibePortionInPayment?.toString()}`);
             }
 
-            // ROBUST APPROACH: Group by transaction first, then apply smart filtering
-            debugLog(`🔄 Processing ${allBreakdownEvents.length} events with transaction grouping...`);
+            // STRICT APPROACH: Only process events that actually sent VTRU to VIBE contract
+            debugLog(`🔄 Processing ${allBreakdownEvents.length} events with strict VIBE-only filtering...`);
             
-            // Step 1: Group all events by transaction hash and select best representative
-            const eventGroups = new Map();
+            // Step 1: Filter to only events with actual VIBE payouts (VTRU sent to VIBE)
+            const vibePayoutEvents = [];
             
             for (const event of allBreakdownEvents) {
                 try {
-                    const block = await event.getBlock();
                     const args = event.args;
                     
-                    // Calculate all relevant amounts
+                    // Only include events where VTRU was actually sent to the VIBE contract
                     const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));
                     const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
                     const totalVibeOut = vibeOutWVTRU + vibeOutNative;
                     
-                    const paymentToken = args.paymentToken;
-                    const decimals = getTokenDecimals(paymentToken);
-                    const vibePortionInPayment = parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals));
-                    
-                    // Track all data for this event
-                    const eventData = {
-                        event,
-                        block,
-                        args,
-                        vibeOutWVTRU,
-                        vibeOutNative,
-                        totalVibeOut,
-                        paymentToken,
-                        decimals,
-                        vibePortionInPayment,
-                        // Priority scoring: prefer events with VTRU amounts > 0, then by higher amount
-                        priority: totalVibeOut > 0 ? (1000 + totalVibeOut) : vibePortionInPayment
-                    };
-                    
-                    const txHash = event.transactionHash;
-                    if (!eventGroups.has(txHash) || eventData.priority > eventGroups.get(txHash).priority) {
-                        eventGroups.set(txHash, eventData);
-                        debugLog(`🔄 Updated best event for tx ${txHash}: priority=${eventData.priority} (vibeOut=${totalVibeOut}, payment=${vibePortionInPayment})`);
+                    // STRICT: Only count events with actual VTRU outflow to VIBE
+                    if (totalVibeOut > 0) {
+                        const block = await event.getBlock();
+                        const paymentToken = args.paymentToken;
+                        const decimals = getTokenDecimals(paymentToken);
+                        
+                        vibePayoutEvents.push({
+                            event,
+                            block,
+                            args,
+                            vibeOutWVTRU,
+                            vibeOutNative,
+                            totalVibeOut,
+                            paymentToken,
+                            decimals,
+                            vibePortionInPayment: parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals))
+                        });
+                        
+                        debugLog(`✅ VIBE payout event found: tx=${event.transactionHash}, vibeOut=${totalVibeOut} VTRU`);
+                    } else {
+                        debugLog(`⏭️ Skipping non-VIBE event: tx=${event.transactionHash}, no VTRU sent to VIBE`);
                     }
                 } catch (err) {
-                    debugWarn('Error grouping event:', event.transactionHash, err);
+                    debugWarn('Error filtering event:', event.transactionHash, err);
                 }
             }
             
-            debugLog(`📊 Grouped ${allBreakdownEvents.length} events into ${eventGroups.size} unique transactions`);
+            debugLog(`📊 Filtered to ${vibePayoutEvents.length} actual VIBE payout events (from ${allBreakdownEvents.length} total)`);
             
-            // Step 2: Process the best event from each transaction group
+            // Step 2: Group the VIBE payout events by transaction to eliminate duplicates
+            const eventGroups = new Map();
+            
+            for (const eventData of vibePayoutEvents) {
+                const txHash = eventData.event.transactionHash;
+                
+                // For transactions with multiple VIBE events, take the one with highest VTRU amount
+                if (!eventGroups.has(txHash) || eventData.totalVibeOut > eventGroups.get(txHash).totalVibeOut) {
+                    eventGroups.set(txHash, eventData);
+                    debugLog(`🔄 Best VIBE event for tx ${txHash}: ${eventData.totalVibeOut} VTRU`);
+                }
+            }
+            
+            debugLog(`📊 Grouped ${vibePayoutEvents.length} VIBE events into ${eventGroups.size} unique transactions`);
+            
+            // Step 3: Process only the actual VIBE payout events (no fallback to payment amounts)
             const processedEvents = [];
-            let vtruBasedEvents = 0;
-            let paymentBasedEvents = 0;
             
             for (const [txHash, eventData] of eventGroups) {
                 try {
                     const { event, block, args, vibeOutWVTRU, vibeOutNative, totalVibeOut, paymentToken, decimals, vibePortionInPayment } = eventData;
                     
-                    // Determine final amount: prioritize VTRU amounts sent to VIBE, fallback to payment amount
-                    let finalVibeAmount = totalVibeOut;
-                    let amountSource = 'vtru';
+                    // Use only the actual VTRU amount sent to VIBE contract
+                    const finalVibeAmount = totalVibeOut;
+                    const amountSource = 'vtru';
                     
-                    if (finalVibeAmount === 0 && vibePortionInPayment > 0) {
-                        finalVibeAmount = vibePortionInPayment;
-                        amountSource = 'payment';
-                    }
+                    const processedEvent = {
+                        // Event metadata
+                        type: event.eventName || (saleBreakdownEvents.includes(event) ? 'sale' : 'auction'),
+                        blockNumber: event.blockNumber,
+                        transactionHash: event.transactionHash,
+                        timestamp: block.timestamp * 1000,
+                        
+                        // Payment token info
+                        paymentToken: paymentToken,
+                        paymentTokenDecimals: decimals,
+                        
+                        // Vibe data - only actual VTRU amounts sent to VIBE
+                        vibePortionInPayment: vibePortionInPayment,
+                        vibeOutWVTRU: vibeOutWVTRU,
+                        vibeOutNative: vibeOutNative,
+                        vibeShareBps: parseInt(args.vibeShareBps?.toString() || '0'),
+                        
+                        // Platform and royalty data
+                        platformFeeTotal: parseFloat(ethers.formatUnits(args.platformFeeTotal || '0', decimals)),
+                        royaltyAmount: parseFloat(ethers.formatUnits(args.royaltyAmount || '0', decimals)),
+                        royaltyReceiver: args.royaltyReceiver,
+                        
+                        // Transaction details
+                        nftContract: args.nftContract,
+                        tokenId: args.tokenId?.toString(),
+                        totalPrice: parseFloat(ethers.formatUnits(args.totalPrice || args.finalPrice || '0', decimals)),
+                        quantity: parseInt(args.quantity?.toString() || '1'),
+                        
+                        // Final calculated amount - always VTRU sent to VIBE
+                        calculatedVibeAmount: finalVibeAmount,
+                        amountSource: amountSource
+                    };
                     
-                    // Include if there's any meaningful VIBE activity
-                    if (finalVibeAmount > 0) {
-                        const processedEvent = {
-                            // Event metadata
-                            type: event.eventName || (saleBreakdownEvents.includes(event) ? 'sale' : 'auction'),
-                            blockNumber: event.blockNumber,
-                            transactionHash: event.transactionHash,
-                            timestamp: block.timestamp * 1000,
-                            
-                            // Payment token info
-                            paymentToken: paymentToken,
-                            paymentTokenDecimals: decimals,
-                            
-                            // Vibe data
-                            vibePortionInPayment: vibePortionInPayment,
-                            vibeOutWVTRU: vibeOutWVTRU,
-                            vibeOutNative: vibeOutNative,
-                            vibeShareBps: parseInt(args.vibeShareBps?.toString() || '0'),
-                            
-                            // Platform and royalty data
-                            platformFeeTotal: parseFloat(ethers.formatUnits(args.platformFeeTotal || '0', decimals)),
-                            royaltyAmount: parseFloat(ethers.formatUnits(args.royaltyAmount || '0', decimals)),
-                            royaltyReceiver: args.royaltyReceiver,
-                            
-                            // Transaction details
-                            nftContract: args.nftContract,
-                            tokenId: args.tokenId?.toString(),
-                            totalPrice: parseFloat(ethers.formatUnits(args.totalPrice || args.finalPrice || '0', decimals)),
-                            quantity: parseInt(args.quantity?.toString() || '1'),
-                            
-                            // Final calculated amount and source
-                            calculatedVibeAmount: finalVibeAmount,
-                            amountSource: amountSource
-                        };
-                        
-                        processedEvents.push(processedEvent);
-                        
-                        if (amountSource === 'vtru') {
-                            vtruBasedEvents++;
-                        } else {
-                            paymentBasedEvents++;
-                        }
-                        
-                        debugLog(`✅ Added tx ${txHash}: ${finalVibeAmount} VTRU (source: ${amountSource})`);
-                    } else {
-                        debugLog(`⚠️ Skipping tx ${txHash} - no VIBE activity (vtru=${totalVibeOut}, payment=${vibePortionInPayment})`);
-                    }
+                    processedEvents.push(processedEvent);
+                    debugLog(`✅ Processed tx ${txHash}: ${finalVibeAmount} VTRU sent to VIBE`);
                 } catch (err) {
-                    debugWarn('Error processing transaction group:', txHash, err);
+                    debugWarn('Error processing VIBE transaction:', txHash, err);
                 }
             }
             
-            debugLog(`✅ Processed ${processedEvents.length} unique transactions: ${vtruBasedEvents} VTRU-based, ${paymentBasedEvents} payment-based`);
+            debugLog(`✅ Processed ${processedEvents.length} unique VIBE transactions with actual VTRU payouts`);
             
             // Debug: Log comprehensive breakdown for troubleshooting
             if (processedEvents.length > 0) {
                 const sourceBreakdown = processedEvents.reduce((acc, event) => {
-                    const key = `${event.paymentToken || 'Unknown'}_${event.amountSource}`;
-                    if (!acc[key]) {
-                        acc[key] = { count: 0, totalAmount: 0, source: event.amountSource, token: event.paymentToken };
+                    const tokenName = event.paymentToken === '0x0000000000000000000000000000000000000000' ? 'Native VTRU' : 
+                                     event.paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9' ? 'wVTRU' :
+                                     event.paymentToken === '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA' ? 'VUSD' : 'Other';
+                    
+                    if (!acc[tokenName]) {
+                        acc[tokenName] = { count: 0, totalAmount: 0, token: event.paymentToken };
                     }
-                    acc[key].count++;
-                    acc[key].totalAmount += event.calculatedVibeAmount;
+                    acc[tokenName].count++;
+                    acc[tokenName].totalAmount += event.calculatedVibeAmount;
                     return acc;
                 }, {});
                 
-                debugLog('🔍 Detailed breakdown by token and amount source:', sourceBreakdown);
+                debugLog('🔍 VIBE payouts breakdown by payment token:', sourceBreakdown);
+                
+                // Log individual transactions for verification
+                processedEvents.forEach(event => {
+                    debugLog(`📝 Tx ${event.transactionHash}: ${event.calculatedVibeAmount} VTRU to VIBE (from ${event.paymentToken === '0x0000000000000000000000000000000000000000' ? 'Native' : event.paymentToken?.slice(0,8)}...)`);
+                });
             }
 
             // Time windows for calculations
