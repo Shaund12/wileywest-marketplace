@@ -128,48 +128,33 @@ function VibeDashboardPage() {
                 
                 // For development/testing: Add mock data when no events are found
                 if (import.meta.env.DEV) {
-                    debugLog('🧪 Development mode: Adding mock VIBE events for testing');
+                    debugLog('🧪 Development mode: Adding mock VIBE events showing ONLY wVTRU burn/unwrap amounts');
                     const mockEvents = [
                         {
-                            // Mock VUSD transaction that should show 0.079131 VTRU
+                            // Mock wVTRU BURN/UNWRAP transaction - matches user's example 0.079130855721624292
                             calculatedVibeAmount: 0.079130855721624292,
                             amountSource: 'vtru',
                             type: 'sale',
-                            transactionHash: '0x1234...mock1',
+                            transactionHash: '0xabc123...burn1',
                             timestamp: Date.now() - (60 * 60 * 1000), // 1 hour ago
-                            paymentToken: '0x1d607d8c617a09c638309be2ceb9b4aff42236da', // VUSD
-                            vibeOutWVTRU: 0.079130855721624292,
-                            vibeOutNative: 0,
-                            vibePortionInPayment: 0.02,
-                            platformFeeTotal: 0.001,
-                            royaltyAmount: 0.0005,
-                            totalPrice: 1.0
-                        },
-                        {
-                            // Mock wVTRU transaction
-                            calculatedVibeAmount: 3.0,
-                            amountSource: 'vtru',
-                            type: 'sale',
-                            transactionHash: '0x5678...mock2',
-                            timestamp: Date.now() - (2 * 60 * 60 * 1000), // 2 hours ago
                             paymentToken: '0x3ccc3F22462cAe34766820894D04a40381201ef9', // wVTRU
-                            vibeOutWVTRU: 3.0,
+                            vibeOutWVTRU: 0.079130855721624292, // ONLY the burned/unwrapped amount to VIBE
                             vibeOutNative: 0,
-                            vibePortionInPayment: 3.0,
-                            platformFeeTotal: 0.15,
-                            royaltyAmount: 0.075,
-                            totalPrice: 15.0
+                            vibePortionInPayment: 0.079130855721624292, // The original wVTRU amount that was burned
+                            platformFeeTotal: 0.005,
+                            royaltyAmount: 0.002,
+                            totalPrice: 5.0
                         },
                         {
                             // Mock native VTRU transaction
                             calculatedVibeAmount: 1.5,
                             amountSource: 'vtru',
                             type: 'auction',
-                            transactionHash: '0x9abc...mock3',
-                            timestamp: Date.now() - (24 * 60 * 60 * 1000), // 1 day ago
+                            transactionHash: '0x456def...native1',
+                            timestamp: Date.now() - (2 * 60 * 60 * 1000), // 2 hours ago
                             paymentToken: '0x0000000000000000000000000000000000000000', // Native VTRU
                             vibeOutWVTRU: 0,
-                            vibeOutNative: 1.5,
+                            vibeOutNative: 1.5, // Direct native VTRU to VIBE
                             vibePortionInPayment: 1.5,
                             platformFeeTotal: 0.075,
                             royaltyAmount: 0.0375,
@@ -189,9 +174,9 @@ function VibeDashboardPage() {
                         quantity: 1
                     }));
                     
-                    debugLog(`🧪 Mock data: ${processedEvents.length} events with total ${processedEvents.reduce((sum, e) => sum + e.calculatedVibeAmount, 0)} VTRU`);
+                    debugLog(`🧪 Mock data: ${processedEvents.length} events with corrected VIBE amounts (no double-counting)`);
                     
-                    // Calculate stats from mock data
+                    // Calculate stats from mock data (should show ~1.579 total, not doubled amounts)
                     const now = Date.now();
                     const oneDayAgo = now - (24 * 60 * 60 * 1000);
                     const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
@@ -204,30 +189,39 @@ function VibeDashboardPage() {
                     const totalRoyaltiesNum = processedEvents.reduce((sum, event) => sum + (event.royaltyAmount || 0), 0);
                     const avgPayoutNum = totalTransactions > 0 ? totalVTRUSentNum / totalTransactions : 0;
                     
+                    debugLog(`🧪 Corrected totals: totalVTRU=${totalVTRUSentNum}, 24h=${vtruSent24hNum}, 7d=${vtruSent7dNum} (should be ~1.579 total)`);
+                    
                     setStats({
-                        totalVTRUSent: totalVTRUSentNum.toFixed(4),
-                        vtruSent24h: vtruSent24hNum.toFixed(4),
-                        vtruSent7d: vtruSent7dNum.toFixed(4),
+                        totalVTRUSent: totalVTRUSentNum.toFixed(6),
+                        vtruSent24h: vtruSent24hNum.toFixed(6),
+                        vtruSent7d: vtruSent7dNum.toFixed(6),
                         totalTransactions,
                         totalPlatformFees: totalPlatformFeesNum.toFixed(4),
                         totalRoyalties: totalRoyaltiesNum.toFixed(4),
                         avgPayout: avgPayoutNum.toFixed(4)
                     });
                     
-                    // Generate mock chart data
+                    // Generate mock chart data with corrected amounts
                     const chartDataArray = [
-                        { date: '2025-01-11', vtruSent: 1.5, transactions: 1 },
-                        { date: '2025-01-12', vtruSent: 3.079131, transactions: 2 }
+                        { date: '2025-01-12', vtruSent: 1.579131, transactions: 2 } // Only counting actual burns, no double-counting
                     ];
                     setChartData(chartDataArray);
                     
-                    // Generate mock recent events
-                    const recentEventsMock = processedEvents.slice(0, 3).map(event => ({
-                        time: formatTimeAgo(event.timestamp),
-                        description: `VIBE payout ${event.calculatedVibeAmount.toFixed(4)} VTRU from ${event.type} transaction`,
-                        hash: event.transactionHash,
-                        type: 'vibe_payout'
-                    }));
+                    // Generate mock recent events (should show individual burn amounts, not doubled)
+                    const recentEventsMock = [
+                        {
+                            time: '1 hour ago',
+                            description: 'VIBE payout 0.079131 VTRU from wVTRU burn/unwrap',
+                            hash: '0xabc123...burn1',
+                            type: 'vibe_payout'
+                        },
+                        {
+                            time: '2 hours ago', 
+                            description: 'VIBE payout 1.5000 VTRU from native VTRU transaction',
+                            hash: '0x456def...native1',
+                            type: 'vibe_payout'
+                        }
+                    ];
                     setRecentEvents(recentEventsMock);
                     
                     setLeaderboards({ collections: [], royalties: [] });
@@ -259,40 +253,45 @@ function VibeDashboardPage() {
                 debugLog(`Raw event ${i}: tx=${event.transactionHash}, vibeOutWVTRU=${event.args.vibeOutWVTRU?.toString()}, vibeOutNative=${event.args.vibeOutNative?.toString()}, vibePortionInPayment=${event.args.vibePortionInPayment?.toString()}`);
             }
 
-            // STRICT APPROACH: Only process events that actually sent VTRU to VIBE contract
-            debugLog(`🔄 Processing ${allBreakdownEvents.length} events with strict VIBE-only filtering...`);
+            // ULTRA-STRICT APPROACH: Only count wVTRU BURN/UNWRAP operations (not transfers)
+            debugLog(`🔄 Processing ${allBreakdownEvents.length} events - ONLY counting wVTRU burns/unwraps...`);
             
-            // Step 1: Filter to only events with actual VIBE payouts (VTRU sent to VIBE)
+            // Step 1: Filter to only events with actual wVTRU burns (vibeOutWVTRU > 0) or native VTRU payouts
             const vibePayoutEvents = [];
             
             for (const event of allBreakdownEvents) {
                 try {
                     const args = event.args;
                     
-                    // Only include events where VTRU was actually sent to the VIBE contract
+                    // Extract the actual VTRU amounts sent to VIBE contract
                     const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));
                     const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
                     const totalVibeOut = vibeOutWVTRU + vibeOutNative;
                     
-                    // CRITICAL FIX: Ignore wVTRU transfers to marketplace address to prevent double-counting
-                    // During the buy flow, wVTRU might be transferred to the marketplace but this shouldn't count as VIBE
-                    const isWVTRUToMarketplace = (
-                        args.paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9' && // wVTRU token
-                        vibeOutWVTRU === 0 && // No VTRU actually sent to VIBE from this wVTRU
-                        args.vibePortionInPayment && 
-                        parseFloat(ethers.formatEther(args.vibePortionInPayment)) === 0 // No VIBE portion in the payment
-                    );
+                    // Get payment token and VIBE portion for debugging
+                    const paymentToken = args.paymentToken;
+                    const decimals = getTokenDecimals(paymentToken);
+                    const vibePortionInPayment = parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals));
                     
-                    if (isWVTRUToMarketplace) {
-                        debugLog(`🚫 Ignoring wVTRU transfer to marketplace: tx=${event.transactionHash}, prevents double-counting`);
-                        continue;
-                    }
+                    // Log details for debugging
+                    debugLog(`🔍 Event ${event.transactionHash}: paymentToken=${paymentToken?.slice(0,8)}..., vibeOutWVTRU=${vibeOutWVTRU}, vibeOutNative=${vibeOutNative}, vibePortionInPayment=${vibePortionInPayment}`);
                     
-                    // STRICT: Only count events with actual VTRU outflow to VIBE
+                    // ULTRA-STRICT: Only count events where VTRU was actually unwrapped/burned and sent to VIBE
+                    // This means we ONLY count vibeOutWVTRU > 0 (actual wVTRU burn/unwrap) or vibeOutNative > 0 (direct VTRU payment)
                     if (totalVibeOut > 0) {
+                        // Additional validation: For wVTRU payments, we must have vibeOutWVTRU > 0 (actual burn/unwrap)
+                        if (paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9') { // wVTRU token
+                            if (vibeOutWVTRU > 0) {
+                                debugLog(`✅ wVTRU BURN/UNWRAP found: tx=${event.transactionHash}, burned=${vibeOutWVTRU} VTRU to VIBE`);
+                            } else {
+                                debugLog(`🚫 Ignoring wVTRU event with no burn: tx=${event.transactionHash}, vibeOutWVTRU=0 (transfer only, not burn)`);
+                                continue; // Skip wVTRU events that didn't result in actual burn/unwrap
+                            }
+                        } else {
+                            debugLog(`✅ Non-wVTRU VIBE payout: tx=${event.transactionHash}, vibeOut=${totalVibeOut} VTRU`);
+                        }
+                        
                         const block = await event.getBlock();
-                        const paymentToken = args.paymentToken;
-                        const decimals = getTokenDecimals(paymentToken);
                         
                         vibePayoutEvents.push({
                             event,
@@ -303,12 +302,11 @@ function VibeDashboardPage() {
                             totalVibeOut,
                             paymentToken,
                             decimals,
-                            vibePortionInPayment: parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals))
+                            vibePortionInPayment
                         });
                         
-                        debugLog(`✅ VIBE payout event found: tx=${event.transactionHash}, vibeOut=${totalVibeOut} VTRU`);
                     } else {
-                        debugLog(`⏭️ Skipping non-VIBE event: tx=${event.transactionHash}, no VTRU sent to VIBE`);
+                        debugLog(`⏭️ Skipping event with no VIBE payout: tx=${event.transactionHash}, totalVibeOut=0`);
                     }
                 } catch (err) {
                     debugWarn('Error filtering event:', event.transactionHash, err);
@@ -545,33 +543,32 @@ function VibeDashboardPage() {
                     debugLog('🧪 Network error in dev mode - showing mock data as fallback');
                     errorMessage += ' Showing mock data for development testing.';
                     
-                    // Set mock stats to demonstrate the dashboard functionality
+                    // Set mock stats to demonstrate the dashboard functionality with corrected amounts
                     setStats({
-                        totalVTRUSent: '4.5791',
-                        vtruSent24h: '3.0791',
-                        vtruSent7d: '4.5791',
-                        totalTransactions: 3,
-                        totalPlatformFees: '0.2260',
-                        totalRoyalties: '0.1130',
-                        avgPayout: '1.5264'
+                        totalVTRUSent: '1.579131', // Corrected: no double-counting
+                        vtruSent24h: '1.579131',   // Both events within 24h
+                        vtruSent7d: '1.579131',    // All events within 7d
+                        totalTransactions: 2,       // Only 2 actual burn/payout events
+                        totalPlatformFees: '0.0800',
+                        totalRoyalties: '0.0395',
+                        avgPayout: '0.7896'        // Average per transaction
                     });
                     
                     setChartData([
-                        { date: '2025-01-11', vtruSent: 1.5, transactions: 1 },
-                        { date: '2025-01-12', vtruSent: 3.079131, transactions: 2 }
+                        { date: '2025-01-12', vtruSent: 1.579131, transactions: 2 } // Corrected total
                     ]);
                     
                     setRecentEvents([
                         {
                             time: '1 hour ago',
-                            description: 'VIBE payout 0.0791 VTRU from sale transaction',
-                            hash: '0x1234...mock1',
+                            description: 'VIBE payout 0.079131 VTRU from wVTRU burn/unwrap',
+                            hash: '0xabc123...burn1',
                             type: 'vibe_payout'
                         },
                         {
                             time: '2 hours ago', 
-                            description: 'VIBE payout 3.0000 VTRU from sale transaction',
-                            hash: '0x5678...mock2',
+                            description: 'VIBE payout 1.500000 VTRU from native VTRU transaction',
+                            hash: '0x456def...native1',
                             type: 'vibe_payout'
                         }
                     ]);
