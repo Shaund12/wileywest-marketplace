@@ -36,12 +36,16 @@ const hashString = (str) => { let h = 0; for (let i = 0; i < str.length; i++) { 
 const imageUrlCache = Object.create(null);
 
 function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '', contractAddress = '', tokenId = '' }) {
-    // Special handling for V-Share contracts
+    // Special handling for V-Share contracts - generate SVG fallback
     if (contractAddress && isVShareContract(contractAddress)) {
-        const vShareMetadata = getVShareMetadata(contractAddress, tokenId);
-        if (vShareMetadata?.image) {
-            return vShareMetadata.image;
-        }
+        return vShareLpSvgDataUrl({ 
+            contract: contractAddress, 
+            tokenId: tokenId.toString(), 
+            width, 
+            height,
+            title: 'V-Share',
+            subtitle: 'Vmonsters Rev Share' 
+        });
     }
 
     const h = hashString(seed), hue = h % 360, hue2 = (hue + 180) % 360, gradId = `g${(h % 1e9).toString(36)}`, block = (h % 7) + 3;
