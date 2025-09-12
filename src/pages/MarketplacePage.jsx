@@ -835,6 +835,7 @@ function MarketplacePage() {
                 image: r.image_url || null,
                 name: r.name || null,
                 status: (r.status || '').toLowerCase(),
+                settled: !!r.settled, // Add settled property from database
             }));
 
             // 2) Conservative on-chain scan for AuctionCreated events (recent 50k blocks)
@@ -891,6 +892,7 @@ function MarketplacePage() {
                             attributes: meta.attributes || [],
                             metadata: meta.raw || null, // Store raw metadata for additional fallback
                             active,
+                            settled: Boolean(a.settled), // Add settled property from contract
                         };
                     } catch {
                         return null;
@@ -906,14 +908,25 @@ function MarketplacePage() {
             for (const a of normalizedFromDb) byId.set(a.id, a);
             for (const a of chainAuctions) byId.set(a.id, { ...(byId.get(a.id) || {}), ...a });
 
-            // Only keep active or recently ended (last 6h) to avoid noise
+            // Only keep active auctions - exclude settled auctions from marketplace display
             const recentCutoff = Date.now() - 6 * 60 * 60 * 1000;
             const merged = Array.from(byId.values())
                 .filter(a => {
+                    // First priority: exclude settled auctions completely
+                    if (a.settled === true) {
+                        return false;
+                    }
+                    
+                    // Second priority: use the calculated 'active' property if available (from chain data)
+                    if (a.hasOwnProperty('active')) {
+                        return a.active === true;
+                    }
+                    
+                    // Fallback: time-based filtering for auctions without explicit active status
                     const endMs = a.endTime;
-                    if (!endMs) return true;
-                    if (Date.now() < endMs) return true;
-                    return endMs >= recentCutoff; // ended recently
+                    if (!endMs) return true; // Keep auctions without end time (might be test data)
+                    if (Date.now() < endMs) return true; // Keep ongoing auctions
+                    return endMs >= recentCutoff; // Keep recently ended unsettled auctions
                 })
                 .sort((a, b) => (a.endTime || 0) - (b.endTime || 0)); // ending soonest first
 
