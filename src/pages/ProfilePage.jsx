@@ -1598,13 +1598,35 @@ function ProfilePage() {
                 provider
             );
             
-            // Try to get the function selector to see if burn exists
-            const burnFunction = nftType === 'ERC721' ? 'burn' : 'burn';
-            const hasFunction = contract.interface.fragments.some(
-                fragment => fragment.type === 'function' && fragment.name === burnFunction
-            );
-            
-            return hasFunction;
+            // Test if the contract actually supports burn by trying to estimate gas
+            // This will fail if the function doesn't exist on the deployed contract
+            if (nftType === 'ERC721') {
+                // Try to estimate gas for burning token ID 1 (doesn't matter if it exists)
+                // If burn function doesn't exist, this will throw
+                try {
+                    await contract.burn.staticCall(1);
+                } catch (error) {
+                    // If it's a revert due to token not existing or not owner, that's OK
+                    // If it's a function not found error, burn is not supported
+                    if (error.code === 'CALL_EXCEPTION' && error.message.includes('missing revert data')) {
+                        return false;
+                    }
+                    // Other errors (like token doesn't exist) mean burn function exists
+                    return true;
+                }
+                return true;
+            } else {
+                // For ERC1155, try with dummy parameters
+                try {
+                    await contract.burn.staticCall(wallet || ethers.ZeroAddress, 1, 1);
+                } catch (error) {
+                    if (error.code === 'CALL_EXCEPTION' && error.message.includes('missing revert data')) {
+                        return false;
+                    }
+                    return true;
+                }
+                return true;
+            }
         } catch (error) {
             debugWarn(`Error checking burn support for ${contractAddress}:`, error);
             return false;
