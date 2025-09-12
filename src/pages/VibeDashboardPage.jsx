@@ -3,6 +3,7 @@ import { useWallet } from '../context/WalletContext';
 import { ethers } from 'ethers';
 import MarketplaceAbi from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { getTokenDecimals, formatTokenAmount } from '../utils/tokenUtils';
 import './AuctionStyles.css';
 
 function VibeDashboardPage() {
@@ -30,17 +31,19 @@ function VibeDashboardPage() {
     const [timeframe, setTimeframe] = useState('7d');
     const [error, setError] = useState(null);
 
-    // Helper function to get vibe amount from breakdown events
+    // Helper function to get vibe amount from breakdown events - always returns VTRU sent to VIBE
     const getVibeAmount = useMemo(() => (event) => {
         const args = event.args;
         
-        // For SaleBreakdown and AuctionBreakdown events, get the total vibe amount
-        const vibePortionInPayment = parseFloat(ethers.formatEther(args.vibePortionInPayment || '0'));
-        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));  
-        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
+        // Always use the VTRU amounts that were actually sent to the VIBE contract
+        // vibeOutWVTRU: VTRU from unwrapped wVTRU sent to VIBE
+        // vibeOutNative: VTRU directly sent to VIBE
+        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')); // Always 18 decimals
+        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0')); // Always 18 decimals
         
-        // Return the total vibe amount (prefer vibePortionInPayment as it's the original amount)
-        return vibePortionInPayment > 0 ? vibePortionInPayment : (vibeOutWVTRU + vibeOutNative);
+        // Return the total VTRU amount that was sent to the VIBE contract
+        // This represents the actual VTRU amount regardless of what token was used for payment
+        return vibeOutWVTRU + vibeOutNative;
     }, []);
 
     const loadDashboardData = useCallback(async () => {
@@ -48,8 +51,28 @@ function VibeDashboardPage() {
             setLoading(true);
             setError(null);
 
-            if (!provider || !marketplaceAddress) {
-                debugWarn('Provider or marketplace address not available, showing no data');
+            // Check for marketplace address configuration
+            if (!marketplaceAddress || marketplaceAddress === '0x0000000000000000000000000000000000000000') {
+                setError('Marketplace contract address not configured. Please check environment configuration.');
+                debugWarn('Marketplace address not configured:', marketplaceAddress);
+                setStats({
+                    totalVTRUSent: '0',
+                    vtruSent24h: '0',
+                    vtruSent7d: '0',
+                    totalTransactions: 0,
+                    totalPlatformFees: '0',
+                    totalRoyalties: '0',
+                    avgPayout: '0'
+                });
+                setChartData([]);
+                setLeaderboards({ collections: [], royalties: [] });
+                setRecentEvents([]);
+                return;
+            }
+
+            if (!provider) {
+                setError('No blockchain provider available. Please connect your wallet or check network connection.');
+                debugWarn('Provider not available, showing no data');
                 setStats({
                     totalVTRUSent: '0',
                     vtruSent24h: '0',
@@ -76,8 +99,8 @@ function VibeDashboardPage() {
             const SCAN_BLOCKS = 50000; // Last 50k blocks for performance
             const fromBlock = Math.max(currentBlock - SCAN_BLOCKS, 0);
             
-            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events`);
-            setStatus(`📊 Scanning recent ${SCAN_BLOCKS} blocks for vibe fee data...`);
+            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events (${SCAN_BLOCKS} blocks)`);
+            setStatus(`📊 Scanning recent ${SCAN_BLOCKS.toLocaleString()} blocks for vibe fee data...`);
             
             // Fetch SaleBreakdown events (when NFTs are purchased)
             const saleBreakdownEvents = await marketplace.queryFilter(
@@ -99,6 +122,118 @@ function VibeDashboardPage() {
             
             if (allBreakdownEvents.length === 0) {
                 debugWarn('No breakdown events found in recent blocks');
+                
+                // For development/testing: Add mock data when no events are found
+                if (import.meta.env.DEV) {
+                    debugLog('🧪 Development mode: Adding mock VIBE events for testing');
+                    const mockEvents = [
+                        {
+                            // Mock VUSD transaction that should show 0.079131 VTRU
+                            calculatedVibeAmount: 0.079130855721624292,
+                            amountSource: 'vtru',
+                            type: 'sale',
+                            transactionHash: '0x1234...mock1',
+                            timestamp: Date.now() - (60 * 60 * 1000), // 1 hour ago
+                            paymentToken: '0x1d607d8c617a09c638309be2ceb9b4aff42236da', // VUSD
+                            vibeOutWVTRU: 0.079130855721624292,
+                            vibeOutNative: 0,
+                            vibePortionInPayment: 0.02,
+                            platformFeeTotal: 0.001,
+                            royaltyAmount: 0.0005,
+                            totalPrice: 1.0
+                        },
+                        {
+                            // Mock wVTRU transaction
+                            calculatedVibeAmount: 3.0,
+                            amountSource: 'vtru',
+                            type: 'sale',
+                            transactionHash: '0x5678...mock2',
+                            timestamp: Date.now() - (2 * 60 * 60 * 1000), // 2 hours ago
+                            paymentToken: '0x3ccc3F22462cAe34766820894D04a40381201ef9', // wVTRU
+                            vibeOutWVTRU: 3.0,
+                            vibeOutNative: 0,
+                            vibePortionInPayment: 3.0,
+                            platformFeeTotal: 0.15,
+                            royaltyAmount: 0.075,
+                            totalPrice: 15.0
+                        },
+                        {
+                            // Mock native VTRU transaction
+                            calculatedVibeAmount: 1.5,
+                            amountSource: 'vtru',
+                            type: 'auction',
+                            transactionHash: '0x9abc...mock3',
+                            timestamp: Date.now() - (24 * 60 * 60 * 1000), // 1 day ago
+                            paymentToken: '0x0000000000000000000000000000000000000000', // Native VTRU
+                            vibeOutWVTRU: 0,
+                            vibeOutNative: 1.5,
+                            vibePortionInPayment: 1.5,
+                            platformFeeTotal: 0.075,
+                            royaltyAmount: 0.0375,
+                            totalPrice: 7.5
+                        }
+                    ];
+                    
+                    // Set mock data with default values
+                    const processedEvents = mockEvents.map(mock => ({
+                        ...mock,
+                        blockNumber: 1000000,
+                        paymentTokenDecimals: 18,
+                        vibeShareBps: 500, // 5%
+                        royaltyReceiver: '0x1234567890123456789012345678901234567890',
+                        nftContract: '0x2d732b0bb33566a13e586ae83fb21d2fee34e906',
+                        tokenId: '1',
+                        quantity: 1
+                    }));
+                    
+                    debugLog(`🧪 Mock data: ${processedEvents.length} events with total ${processedEvents.reduce((sum, e) => sum + e.calculatedVibeAmount, 0)} VTRU`);
+                    
+                    // Calculate stats from mock data
+                    const now = Date.now();
+                    const oneDayAgo = now - (24 * 60 * 60 * 1000);
+                    const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
+                    
+                    const totalVTRUSentNum = processedEvents.reduce((sum, event) => sum + event.calculatedVibeAmount, 0);
+                    const vtruSent24hNum = processedEvents.filter(event => event.timestamp >= oneDayAgo).reduce((sum, event) => sum + event.calculatedVibeAmount, 0);
+                    const vtruSent7dNum = processedEvents.filter(event => event.timestamp >= sevenDaysAgo).reduce((sum, event) => sum + event.calculatedVibeAmount, 0);
+                    const totalTransactions = processedEvents.length;
+                    const totalPlatformFeesNum = processedEvents.reduce((sum, event) => sum + (event.platformFeeTotal || 0), 0);
+                    const totalRoyaltiesNum = processedEvents.reduce((sum, event) => sum + (event.royaltyAmount || 0), 0);
+                    const avgPayoutNum = totalTransactions > 0 ? totalVTRUSentNum / totalTransactions : 0;
+                    
+                    setStats({
+                        totalVTRUSent: totalVTRUSentNum.toFixed(4),
+                        vtruSent24h: vtruSent24hNum.toFixed(4),
+                        vtruSent7d: vtruSent7dNum.toFixed(4),
+                        totalTransactions,
+                        totalPlatformFees: totalPlatformFeesNum.toFixed(4),
+                        totalRoyalties: totalRoyaltiesNum.toFixed(4),
+                        avgPayout: avgPayoutNum.toFixed(4)
+                    });
+                    
+                    // Generate mock chart data
+                    const chartDataArray = [
+                        { date: '2025-01-11', vtruSent: 1.5, transactions: 1 },
+                        { date: '2025-01-12', vtruSent: 3.079131, transactions: 2 }
+                    ];
+                    setChartData(chartDataArray);
+                    
+                    // Generate mock recent events
+                    const recentEventsMock = processedEvents.slice(0, 3).map(event => ({
+                        time: formatTimeAgo(event.timestamp),
+                        description: `VIBE payout ${event.calculatedVibeAmount.toFixed(4)} VTRU from ${event.type} transaction`,
+                        hash: event.transactionHash,
+                        type: 'vibe_payout'
+                    }));
+                    setRecentEvents(recentEventsMock);
+                    
+                    setLeaderboards({ collections: [], royalties: [] });
+                    setStatus('🧪 Development mode: Showing mock VIBE data for testing');
+                    setLoading(false);
+                    return;
+                }
+                
+                // Production: Show empty state
                 setStats({
                     totalVTRUSent: '0',
                     vtruSent24h: '0', 
@@ -115,66 +250,174 @@ function VibeDashboardPage() {
                 return;
             }
 
-            // Process events and extract data with timestamps
-            const processedEvents = [];
+            // Debug: Log raw event data before processing
+            debugLog(`🔍 Raw breakdown events found: ${allBreakdownEvents.length}`);
+            for (let i = 0; i < Math.min(3, allBreakdownEvents.length); i++) {
+                const event = allBreakdownEvents[i];
+                debugLog(`Raw event ${i}: tx=${event.transactionHash}, vibeOutWVTRU=${event.args.vibeOutWVTRU?.toString()}, vibeOutNative=${event.args.vibeOutNative?.toString()}, vibePortionInPayment=${event.args.vibePortionInPayment?.toString()}`);
+            }
+
+            // STRICT APPROACH: Only process events that actually sent VTRU to VIBE contract
+            debugLog(`🔄 Processing ${allBreakdownEvents.length} events with strict VIBE-only filtering...`);
+            
+            // Step 1: Filter to only events with actual VIBE payouts (VTRU sent to VIBE)
+            const vibePayoutEvents = [];
+            
             for (const event of allBreakdownEvents) {
                 try {
-                    const block = await event.getBlock();
                     const args = event.args;
                     
-                    const eventData = {
+                    // Only include events where VTRU was actually sent to the VIBE contract
+                    const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));
+                    const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
+                    const totalVibeOut = vibeOutWVTRU + vibeOutNative;
+                    
+                    // STRICT: Only count events with actual VTRU outflow to VIBE
+                    if (totalVibeOut > 0) {
+                        const block = await event.getBlock();
+                        const paymentToken = args.paymentToken;
+                        const decimals = getTokenDecimals(paymentToken);
+                        
+                        vibePayoutEvents.push({
+                            event,
+                            block,
+                            args,
+                            vibeOutWVTRU,
+                            vibeOutNative,
+                            totalVibeOut,
+                            paymentToken,
+                            decimals,
+                            vibePortionInPayment: parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals))
+                        });
+                        
+                        debugLog(`✅ VIBE payout event found: tx=${event.transactionHash}, vibeOut=${totalVibeOut} VTRU`);
+                    } else {
+                        debugLog(`⏭️ Skipping non-VIBE event: tx=${event.transactionHash}, no VTRU sent to VIBE`);
+                    }
+                } catch (err) {
+                    debugWarn('Error filtering event:', event.transactionHash, err);
+                }
+            }
+            
+            debugLog(`📊 Filtered to ${vibePayoutEvents.length} actual VIBE payout events (from ${allBreakdownEvents.length} total)`);
+            
+            // Step 2: Group the VIBE payout events by transaction to eliminate duplicates
+            const eventGroups = new Map();
+            
+            for (const eventData of vibePayoutEvents) {
+                const txHash = eventData.event.transactionHash;
+                
+                // For transactions with multiple VIBE events, take the one with highest VTRU amount
+                if (!eventGroups.has(txHash) || eventData.totalVibeOut > eventGroups.get(txHash).totalVibeOut) {
+                    eventGroups.set(txHash, eventData);
+                    debugLog(`🔄 Best VIBE event for tx ${txHash}: ${eventData.totalVibeOut} VTRU`);
+                }
+            }
+            
+            debugLog(`📊 Grouped ${vibePayoutEvents.length} VIBE events into ${eventGroups.size} unique transactions`);
+            
+            // Step 3: Process only the actual VIBE payout events (no fallback to payment amounts)
+            const processedEvents = [];
+            
+            for (const [txHash, eventData] of eventGroups) {
+                try {
+                    const { event, block, args, vibeOutWVTRU, vibeOutNative, totalVibeOut, paymentToken, decimals, vibePortionInPayment } = eventData;
+                    
+                    // Use only the actual VTRU amount sent to VIBE contract
+                    const finalVibeAmount = totalVibeOut;
+                    const amountSource = 'vtru';
+                    
+                    const processedEvent = {
                         // Event metadata
                         type: event.eventName || (saleBreakdownEvents.includes(event) ? 'sale' : 'auction'),
                         blockNumber: event.blockNumber,
                         transactionHash: event.transactionHash,
-                        timestamp: block.timestamp * 1000, // Convert to milliseconds
+                        timestamp: block.timestamp * 1000,
                         
-                        // Vibe data from event args
-                        vibePortionInPayment: parseFloat(ethers.formatEther(args.vibePortionInPayment || '0')),
-                        vibeOutWVTRU: parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')),
-                        vibeOutNative: parseFloat(ethers.formatEther(args.vibeOutNative || '0')),
+                        // Payment token info
+                        paymentToken: paymentToken,
+                        paymentTokenDecimals: decimals,
+                        
+                        // Vibe data - only actual VTRU amounts sent to VIBE
+                        vibePortionInPayment: vibePortionInPayment,
+                        vibeOutWVTRU: vibeOutWVTRU,
+                        vibeOutNative: vibeOutNative,
                         vibeShareBps: parseInt(args.vibeShareBps?.toString() || '0'),
                         
                         // Platform and royalty data
-                        platformFeeTotal: parseFloat(ethers.formatEther(args.platformFeeTotal || '0')),
-                        royaltyAmount: parseFloat(ethers.formatEther(args.royaltyAmount || '0')),
+                        platformFeeTotal: parseFloat(ethers.formatUnits(args.platformFeeTotal || '0', decimals)),
+                        royaltyAmount: parseFloat(ethers.formatUnits(args.royaltyAmount || '0', decimals)),
                         royaltyReceiver: args.royaltyReceiver,
                         
                         // Transaction details
                         nftContract: args.nftContract,
                         tokenId: args.tokenId?.toString(),
-                        totalPrice: parseFloat(ethers.formatEther(args.totalPrice || '0')),
-                        quantity: parseInt(args.quantity?.toString() || '1')
+                        totalPrice: parseFloat(ethers.formatUnits(args.totalPrice || args.finalPrice || '0', decimals)),
+                        quantity: parseInt(args.quantity?.toString() || '1'),
+                        
+                        // Final calculated amount - always VTRU sent to VIBE
+                        calculatedVibeAmount: finalVibeAmount,
+                        amountSource: amountSource
                     };
                     
-                    processedEvents.push(eventData);
+                    processedEvents.push(processedEvent);
+                    debugLog(`✅ Processed tx ${txHash}: ${finalVibeAmount} VTRU sent to VIBE`);
                 } catch (err) {
-                    debugWarn('Error processing event:', err);
+                    debugWarn('Error processing VIBE transaction:', txHash, err);
                 }
             }
             
-            debugLog(`✅ Processed ${processedEvents.length} events successfully`);
+            debugLog(`✅ Processed ${processedEvents.length} unique VIBE transactions with actual VTRU payouts`);
+            
+            // Debug: Log comprehensive breakdown for troubleshooting
+            if (processedEvents.length > 0) {
+                const sourceBreakdown = processedEvents.reduce((acc, event) => {
+                    const tokenName = event.paymentToken === '0x0000000000000000000000000000000000000000' ? 'Native VTRU' : 
+                                     event.paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9' ? 'wVTRU' :
+                                     event.paymentToken === '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA' ? 'VUSD' : 'Other';
+                    
+                    if (!acc[tokenName]) {
+                        acc[tokenName] = { count: 0, totalAmount: 0, token: event.paymentToken };
+                    }
+                    acc[tokenName].count++;
+                    acc[tokenName].totalAmount += event.calculatedVibeAmount;
+                    return acc;
+                }, {});
+                
+                debugLog('🔍 VIBE payouts breakdown by payment token:', sourceBreakdown);
+                
+                // Log individual transactions for verification
+                processedEvents.forEach(event => {
+                    debugLog(`📝 Tx ${event.transactionHash}: ${event.calculatedVibeAmount} VTRU to VIBE (from ${event.paymentToken === '0x0000000000000000000000000000000000000000' ? 'Native' : event.paymentToken?.slice(0,8)}...)`);
+                });
+            }
 
             // Time windows for calculations
             const now = Date.now();
             const oneDayAgo = now - (24 * 60 * 60 * 1000);
             const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
 
-            // Calculate aggregated stats
-            const totalVTRUSentNum = processedEvents.reduce((sum, event) => {
-                return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+            // Calculate aggregated stats using the calculated amounts
+            debugLog(`🔢 Calculating totals from ${processedEvents.length} unique transactions...`);
+            
+            let totalVTRUSentNum = processedEvents.reduce((sum, event) => {
+                const eventAmount = event.calculatedVibeAmount;
+                debugLog(`Tx ${event.transactionHash}: ${eventAmount} VTRU`);
+                return sum + eventAmount;
             }, 0);
+            
+            debugLog(`🔢 Final total VTRU sent to VIBE: ${totalVTRUSentNum} from ${processedEvents.length} unique transactions`);
 
             const vtruSent24hNum = processedEvents
                 .filter(event => event.timestamp >= oneDayAgo)
                 .reduce((sum, event) => {
-                    return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                    return sum + event.calculatedVibeAmount;
                 }, 0);
 
             const vtruSent7dNum = processedEvents
                 .filter(event => event.timestamp >= sevenDaysAgo)
                 .reduce((sum, event) => {
-                    return sum + (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                    return sum + event.calculatedVibeAmount;
                 }, 0);
 
             const totalTransactions = processedEvents.length;
@@ -204,7 +447,7 @@ function VibeDashboardPage() {
                         chartDataMap.set(date, { vtruSent: 0, transactions: 0 });
                     }
                     const entry = chartDataMap.get(date);
-                    entry.vtruSent += (event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative));
+                    entry.vtruSent += event.calculatedVibeAmount;
                     entry.transactions += 1;
                 });
 
@@ -259,10 +502,10 @@ function VibeDashboardPage() {
                 .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 10)
                 .map(event => {
-                    const vibeAmount = event.vibePortionInPayment || (event.vibeOutWVTRU + event.vibeOutNative);
+                    const vibeAmount = event.calculatedVibeAmount;
                     return {
                         time: formatTimeAgo(event.timestamp),
-                        description: `VIBE payout ${vibeAmount.toFixed(2)} VTRU from ${event.type} transaction`,
+                        description: `VIBE payout ${vibeAmount.toFixed(4)} VTRU from ${event.type} transaction`,
                         hash: event.transactionHash,
                         type: 'vibe_payout'
                     };
@@ -273,7 +516,76 @@ function VibeDashboardPage() {
             
         } catch (error) {
             criticalError('Error loading vibe dashboard data from blockchain:', error);
-            setError('Failed to load vibe fee data from blockchain. Please try again later.');
+            
+            // Provide more specific error messages based on error type
+            let errorMessage = 'Failed to load vibe fee data from blockchain.';
+            let troubleshootingTip = '';
+            
+            if (error.message && error.message.includes('Failed to fetch')) {
+                errorMessage = 'Network connection failed. Please check your internet connection and try again. The blockchain RPC endpoint may be temporarily unavailable.';
+                troubleshootingTip = 'If this persists, the marketplace may have recent transactions that cannot be displayed due to network connectivity issues.';
+                
+                // In development, show mock data as fallback
+                if (import.meta.env.DEV) {
+                    debugLog('🧪 Network error in dev mode - showing mock data as fallback');
+                    errorMessage += ' Showing mock data for development testing.';
+                    
+                    // Set mock stats to demonstrate the dashboard functionality
+                    setStats({
+                        totalVTRUSent: '4.5791',
+                        vtruSent24h: '3.0791',
+                        vtruSent7d: '4.5791',
+                        totalTransactions: 3,
+                        totalPlatformFees: '0.2260',
+                        totalRoyalties: '0.1130',
+                        avgPayout: '1.5264'
+                    });
+                    
+                    setChartData([
+                        { date: '2025-01-11', vtruSent: 1.5, transactions: 1 },
+                        { date: '2025-01-12', vtruSent: 3.079131, transactions: 2 }
+                    ]);
+                    
+                    setRecentEvents([
+                        {
+                            time: '1 hour ago',
+                            description: 'VIBE payout 0.0791 VTRU from sale transaction',
+                            hash: '0x1234...mock1',
+                            type: 'vibe_payout'
+                        },
+                        {
+                            time: '2 hours ago', 
+                            description: 'VIBE payout 3.0000 VTRU from sale transaction',
+                            hash: '0x5678...mock2',
+                            type: 'vibe_payout'
+                        }
+                    ]);
+                    
+                    setLeaderboards({ collections: [], royalties: [] });
+                    setError(errorMessage); // Show error but with data
+                    setLoading(false);
+                    return;
+                }
+            } else if (error.message && error.message.includes('network')) {
+                errorMessage = 'Blockchain network error. Please check if you are connected to the correct network (Vitruveo) and try again.';
+                troubleshootingTip = 'Make sure your wallet is connected to the Vitruveo network (Chain ID: 1490).';
+            } else if (error.message && error.message.includes('UNPREDICTABLE_GAS_LIMIT')) {
+                errorMessage = 'Smart contract interaction failed. The marketplace contract may be experiencing issues.';
+                troubleshootingTip = 'This could indicate the contract address is incorrect or the contract is not responding.';
+            } else if (error.code === 'NETWORK_ERROR') {
+                errorMessage = 'Blockchain network is unreachable. Please try again later or check your network connection.';
+                troubleshootingTip = 'Recent sales and VIBE payouts may exist but cannot be retrieved at this time.';
+            } else {
+                errorMessage = `Failed to load vibe fee data: ${error.message || 'Unknown error'}. Please try again later.`;
+                troubleshootingTip = 'If this error persists, please report it with the error details above.';
+            }
+            
+            // Log troubleshooting information
+            if (troubleshootingTip) {
+                debugLog('Troubleshooting tip:', troubleshootingTip);
+            }
+            
+            setError(errorMessage);
             setStats({
                 totalVTRUSent: '0',
                 vtruSent24h: '0',
@@ -330,6 +642,40 @@ function VibeDashboardPage() {
             <div className="hp-section__head">
                 <h2>VIBE Dashboard</h2>
                 <p>Real-time analytics from blockchain events (direct from smart contract)</p>
+                {marketplaceAddress && marketplaceAddress !== '0x0000000000000000000000000000000000000000' && (
+                    <p style={{ fontSize: '0.9em', opacity: 0.7, marginTop: '0.5rem' }}>
+                        Contract: {marketplaceAddress.slice(0, 8)}...{marketplaceAddress.slice(-6)}
+                    </p>
+                )}
+                <div style={{ marginTop: '1rem' }}>
+                    <button 
+                        onClick={loadDashboardData} 
+                        disabled={loading}
+                        style={{
+                            padding: '0.5rem 1rem',
+                            background: loading ? '#666' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem'
+                        }}
+                    >
+                        {loading ? '🔄 Loading...' : '🔄 Refresh Data'}
+                    </button>
+                </div>
+                {status && (
+                    <div style={{ 
+                        marginTop: '1rem', 
+                        padding: '0.5rem', 
+                        background: 'rgba(102, 126, 234, 0.1)', 
+                        border: '1px solid rgba(102, 126, 234, 0.3)', 
+                        borderRadius: '6px',
+                        fontSize: '0.9rem'
+                    }}>
+                        {status}
+                    </div>
+                )}
             </div>
 
             {error && (
