@@ -7,7 +7,7 @@ import { useWallet } from '../context/WalletContext';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
 import ListingCard from '../components/ListingCard';
-import { formatPriceWithUSDC, convertToUSDCValue } from '../utils/tokenUtils';
+import { formatPriceWithUSDC, convertToUSDCValue, getTokenDecimals } from '../utils/tokenUtils';
 import './CollectionPage.css';
 
 const ERC721_METADATA_ABI = [
@@ -26,15 +26,14 @@ const formatNumber = (num) => {
     return num.toString();
 };
 
-const formatPrice = (price) => {
-    if (!price || price === '0') return '$0.00';
+const formatPrice = async (pricePerUnit, paymentToken, provider) => {
+    if (!pricePerUnit || pricePerUnit === '0' || !provider) return { formatted: '$0.00', tokenAmount: '0', tokenSymbol: 'TOKEN', usdcValue: '0.00' };
     try {
-        const ethValue = ethers.formatEther(price);
-        const numValue = parseFloat(ethValue);
-        if (numValue < 0.001) return `$${numValue.toFixed(6)}`;
-        return `$${numValue.toFixed(3)}`;
-    } catch {
-        return '$0.00';
+        const priceInfo = await formatPriceWithUSDC(pricePerUnit, paymentToken, provider, true);
+        return priceInfo;
+    } catch (error) {
+        console.warn('Error formatting price:', error);
+        return { formatted: '$0.00', tokenAmount: '0', tokenSymbol: 'TOKEN', usdcValue: '0.00' };
     }
 };
 
@@ -121,12 +120,17 @@ export default function CollectionPage() {
         // Apply price filter
         if (filterBy !== 'all') {
             items = items.filter(item => {
-                const price = parseFloat(ethers.formatEther(item.price || '0'));
-                switch (filterBy) {
-                    case 'under1': return price < 1;
-                    case '1to10': return price >= 1 && price <= 10;
-                    case 'over10': return price > 10;
-                    default: return true;
+                try {
+                    const decimals = getTokenDecimals(item.paymentToken);
+                    const price = parseFloat(ethers.formatUnits(item.pricePerUnit || '0', decimals));
+                    switch (filterBy) {
+                        case 'under1': return price < 1;
+                        case '1to10': return price >= 1 && price <= 10;
+                        case 'over10': return price > 10;
+                        default: return true;
+                    }
+                } catch {
+                    return true; // Include items with invalid prices in 'all' filter
                 }
             });
         }
@@ -135,14 +139,26 @@ export default function CollectionPage() {
         items.sort((a, b) => {
             switch (sortBy) {
                 case 'price-low': {
-                    const priceA = parseFloat(ethers.formatEther(a.price || '0'));
-                    const priceB = parseFloat(ethers.formatEther(b.price || '0'));
-                    return priceA - priceB;
+                    try {
+                        const decimalsA = getTokenDecimals(a.paymentToken);
+                        const decimalsB = getTokenDecimals(b.paymentToken);
+                        const priceA = parseFloat(ethers.formatUnits(a.pricePerUnit || '0', decimalsA));
+                        const priceB = parseFloat(ethers.formatUnits(b.pricePerUnit || '0', decimalsB));
+                        return priceA - priceB;
+                    } catch {
+                        return 0;
+                    }
                 }
                 case 'price-high': {
-                    const priceA = parseFloat(ethers.formatEther(a.price || '0'));
-                    const priceB = parseFloat(ethers.formatEther(b.price || '0'));
-                    return priceB - priceA;
+                    try {
+                        const decimalsA = getTokenDecimals(a.paymentToken);
+                        const decimalsB = getTokenDecimals(b.paymentToken);
+                        const priceA = parseFloat(ethers.formatUnits(a.pricePerUnit || '0', decimalsA));
+                        const priceB = parseFloat(ethers.formatUnits(b.pricePerUnit || '0', decimalsB));
+                        return priceB - priceA;
+                    } catch {
+                        return 0;
+                    }
                 }
                 case 'oldest':
                     return (a.listingTime || 0) - (b.listingTime || 0);
@@ -155,32 +171,74 @@ export default function CollectionPage() {
         return items;
     }, [listings, addr, searchQuery, filterBy, sortBy]);
 
-    // Calculate collection stats
-    const collectionStats = useMemo(() => {
-        const items = filteredItems;
-        const totalListings = items.length;
-        
-        if (totalListings === 0) {
-            return {
-                totalListings: 0,
-                floorPrice: '$0.00',
-                totalVolume: '$0.00',
-                owners: 0
-            };
-        }
+    // Calculate collection stats with proper token handling
+    const [collectionStats, setCollectionStats] = useState({
+        totalListings: 0,
+        floorPrice: 'Loading...',
+        totalVolume: '$0.00',
+        owners: 0
+    });
 
-        const prices = items.map(item => parseFloat(ethers.formatEther(item.price || '0')));
-        const floorPrice = Math.min(...prices);
-        const totalVolume = prices.reduce((sum, price) => sum + price, 0);
-        const owners = new Set(items.map(item => item.seller)).size;
+    // Update collection stats when filtered items change
+    useEffect(() => {
+        const calculateStats = async () => {
+            const items = filteredItems;
+            const totalListings = items.length;
+            
+            if (totalListings === 0) {
+                setCollectionStats({
+                    totalListings: 0,
+                    floorPrice: '$0.00',
+                    totalVolume: '$0.00',
+                    owners: 0
+                });
+                return;
+            }
 
-        return {
-            totalListings,
-            floorPrice: formatPrice(ethers.parseEther(floorPrice.toString())),
-            totalVolume: `$${totalVolume.toFixed(3)}`,
-            owners
+            try {
+                // Calculate floor price in USDC by comparing all items
+                let lowestPriceUSDC = Infinity;
+                let floorPriceDisplay = '$0.00';
+                let totalVolumeUSDC = 0;
+
+                for (const item of items) {
+                    try {
+                        if (item.pricePerUnit && item.paymentToken && provider) {
+                            const usdcValue = await convertToUSDCValue(item.pricePerUnit, item.paymentToken, provider);
+                            totalVolumeUSDC += usdcValue;
+                            
+                            if (usdcValue > 0 && usdcValue < lowestPriceUSDC) {
+                                lowestPriceUSDC = usdcValue;
+                                const priceInfo = await formatPriceWithUSDC(item.pricePerUnit, item.paymentToken, provider, true);
+                                floorPriceDisplay = priceInfo.formatted;
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('Error calculating item price:', error);
+                    }
+                }
+
+                const owners = new Set(items.map(item => item.seller)).size;
+
+                setCollectionStats({
+                    totalListings,
+                    floorPrice: lowestPriceUSDC === Infinity ? '$0.00' : floorPriceDisplay,
+                    totalVolume: `$${totalVolumeUSDC.toFixed(2)}`,
+                    owners
+                });
+            } catch (error) {
+                console.warn('Error calculating collection stats:', error);
+                setCollectionStats({
+                    totalListings,
+                    floorPrice: '$0.00',
+                    totalVolume: '$0.00',
+                    owners: new Set(items.map(item => item.seller)).size
+                });
+            }
         };
-    }, [filteredItems]);
+
+        calculateStats();
+    }, [filteredItems, provider]);
 
     // Pagination
     const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
