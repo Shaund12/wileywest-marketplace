@@ -3100,16 +3100,10 @@ function ProfilePage() {
 
 // NFT Detail View Component for the modal
 function NftDetailView({ nft, metadata = {}, contractInfo = {}, transferNft, burnNft }) {
+    const navigate = useNavigate();
     const [activeTab, setActiveTab] = useState('details');
 
     if (!nft) return null;
-
-    const name = metadata.name || `NFT #${nft.tokenId}`;
-    const description = metadata.description || 'No description available';
-    const attributes = metadata.attributes || [];
-    const imageUrl = metadata.imageUrl || generateFallbackImage(nft.contractAddress, nft.tokenId);
-    const collectionName = contractInfo.name || 'Unknown Collection';
-    const collectionSymbol = contractInfo.symbol || '';
 
     // Helper to generate fallback image - simple but reliable version
     // Generate a custom LP-style placeholder SVG for NFTs
@@ -3135,6 +3129,13 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {}, transferNft, bur
             return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='%23000'/%3E%3Ctext x='150' y='150' fill='%23fff' text-anchor='middle' font-size='24'%3E%23${tokenId}%3C/text%3E%3C/svg%3E`;
         }
     };
+
+    const name = metadata.name || `NFT #${nft.tokenId}`;
+    const description = metadata.description || 'No description available';
+    const attributes = metadata.attributes || [];
+    const imageUrl = metadata.imageUrl || generateFallbackImage(nft.contractAddress, nft.tokenId);
+    const collectionName = contractInfo.name || 'Unknown Collection';
+    const collectionSymbol = contractInfo.symbol || '';
 
     return (
         <div className="nft-detail-view">
