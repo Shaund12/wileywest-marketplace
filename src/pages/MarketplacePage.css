@@ -4,20 +4,22 @@
   margin: 0 auto;
   padding: 0;
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  scroll-behavior: smooth;
 }
 
-/* Hero Section Styles */
+/* Enhanced Hero Section Styles */
 .marketplace-hero {
   display: flex;
   align-items: center;
-  padding: 60px 40px;
-  min-height: 500px;
-  background: linear-gradient(to right, #1a1c25, #2a2d3a);
+  padding: 80px 40px;
+  min-height: 600px;
+  background: linear-gradient(135deg, #0b0c10 0%, #1f2937 50%, #374151 100%);
   color: white;
-  border-radius: 0 0 20px 20px;
+  border-radius: 0 0 30px 30px;
   position: relative;
   overflow: hidden;
-  margin-bottom: 40px;
+  margin-bottom: 60px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
 }
 
 .marketplace-hero:before {
@@ -28,78 +30,130 @@
   right: 0;
   bottom: 0;
   background-image: 
-    radial-gradient(circle at 20% 20%, rgba(67, 97, 238, 0.3) 0%, transparent 30%),
-    radial-gradient(circle at 80% 80%, rgba(134, 79, 241, 0.3) 0%, transparent 30%);
+    radial-gradient(circle at 20% 20%, rgba(85, 51, 255, 0.4) 0%, transparent 40%),
+    radial-gradient(circle at 80% 80%, rgba(255, 51, 102, 0.3) 0%, transparent 40%),
+    radial-gradient(circle at 40% 60%, rgba(51, 204, 255, 0.2) 0%, transparent 50%);
   z-index: 1;
+  animation: pulseGradient 8s ease-in-out infinite;
+}
+
+@keyframes pulseGradient {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
 }
 
 .hero-content {
   flex: 1;
   z-index: 2;
   padding-right: 40px;
+  animation: slideInLeft 0.8s ease-out;
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .hero-content h1 {
-  font-size: 3.5rem;
-  font-weight: 800;
-  line-height: 1.2;
+  font-size: 4rem;
+  font-weight: 900;
+  line-height: 1.1;
   margin-bottom: 24px;
+  text-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
 .gradient-text {
-  background: linear-gradient(45deg, #4361ee, #3a0ca3, #f72585);
+  background: linear-gradient(45deg, #5533ff, #ff3366, #33ccff, #00ff88);
+  background-size: 400% 400%;
+  animation: gradientShift 4s ease-in-out infinite;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   display: inline-block;
 }
 
+@keyframes gradientShift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
 .hero-content p {
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   margin-bottom: 30px;
   line-height: 1.6;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.9);
   max-width: 600px;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
 
 .hero-cta {
   display: flex;
-  gap: 15px;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
 .hero-cta button, .hero-cta a {
-  font-size: 1rem;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 0.2s ease;
+  font-size: 1.1rem;
+  padding: 16px 32px;
+  border-radius: 12px;
+  font-weight: 700;
+  transition: all 0.3s ease;
   cursor: pointer;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
 }
 
-.primary-button {
-  background: linear-gradient(90deg, #4361ee, #3a0ca3);
+.hero-cta .primary-button {
+  background: linear-gradient(135deg, #5533ff 0%, #ff3366 100%);
   color: white;
   border: none;
+  position: relative;
+  overflow: hidden;
 }
 
-.secondary-button {
+.hero-cta .primary-button:before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.hero-cta .primary-button:hover:before {
+  left: 100%;
+}
+
+.hero-cta .primary-button:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 15px 35px rgba(85, 51, 255, 0.4);
+}
+
+.hero-cta .secondary-button {
   background: rgba(255, 255, 255, 0.1);
   color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(10px);
 }
 
-.primary-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 15px rgba(67, 97, 238, 0.3);
-}
-
-.secondary-button:hover {
-  background: rgba(255, 255, 255, 0.15);
-  transform: translateY(-2px);
+.hero-cta .secondary-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 15px 35px rgba(255, 255, 255, 0.1);
 }
 
 .hero-featured-nft {
@@ -108,8 +162,74 @@
   display: flex;
   justify-content: center;
   align-items: center;
+  animation: slideInRight 0.8s ease-out 0.3s both;
 }
 
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Enhanced Section Styles */
+.marketplace-section {
+  padding: 80px 40px;
+  margin-bottom: 60px;
+  position: relative;
+}
+
+.marketplace-section.dark {
+  background: linear-gradient(135deg, #1f2937 0%, #374151 100%);
+  border-radius: 20px;
+  color: white;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+}
+
+.marketplace-section.light {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  backdrop-filter: blur(10px);
+}
+
+.section-header {
+  text-align: center;
+  margin-bottom: 60px;
+}
+
+.section-header h2 {
+  font-size: 3rem;
+  font-weight: 800;
+  margin-bottom: 16px;
+  background: linear-gradient(45deg, #5533ff, #ff3366);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.section-header p {
+  font-size: 1.2rem;
+  color: rgba(255, 255, 255, 0.7);
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* Enhanced Card Animations */
+.card-hover-effect {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover-effect:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.3);
+}
+
+/* Featured NFT Enhanced Styles */
 .featured-nft-card {
   width: 380px;
   background: rgba(255, 255, 255, 0.1);

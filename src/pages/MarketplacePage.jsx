@@ -1,11 +1,10 @@
-﻿// src/pages/MarketplacePage.jsx
+// src/pages/MarketplacePage.jsx
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { useSupabase } from '../context/SupabaseContext';
 import ListingCard from '../components/ListingCard';
-import MarketplaceStats from '../components/MarketplaceStats';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
@@ -13,8 +12,8 @@ import { isAuctionsEnabled } from '../utils/featureFlags';
 import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
 import { isVShareContract, getVShareMetadata, vShareLpSvgDataUrl } from '../utils/vShareUtils';
 import { ethers } from 'ethers';
+import { motion } from 'framer-motion';
 import './MarketplacePage.css';
-import '../components/MarketplaceStats.css';
 import blockdustLogo from '../assets/blockdust-logo.png';
 // IMPORTANT: use on-chain ABI with auction events/functions
 // IMPORTANT: use on-chain ABI with auction events/functions
@@ -1440,32 +1439,78 @@ function MarketplacePage() {
     return (
         <div className="marketplace-container" ref={topRef}>
             {/* Hero Section */}
-            <div className="marketplace-hero">
-                <div className="hero-content">
-                    <h1>
+            <motion.div 
+                className="marketplace-hero"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.8 }}
+            >
+                <motion.div 
+                    className="hero-content"
+                    initial={{ opacity: 0, x: -50 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.8, delay: 0.2 }}
+                >
+                    <motion.h1
+                        initial={{ opacity: 0, y: 30 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.8, delay: 0.4 }}
+                    >
                         Discover, Collect & Sell
                         <br />
                         <span className="gradient-text">Extraordinary NFTs</span>
-                    </h1>
-                    <p>Explore the most sought-after digital assets in the Vitruveo ecosystem</p>
-                    <div className="hero-cta">
+                    </motion.h1>
+                    <motion.p
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.8, delay: 0.6 }}
+                    >
+                        Explore the most sought-after digital assets in the Vitruveo ecosystem
+                    </motion.p>
+                    <motion.div 
+                        className="hero-cta"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ duration: 0.8, delay: 0.8 }}
+                    >
                         {wallet ? (
-                            <a href="/sell" className="primary-button">Create Listing</a>
+                            <motion.a 
+                                href="/sell" 
+                                className="primary-button"
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                            >
+                                Create Listing
+                            </motion.a>
                         ) : (
-                            <button className="primary-button" onClick={connect}>Connect Wallet</button>
+                            <motion.button 
+                                className="primary-button" 
+                                onClick={connect}
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                            >
+                                Connect Wallet
+                            </motion.button>
                         )}
-                        <button
+                        <motion.button
                             className="secondary-button"
                             onClick={() => {
                                 const el = document.querySelector('.marketplace-stats');
                                 if (el) window.scrollTo({ top: el.offsetTop, behavior: 'smooth' });
                             }}
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
                         >
                             Browse Marketplace
-                        </button>
-                    </div>
-                </div>
-                <div className="hero-featured-nft">
+                        </motion.button>
+                    </motion.div>
+                </motion.div>
+                <motion.div 
+                    className="hero-featured-nft"
+                    initial={{ opacity: 0, x: 50 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.8, delay: 0.4 }}
+                >
                     {featuredNFT && (
                         <div className="featured-nft-card">
                             <div className="featured-badge">Featured</div>
@@ -1517,32 +1562,8 @@ function MarketplacePage() {
                             </div>
                         </div>
                     )}
-                </div>
-            </div>
-
-            {/* Marketplace Stats */}
-            <div className="marketplace-stats">
-                <div className="stat-card">
-                    <h3>{stats.totalListings}</h3>
-                    <p>Active Listings</p>
-                    <small>(Excluding canceled)</small>
-                </div>
-                <div className="stat-card">
-                    <h3>{stats.hasUSDCRates ? `$${stats.currentListingVolume}` : stats.currentListingVolume}</h3>
-                    <p>Current Listing Volume</p>
-                    <small>{stats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
-                </div>
-                <div className="stat-card">
-                    <h3>{stats.hasUSDCRates ? `$${stats.actualSoldVolume}` : stats.actualSoldVolume}</h3>
-                    <p>Actual Sold Volume</p>
-                    <small>{stats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
-                </div>
-                <div className="stat-card">
-                    <h3>{stats.hasUSDCRates ? `$${stats.floorPrice}` : stats.floorPrice}</h3>
-                    <p>Floor Price</p>
-                    <small>{stats.hasUSDCRates ? 'USDC' : 'Estimated'}</small>
-                </div>
-            </div>
+                </motion.div>
+            </motion.div>
 
             {/* Live Auctions */}
             {auctionsEnabled && (
@@ -1711,9 +1732,6 @@ function MarketplacePage() {
                     })}
                 </div>
             </section>
-
-            {/* Detailed Marketplace Statistics */}
-            <MarketplaceStats />
 
             {/* Trending Collections */}
             {collections.length > 0 && (
