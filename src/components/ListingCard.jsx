@@ -38,14 +38,10 @@ const imageUrlCache = Object.create(null);
 function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '', contractAddress = '', tokenId = '' }) {
     // Special handling for V-Share contracts
     if (contractAddress && isVShareContract(contractAddress)) {
-        return vShareLpSvgDataUrl({ 
-            contract: contractAddress, 
-            tokenId: tokenId.toString(), 
-            width, 
-            height,
-            title: 'V-Share',
-            subtitle: 'Vmonsters Rev Share' 
-        });
+        const vShareMetadata = getVShareMetadata(contractAddress, tokenId);
+        if (vShareMetadata?.image) {
+            return vShareMetadata.image;
+        }
     }
 
     const h = hashString(seed), hue = h % 360, hue2 = (hue + 180) % 360, gradId = `g${(h % 1e9).toString(36)}`, block = (h % 7) + 3;
@@ -225,12 +221,12 @@ async function resolveWorkingMediaUrl(listing, { preferAnimation = false } = {})
         : [...collectImageSources(listing), ...collectAnimationSources(listing)];
     if (!base.length) return null;
 
-    // Special handling for V-Share contracts - return V-Share SVG immediately
+    // Special handling for V-Share contracts - return V-Share image immediately
     const nftContract = safeStr(listing?.nftContract);
     const tokenId = safeStr(listing?.tokenId);
     if (nftContract && isVShareContract(nftContract)) {
         const vShareMetadata = getVShareMetadata(nftContract, tokenId);
-        if (vShareMetadata?.image && vShareMetadata.image.startsWith('data:image/svg+xml')) {
+        if (vShareMetadata?.image) {
             imageUrlCache[cacheKey] = vShareMetadata.image;
             return vShareMetadata.image;
         }
