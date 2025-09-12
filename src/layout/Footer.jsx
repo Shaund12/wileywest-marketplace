@@ -39,7 +39,7 @@ function SocialLink({ href, label, children }) {
 export default function Footer() {
     const year = new Date().getFullYear();
 
-    const { wallet, isConnected, connect, chainId: liveChainId } = useWallet();
+    const { chainId: liveChainId } = useWallet();
     const { listings, marketplaceStats } = useMarketplace();
     const { isConnected: supaUp, cacheStats } = useSupabase();
 
@@ -152,15 +152,6 @@ export default function Footer() {
                     </div>
 
                     <div className="bd-actions">
-                        {!isConnected ? (
-                            <button className="bd-btn bd-btn--primary" onClick={connect} aria-label="Connect wallet">
-                                Connect Wallet
-                            </button>
-                        ) : (
-                            <a className="bd-btn" href={`${EXPLORER_URL}/address/${wallet}`} target="_blank" rel="noopener noreferrer">
-                                View on Explorer <ExternalIcon />
-                            </a>
-                        )}
                         <button className="bd-btn bd-btn--ghost" onClick={toggleTheme} aria-pressed={theme === 'dark'}>
                             {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
                         </button>
