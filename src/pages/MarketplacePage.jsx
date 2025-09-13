@@ -11,6 +11,7 @@ import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
 import { isVShareContract, getVShareMetadata, vShareLpSvgDataUrl } from '../utils/vShareUtils';
+import { getCollectionName, isKnownCollection } from '../utils/knownCollections.js';
 import { ethers } from 'ethers';
 import { motion } from 'framer-motion';
 import './MarketplacePage.css';
@@ -516,6 +517,13 @@ function MarketplacePage() {
             const resolved = nameMap[key];
             const base = (fallbackName || '').trim();
             const baseLooksLikeAddr = /^collection\s+0x/i.test(base) || base.toLowerCase() === 'collection' || base === '';
+            
+            // Try known collections first, then resolved name, then fallback
+            const knownName = getCollectionName(addr, null);
+            if (knownName) {
+                return knownName;
+            }
+            
             return resolved || (!baseLooksLikeAddr && base) || shortAddr(addr);
         },
         [nameMap]

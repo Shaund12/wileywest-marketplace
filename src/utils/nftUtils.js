@@ -6,6 +6,7 @@
 import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from './debugUtils';
 import { isVShareContract, getVShareMetadata, vShareLpSvgDataUrl } from './vShareUtils';
+import { getCollectionInfo, isKnownCollection, getCollectionName } from './knownCollections.js';
 
 /**
  * Configuration for marketplace scanning and display
@@ -417,12 +418,30 @@ export const normalizeNFTMetadata = (rawMetadata, contractAddress, tokenId) => {
                 .filter(attr => attr.value !== undefined && attr.value !== null);
         }
         
-        // Process collection info
+        // Process collection info - Enhanced with known collections lookup
+        const knownCollection = getCollectionInfo(contractAddress);
+        
         if (rawMetadata.collection) {
             normalized.collection = {
-                name: rawMetadata.collection.name || null,
-                description: rawMetadata.collection.description || null,
-                image: rawMetadata.collection.image ? resolveIPFSUrl(rawMetadata.collection.image) : null
+                name: rawMetadata.collection.name || knownCollection?.name || null,
+                description: rawMetadata.collection.description || knownCollection?.description || null,
+                image: rawMetadata.collection.image ? resolveIPFSUrl(rawMetadata.collection.image) : null,
+                // Add known collection metadata
+                symbol: knownCollection?.symbol || null,
+                verified: knownCollection?.verified || false,
+                category: knownCollection?.category || null,
+                explorerUrl: knownCollection?.explorerUrl || null
+            };
+        } else if (knownCollection) {
+            // Use known collection data if no metadata collection info
+            normalized.collection = {
+                name: knownCollection.name,
+                description: knownCollection.description,
+                image: null, // No image from known collections registry
+                symbol: knownCollection.symbol,
+                verified: knownCollection.verified,
+                category: knownCollection.category,
+                explorerUrl: knownCollection.explorerUrl
             };
         }
         

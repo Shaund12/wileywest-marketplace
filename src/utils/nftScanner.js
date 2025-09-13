@@ -34,15 +34,15 @@ const EXTENDED_ERC1155_ABI = [
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ];
 
-// Add well-known NFT contracts to force-scan - EXPANDED LIST for comprehensive coverage
-const KNOWN_NFT_CONTRACTS = [
-    '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906', // Pixel Ninja Cats
-    '0x0BE8E03C7cf2F880cD6968E355feae724aB9b5AE', // VMonsters
-    '0x0e4a2D78658aF51800852ca67181B57Bac401F13', // vdex v3
-    '0xE1A5518CEbd226FE2a3251F93A1F6AAef65d3131', // Skoollz
-    '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453', // CrocoDeal 404
-    '0x89207A7F75C9cb7C8f95f0c2517b029BE1AE29b8', // NeonKatz
+import { getKnownNFTContractsArray } from './knownCollections.js';
 
+// Add well-known NFT contracts to force-scan - EXPANDED LIST for comprehensive coverage
+// Updated to use the centralized known collections registry
+const KNOWN_NFT_CONTRACTS = [
+    ...getKnownNFTContractsArray(), // All known collections from the registry
+    '0x0BE8E03C7cf2F880cD6968E355feae724aB9b5AE', // VMonsters (legacy entry)
+    '0x0e4a2D78658aF51800852ca67181B57Bac401F13', // vdex v3 (additional contract)
+    '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453', // CrocoDeal 404 (additional contract)
 ];
 
 // Known ERC20 tokens to exclude
