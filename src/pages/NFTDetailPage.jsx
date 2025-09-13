@@ -5,7 +5,7 @@ import { ethers } from 'ethers';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol } from '../utils/tokenUtils';
-import { loadNFTMetadata } from '../utils/metadataLoader';
+import { loadNFTMetadata, resolveImageUrl } from '../utils/metadataLoader';
 import { normalizeNFTMetadata } from '../utils/nftUtils';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
@@ -39,6 +39,33 @@ export default function NFTDetailPage() {
     const [isEditingPrice, setIsEditingPrice] = useState(false);
     const [newPrice, setNewPrice] = useState('');
     const [newPriceToken, setNewPriceToken] = useState(ethers.ZeroAddress);
+    const [resolvedImageUrl, setResolvedImageUrl] = useState(null);
+    const [imageLoading, setImageLoading] = useState(false);
+    const [imageError, setImageError] = useState(false);
+    const [currentGatewayIndex, setCurrentGatewayIndex] = useState(0);
+    const [ipfsGateways] = useState([
+        'https://ipfs.io/ipfs/',
+        'https://dweb.link/ipfs/',
+        'https://gateway.pinata.cloud/ipfs/',
+        'https://cloudflare-ipfs.com/ipfs/'
+    ]);
+    const [ipfsHash, setIpfsHash] = useState(null);
+
+    // Function to try next IPFS gateway when current one fails
+    const tryNextGateway = useCallback(() => {
+        if (ipfsHash && currentGatewayIndex < ipfsGateways.length - 1) {
+            const nextIndex = currentGatewayIndex + 1;
+            const nextUrl = `${ipfsGateways[nextIndex]}${ipfsHash}`;
+            console.log(`Trying next IPFS gateway (${nextIndex + 1}/${ipfsGateways.length}):`, nextUrl);
+            
+            setCurrentGatewayIndex(nextIndex);
+            setResolvedImageUrl(nextUrl);
+            setImageError(false);
+            
+            return true; // Successfully switched to next gateway
+        }
+        return false; // No more gateways to try
+    }, [ipfsHash, currentGatewayIndex, ipfsGateways]);
 
     // Find the listing for this NFT
     const listing = listings.find(l => 
@@ -54,15 +81,62 @@ export default function NFTDetailPage() {
         const loadNFTData = async () => {
             setLoading(true);
             setError(null);
+            setResolvedImageUrl(null); // Clear previous image
+            setImageLoading(false);
+            setImageError(false);
+            setCurrentGatewayIndex(0);
+            setIpfsHash(null);
 
             try {
                 // Load metadata using our enhanced loader
                 const metadata = await loadNFTMetadata(contractAddress, tokenId, provider);
+                console.log('Loaded metadata:', metadata); // Debug log
+                
                 setNftData({
                     contractAddress,
                     tokenId,
                     metadata
                 });
+
+                // Resolve image URL if needed
+                if (metadata?.image || metadata?.imageUrl) {
+                    const rawImageUrl = metadata?.image || metadata?.imageUrl;
+                    console.log('Raw image URL:', rawImageUrl); // Debug log
+                    
+                    // Set loading state for image resolution
+                    setImageLoading(true);
+                    setImageError(false);
+                    
+                    // For IPFS URLs, try multiple gateways directly
+                    if (rawImageUrl.startsWith('ipfs://') || rawImageUrl.includes('/ipfs/')) {
+                        let hash = rawImageUrl;
+                        if (rawImageUrl.startsWith('ipfs://')) {
+                            hash = rawImageUrl.replace('ipfs://', '');
+                        } else if (rawImageUrl.includes('/ipfs/')) {
+                            hash = rawImageUrl.split('/ipfs/')[1];
+                        }
+                        
+                        // Store hash for retry logic
+                        setIpfsHash(hash);
+                        setCurrentGatewayIndex(0);
+                        
+                        // Try the first gateway immediately (fast path)
+                        const preferredUrl = `${ipfsGateways[0]}${hash}`;
+                        console.log('Trying preferred IPFS URL:', preferredUrl);
+                        setResolvedImageUrl(preferredUrl);
+                        setImageLoading(false);
+                    } else {
+                        // For non-IPFS URLs, use as-is
+                        console.log('Using direct image URL:', rawImageUrl);
+                        setResolvedImageUrl(rawImageUrl);
+                        setIpfsHash(null);
+                        setImageLoading(false);
+                    }
+                } else {
+                    console.log('No image URL found in metadata'); // Debug log
+                    setResolvedImageUrl(null);
+                    setImageLoading(false);
+                }
 
                 // Load collection info
                 const contract = new ethers.Contract(contractAddress, ERC721_METADATA_ABI, provider);
@@ -190,7 +264,7 @@ export default function NFTDetailPage() {
     }
 
     const metadata = nftData.metadata;
-    const imageUrl = metadata?.image || metadata?.imageUrl;
+    const imageUrl = resolvedImageUrl || metadata?.image || metadata?.imageUrl;
     const isListed = !!listing;
     const isOwnedByUser = isOwner && actualOwner;
     const canEditPrice = isOwnedByUser && isListed;
@@ -218,19 +292,47 @@ export default function NFTDetailPage() {
                     {/* Image Section */}
                     <div className="nft-detail-image-section">
                         <div className="nft-image-container">
-                            {imageUrl && (
+                            {imageLoading && (
+                                <div className="nft-image-loading" style={{display: 'flex'}}>
+                                    <span className="loading-text">Loading image...</span>
+                                </div>
+                            )}
+                            {imageUrl && !imageLoading && (
                                 <img 
                                     src={imageUrl} 
                                     alt={metadata?.name || `NFT #${tokenId}`}
                                     className="nft-image"
+                                    onLoad={() => {
+                                        console.log('Image loaded successfully:', imageUrl);
+                                        setImageError(false);
+                                    }}
                                     onError={(e) => {
+                                        console.warn('Image failed to load:', imageUrl);
+                                        
+                                        // Try next IPFS gateway if available
+                                        if (tryNextGateway()) {
+                                            console.log('Switched to next IPFS gateway, retrying...');
+                                            return; // Don't show error yet, try next gateway
+                                        }
+                                        
+                                        // All gateways failed or not IPFS
+                                        setImageError(true);
                                         e.target.style.display = 'none';
                                         e.target.nextSibling.style.display = 'flex';
                                     }}
                                 />
                             )}
-                            <div className="nft-image-placeholder" style={imageUrl ? {display: 'none'} : {display: 'flex'}}>
-                                <span className="placeholder-text">NFT #{tokenId}</span>
+                            <div 
+                                className="nft-image-placeholder" 
+                                style={
+                                    (imageUrl && !imageLoading && !imageError) 
+                                        ? {display: 'none'} 
+                                        : {display: 'flex'}
+                                }
+                            >
+                                <span className="placeholder-text">
+                                    {imageError ? '⚠️ Image failed to load' : `NFT #${tokenId}`}
+                                </span>
                             </div>
                         </div>
 
