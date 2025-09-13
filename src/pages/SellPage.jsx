@@ -394,6 +394,12 @@ function SellPage() {
     const [loadingCollections, setLoadingCollections] = useState(false);
     const [contractNames, setContractNames] = useState({});
     const [inputMode, setInputMode] = useState('manual'); // 'dropdown' or 'manual'
+    
+    // Token metadata for dropdown images
+    const [tokenMetadata, setTokenMetadata] = useState({});
+    const [loadingTokenMetadata, setLoadingTokenMetadata] = useState(false);
+    const [tokenDropdownOpen, setTokenDropdownOpen] = useState(false);
+    const dropdownRef = useRef(null);
 
     const [metadata, setMetadata] = useState(null);
     const [nftImage, setNftImage] = useState('');
@@ -525,6 +531,7 @@ function SellPage() {
         if (contractAddress === 'manual') {
             setInputMode('manual');
             setAvailableTokenIds([]);
+            setTokenMetadata({});
             setFormData(prev => ({ ...prev, nftContract: '', tokenId: '' }));
             return;
         }
@@ -543,8 +550,120 @@ function SellPage() {
                 nftContract: collection.contractAddress,
                 tokenId: '' 
             }));
+            
+            // Load metadata for tokens to show images
+            loadTokenMetadata(contractAddress, collection.tokens);
         }
     };
+
+    // Load metadata for available tokens to show images in dropdown
+    const loadTokenMetadata = async (contractAddress, tokens) => {
+        if (!tokens.length || !provider) return;
+        
+        setLoadingTokenMetadata(true);
+        const metadataMap = {};
+        
+        try {
+            // Load metadata for each token
+            for (const token of tokens.slice(0, 20)) { // Limit to first 20 for performance
+                try {
+                    const metadataKey = `${contractAddress.toLowerCase()}-${token.tokenId}`;
+                    
+                    // Try to get metadata using existing functions
+                    const tokenContract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
+                    let tokenURI = '';
+                    
+                    try {
+                        tokenURI = await tokenContract.tokenURI(token.tokenId);
+                    } catch (error) {
+                        // Try ERC1155 if ERC721 fails
+                        try {
+                            const tokenContract1155 = new ethers.Contract(contractAddress, ERC1155_ABI, provider);
+                            tokenURI = await tokenContract1155.uri(token.tokenId);
+                        } catch (error1155) {
+                            debugWarn(`Failed to get tokenURI for ${metadataKey}:`, error1155);
+                            continue;
+                        }
+                    }
+                    
+                    if (tokenURI) {
+                        const candidates = metadataCandidatesFromUri(tokenURI, token.tokenId, token.type === 'ERC1155');
+                        const { json: metadata } = await fetchJsonFromCandidates(candidates, 5000);
+                        
+                        if (metadata) {
+                            // Get image URLs
+                            const imageUrl = metadata.image || metadata.image_url || metadata.imageUrl;
+                            let resolvedImageUrl = '';
+                            
+                            if (imageUrl) {
+                                const imageCandidates = expandToCandidateUrls(imageUrl);
+                                try {
+                                    resolvedImageUrl = await findFirstWorkingImage(imageCandidates, 3000);
+                                } catch {
+                                    // Use fallback image
+                                    resolvedImageUrl = svgFallbackDataUrl({
+                                        seed: metadataKey,
+                                        width: 60,
+                                        height: 60,
+                                        title: metadata.name || `Token #${token.tokenId}`
+                                    });
+                                }
+                            } else {
+                                resolvedImageUrl = svgFallbackDataUrl({
+                                    seed: metadataKey,
+                                    width: 60,
+                                    height: 60,
+                                    title: metadata.name || `Token #${token.tokenId}`
+                                });
+                            }
+                            
+                            metadataMap[metadataKey] = {
+                                name: metadata.name || `Token #${token.tokenId}`,
+                                description: metadata.description || '',
+                                image: resolvedImageUrl,
+                                ...token
+                            };
+                        }
+                    }
+                } catch (error) {
+                    debugWarn(`Failed to load metadata for token ${token.tokenId}:`, error);
+                    // Add fallback metadata
+                    const metadataKey = `${contractAddress.toLowerCase()}-${token.tokenId}`;
+                    metadataMap[metadataKey] = {
+                        name: `Token #${token.tokenId}`,
+                        description: '',
+                        image: svgFallbackDataUrl({
+                            seed: metadataKey,
+                            width: 60,
+                            height: 60,
+                            title: `Token #${token.tokenId}`
+                        }),
+                        ...token
+                    };
+                }
+            }
+        } finally {
+            setTokenMetadata(metadataMap);
+            setLoadingTokenMetadata(false);
+        }
+    };
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+                setTokenDropdownOpen(false);
+            }
+        };
+
+        if (tokenDropdownOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [tokenDropdownOpen]);
 
     // Handle token ID selection from dropdown
     const handleTokenIdSelection = (tokenId) => {
@@ -1423,21 +1542,126 @@ function SellPage() {
                                         {availableTokenIds.length > 0 && (
                                             <div className="form-group">
                                                 <label htmlFor="tokenIdDropdown">Select Token ID</label>
-                                                <select
-                                                    id="tokenIdDropdown"
-                                                    className="input"
-                                                    value={formData.tokenId}
-                                                    onChange={(e) => handleTokenIdSelection(e.target.value)}
-                                                    required
-                                                >
-                                                    <option value="">Select a token ID</option>
-                                                    {availableTokenIds.map((token) => (
-                                                        <option key={token.tokenId} value={token.tokenId}>
-                                                            Token ID #{token.tokenId}
-                                                            {token.type === 'ERC1155' ? ` (Balance: ${token.balance})` : ''}
-                                                        </option>
-                                                    ))}
-                                                </select>
+                                                {loadingTokenMetadata ? (
+                                                    <div className="loading-tokens">
+                                                        <div className="loader"></div>
+                                                        <p>Loading NFT previews...</p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="token-dropdown-with-images" ref={dropdownRef}>
+                                                        <div 
+                                                            className={`token-dropdown-trigger ${tokenDropdownOpen ? 'open' : ''}`}
+                                                            onClick={() => setTokenDropdownOpen(!tokenDropdownOpen)}
+                                                        >
+                                                            {formData.tokenId ? (
+                                                                <div className="selected-token">
+                                                                    {(() => {
+                                                                        const selectedToken = availableTokenIds.find(t => t.tokenId === formData.tokenId);
+                                                                        const metadataKey = `${formData.nftContract.toLowerCase()}-${formData.tokenId}`;
+                                                                        const metadata = tokenMetadata[metadataKey];
+                                                                        return (
+                                                                            <>
+                                                                                {metadata?.image ? (
+                                                                                    <img 
+                                                                                        src={metadata.image} 
+                                                                                        alt={metadata.name}
+                                                                                        className="token-preview-image"
+                                                                                        onError={(e) => {
+                                                                                            e.target.src = svgFallbackDataUrl({
+                                                                                                seed: metadataKey,
+                                                                                                width: 40,
+                                                                                                height: 40,
+                                                                                                title: metadata?.name || `Token #${formData.tokenId}`
+                                                                                            });
+                                                                                        }}
+                                                                                    />
+                                                                                ) : (
+                                                                                    <img 
+                                                                                        src={svgFallbackDataUrl({
+                                                                                            seed: metadataKey,
+                                                                                            width: 40,
+                                                                                            height: 40,
+                                                                                            title: `Token #${formData.tokenId}`
+                                                                                        })}
+                                                                                        alt={`Token #${formData.tokenId}`}
+                                                                                        className="token-preview-image"
+                                                                                    />
+                                                                                )}
+                                                                                <div className="token-info">
+                                                                                    <div className="token-name">
+                                                                                        {metadata?.name || `Token #${formData.tokenId}`}
+                                                                                    </div>
+                                                                                    <div className="token-details">
+                                                                                        ID: {formData.tokenId}
+                                                                                        {selectedToken?.type === 'ERC1155' ? ` • Balance: ${selectedToken.balance}` : ''}
+                                                                                    </div>
+                                                                                </div>
+                                                                            </>
+                                                                        );
+                                                                    })()}
+                                                                </div>
+                                                            ) : (
+                                                                <span className="placeholder">Select a token ID</span>
+                                                            )}
+                                                            <div className="dropdown-arrow">▼</div>
+                                                        </div>
+                                                        
+                                                        {tokenDropdownOpen && (
+                                                            <div className="token-dropdown-menu">
+                                                                {availableTokenIds.map((token) => {
+                                                                    const metadataKey = `${formData.nftContract.toLowerCase()}-${token.tokenId}`;
+                                                                    const metadata = tokenMetadata[metadataKey];
+                                                                    return (
+                                                                        <div
+                                                                            key={token.tokenId}
+                                                                            className={`token-option ${formData.tokenId === token.tokenId ? 'selected' : ''}`}
+                                                                            onClick={() => {
+                                                                                handleTokenIdSelection(token.tokenId);
+                                                                                setTokenDropdownOpen(false);
+                                                                            }}
+                                                                        >
+                                                                            {metadata?.image ? (
+                                                                                <img 
+                                                                                    src={metadata.image} 
+                                                                                    alt={metadata.name}
+                                                                                    className="token-preview-image"
+                                                                                    onError={(e) => {
+                                                                                        e.target.src = svgFallbackDataUrl({
+                                                                                            seed: metadataKey,
+                                                                                            width: 40,
+                                                                                            height: 40,
+                                                                                            title: metadata?.name || `Token #${token.tokenId}`
+                                                                                        });
+                                                                                    }}
+                                                                                />
+                                                                            ) : (
+                                                                                <img 
+                                                                                    src={svgFallbackDataUrl({
+                                                                                        seed: metadataKey,
+                                                                                        width: 40,
+                                                                                        height: 40,
+                                                                                        title: `Token #${token.tokenId}`
+                                                                                    })}
+                                                                                    alt={`Token #${token.tokenId}`}
+                                                                                    className="token-preview-image"
+                                                                                />
+                                                                            )}
+                                                                            <div className="token-info">
+                                                                                <div className="token-name">
+                                                                                    {metadata?.name || `Token #${token.tokenId}`}
+                                                                                </div>
+                                                                                <div className="token-details">
+                                                                                    ID: {token.tokenId}
+                                                                                    {token.type === 'ERC1155' ? ` • Balance: ${token.balance}` : ''}
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </>

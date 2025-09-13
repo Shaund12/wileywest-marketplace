@@ -50,6 +50,11 @@ function CollectionAliasRedirect() {
     return <Navigate to={`/collections/${address}`} replace />;
 }
 
+// Redirect from old my-auctions page to profile with auctions tab
+function MyAuctionsRedirect() {
+    return <Navigate to="/profile?tab=myAuctions" replace />;
+}
+
 // Scroll to hash (anchors) or top on route change
 function ScrollToTop() {
     const { pathname, hash } = useLocation();
@@ -299,7 +304,7 @@ function App() {
                                                         {/* Auction routes - always enabled */}
                                                         <Route path="/auctions/create" element={<CreateAuctionPage />} />
                                                         <Route path="/auctions/:id" element={<AuctionDetailPage />} />
-                                                        <Route path="/my-auctions" element={<MyAuctionsPage />} />
+                                                        <Route path="/my-auctions" element={<MyAuctionsRedirect />} />
                                                         <Route path="/admin/paths" element={<AdminPathsPage />} />
                                                         <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
                         
