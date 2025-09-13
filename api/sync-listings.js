@@ -48,18 +48,6 @@ const MARKETPLACE_ABI = [
         ],
         name: 'ListingCanceled',
         type: 'event'
-    },
-    {
-        anonymous: false,
-        inputs: [
-            { indexed: true, internalType: 'uint256', name: 'listingId', type: 'uint256' },
-            { indexed: true, internalType: 'address', name: 'buyer', type: 'address' },
-            { indexed: false, internalType: 'uint256', name: 'quantity', type: 'uint256' },
-            { indexed: false, internalType: 'uint256', name: 'totalPrice', type: 'uint256' },
-            { indexed: false, internalType: 'address', name: 'paymentToken', type: 'address' }
-        ],
-        name: 'NFTPurchased',
-        type: 'event'
     }
 ];
 
@@ -145,19 +133,6 @@ async function fetchCanceledListings(fromBlock, toBlock) {
     return canceled;
 }
 
-async function fetchPurchasedListings(fromBlock, toBlock) {
-    const purchaseEv = marketplace.filters.NFTPurchased();
-    const purchased = new Set();
-    for (let start = fromBlock; start <= toBlock; start += CONFIG.LISTING_EVENT_CHUNK) {
-        const end = Math.min(start + CONFIG.LISTING_EVENT_CHUNK - 1, toBlock);
-        try {
-            const events = await marketplace.queryFilter(purchaseEv, start, end);
-            events.forEach(e => purchased.add(e.args.listingId.toString()));
-        } catch { }
-    }
-    return purchased;
-}
-
 async function fetchListingOnChain(listingId) {
     try {
         const data = await marketplace.listings(listingId);
@@ -219,7 +194,6 @@ async function syncListings(fullRescan = false) {
     }
     const newIds = await discoverNewListingIds(fullRescan ? 0 : fromBlock, latest);
     const canceled = await fetchCanceledListings(fullRescan ? 0 : fromBlock, latest);
-    const purchased = await fetchPurchasedListings(fullRescan ? 0 : fromBlock, latest);
     // Fetch on-chain details
     const listingsMap = new Map();
     const chunks = [];
@@ -255,7 +229,7 @@ async function syncListings(fullRescan = false) {
         price_per_unit: l.pricePerUnit,
         payment_token: l.paymentToken.toLowerCase(),
         is_erc1155: l.isERC1155,
-        active: l.active && !canceled.has(l.id) && !purchased.has(l.id),
+        active: l.active && !canceled.has(l.id),
         metadata: l.metadata || {},
         image_url: l.image || null,
         name: l.name || null,
@@ -277,25 +251,11 @@ async function syncListings(fullRescan = false) {
         }
     }
 
-    // Mark newly purchased (only if listing exists and active)
-    if (purchased.size) {
-        for (const pId of purchased) {
-            await supabase.from('marketplace_listings')
-                .update({ 
-                    active: false, 
-                    sale_status: 'sold',
-                    updated_at: new Date().toISOString() 
-                })
-                .eq('listing_id', pId);
-        }
-    }
-
     await setLastSyncMeta(latest);
     return {
         newListingIds: newIds.length,
         upserted: upsertRows.length,
         canceled: canceled.size,
-        purchased: purchased.size,
         latestBlock: latest,
         fromBlock
     };
