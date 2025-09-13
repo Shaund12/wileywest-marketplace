@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { ethers } from 'ethers'
 import { usePremiumWallet } from '../context/PremiumWalletContext'
 import ERC20ABI from '../abi/ERC20.json'
+import { convertToUSDCValue } from '../utils/tokenUtils'
 
 // Token addresses from environment
 const USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF'
@@ -11,9 +12,9 @@ const WVTRU_ADDRESS = import.meta.env.VITE_WVTRU_ADDRESS || '0x3ccc3F22462cAe347
 export function useTokenBalances() {
   const { address, provider, isConnected } = usePremiumWallet()
   const [balances, setBalances] = useState({
-    vtru: { value: '0', formatted: '0.000', loading: true, error: null },
-    usdc: { value: '0', formatted: '0.000', loading: true, error: null },
-    wvtru: { value: '0', formatted: '0.000', loading: true, error: null },
+    vtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: true, error: null },
+    usdc: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: true, error: null },
+    wvtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: true, error: null },
   })
   const [isLoading, setIsLoading] = useState(false)
 
@@ -47,9 +48,27 @@ export function useTokenBalances() {
       const numericValue = parseFloat(formatted)
       const displayValue = numericValue.toFixed(3)
 
+      // Calculate USDC value
+      let usdcValue = '0.00'
+      try {
+        if (symbol === 'USDC') {
+          // USDC is already 1:1 with USD
+          usdcValue = numericValue.toFixed(2)
+        } else {
+          // Convert other tokens to USDC value
+          const tokenAddressForConversion = tokenAddress === 'native' ? ethers.ZeroAddress : tokenAddress
+          const usdcAmount = await convertToUSDCValue(balance.toString(), tokenAddressForConversion, provider)
+          usdcValue = usdcAmount.toFixed(2)
+        }
+      } catch (error) {
+        console.warn(`Failed to get USDC value for ${symbol}:`, error)
+        usdcValue = '0.00'
+      }
+
       return {
         value: balance.toString(),
         formatted: displayValue,
+        usdcValue,
         loading: false,
         error: null
       }
@@ -58,6 +77,7 @@ export function useTokenBalances() {
       return {
         value: '0',
         formatted: '0.000',
+        usdcValue: '0.00',
         loading: false,
         error: error.message
       }
@@ -67,9 +87,9 @@ export function useTokenBalances() {
   const fetchAllBalances = useCallback(async () => {
     if (!isConnected || !address || !provider) {
       setBalances({
-        vtru: { value: '0', formatted: '0.000', loading: false, error: 'Not connected' },
-        usdc: { value: '0', formatted: '0.000', loading: false, error: 'Not connected' },
-        wvtru: { value: '0', formatted: '0.000', loading: false, error: 'Not connected' },
+        vtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: 'Not connected' },
+        usdc: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: 'Not connected' },
+        wvtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: 'Not connected' },
       })
       return
     }
@@ -86,21 +106,21 @@ export function useTokenBalances() {
 
       setBalances({
         vtru: vtruResult.status === 'fulfilled' ? vtruResult.value : {
-          value: '0', formatted: '0.000', loading: false, error: vtruResult.reason?.message || 'Failed to fetch'
+          value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: vtruResult.reason?.message || 'Failed to fetch'
         },
         usdc: usdcResult.status === 'fulfilled' ? usdcResult.value : {
-          value: '0', formatted: '0.000', loading: false, error: usdcResult.reason?.message || 'Failed to fetch'
+          value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: usdcResult.reason?.message || 'Failed to fetch'
         },
         wvtru: wvtruResult.status === 'fulfilled' ? wvtruResult.value : {
-          value: '0', formatted: '0.000', loading: false, error: wvtruResult.reason?.message || 'Failed to fetch'
+          value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: wvtruResult.reason?.message || 'Failed to fetch'
         },
       })
     } catch (error) {
       console.error('Error fetching balances:', error)
       setBalances({
-        vtru: { value: '0', formatted: '0.000', loading: false, error: error.message },
-        usdc: { value: '0', formatted: '0.000', loading: false, error: error.message },
-        wvtru: { value: '0', formatted: '0.000', loading: false, error: error.message },
+        vtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: error.message },
+        usdc: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: error.message },
+        wvtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: error.message },
       })
     } finally {
       setIsLoading(false)

@@ -18,7 +18,7 @@ function shortenAddress(address) {
 
 // Token balance display component
 function TokenBalance({ symbol, balance, icon = '🪙', className = '' }) {
-  const { formatted, loading, error } = balance
+  const { formatted, usdcValue, loading, error } = balance
   
   return (
     <div className={cn("flex items-center justify-between py-1", className)}>
@@ -34,7 +34,12 @@ function TokenBalance({ symbol, balance, icon = '🪙', className = '' }) {
         ) : error ? (
           <span className="text-xs text-destructive">Error</span>
         ) : (
-          <span className="text-sm font-mono">{formatted}</span>
+          <div className="space-y-0">
+            <div className="text-sm font-mono">{formatted}</div>
+            {symbol !== 'USDC' && usdcValue && parseFloat(usdcValue) > 0 && (
+              <div className="text-xs text-muted-foreground">${usdcValue}</div>
+            )}
+          </div>
         )}
       </div>
     </div>
