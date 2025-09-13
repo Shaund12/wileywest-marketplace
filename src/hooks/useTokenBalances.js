@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ethers } from 'ethers'
 import { usePremiumWallet } from '../context/PremiumWalletContext'
 import ERC20ABI from '../abi/ERC20.json'
@@ -17,6 +17,21 @@ export function useTokenBalances() {
     wvtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: true, error: null },
   })
   const [isLoading, setIsLoading] = useState(false)
+  
+  // Calculate total portfolio value in USDC
+  const totalUsdcValue = useMemo(() => {
+    const values = Object.values(balances)
+    if (values.some(balance => balance.loading || balance.error)) {
+      return '0.00'
+    }
+    
+    const total = values.reduce((sum, balance) => {
+      const value = parseFloat(balance.usdcValue || '0')
+      return sum + value
+    }, 0)
+    
+    return total.toFixed(2)
+  }, [balances])
 
   const fetchBalance = useCallback(async (tokenAddress, decimals = 18, symbol = 'TOKEN') => {
     if (!provider || !address) {
@@ -136,6 +151,7 @@ export function useTokenBalances() {
   return {
     balances,
     isLoading,
+    totalUsdcValue,
     refetch: fetchAllBalances,
     fetchBalance,
   }

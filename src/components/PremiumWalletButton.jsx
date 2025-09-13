@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Copy, ExternalLink, LogOut, User, Check, Coins, RefreshCw } from 'lucide-react'
+import { Copy, ExternalLink, LogOut, User, Check, Coins, RefreshCw, UserIcon } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAppKit } from '@reown/appkit/react'
 import { usePremiumWallet } from '../context/PremiumWalletContext'
@@ -9,6 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar'
 import { cn } from '../lib/utils'
 import blockies from 'ethereum-blockies-base64'
+import { Link } from 'react-router-dom'
 
 // Shorten address utility
 function shortenAddress(address) {
@@ -49,7 +50,7 @@ function TokenBalance({ symbol, balance, icon = '🪙', className = '' }) {
 export function PremiumWalletButton() {
   const { open } = useAppKit()
   const { address, isConnected, isConnecting, disconnect, isCorrectNetwork, switchToVitruveo } = usePremiumWallet()
-  const { balances, isLoading: balancesLoading, refetch: refetchBalances } = useTokenBalances()
+  const { balances, isLoading: balancesLoading, totalUsdcValue, refetch: refetchBalances } = useTokenBalances()
   const [copied, setCopied] = useState(false)
 
   const handleCopyAddress = async () => {
@@ -217,11 +218,31 @@ export function PremiumWalletButton() {
                   icon="🔄" 
                 />
               </div>
+              
+              {/* Total Portfolio Value */}
+              {parseFloat(totalUsdcValue) > 0 && (
+                <div className="mt-3 pt-2 border-t border-border">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-muted-foreground">Total Value</span>
+                    <span className="text-sm font-semibold text-neon-green">${totalUsdcValue}</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {/* Actions */}
           <div className="py-1">
+            <DropdownMenuItem asChild>
+              <Link 
+                to="/profile" 
+                className="flex items-center space-x-2 cursor-pointer w-full"
+              >
+                <UserIcon className="h-4 w-4" />
+                <span>View Profile</span>
+              </Link>
+            </DropdownMenuItem>
+
             <DropdownMenuItem 
               onClick={handleCopyAddress}
               className="flex items-center space-x-2 cursor-pointer"
