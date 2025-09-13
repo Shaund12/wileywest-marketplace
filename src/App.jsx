@@ -1,6 +1,7 @@
-﻿import './styles.css';
+﻿import './globals.css';
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
+import { Toaster } from 'sonner';
 import MarketplaceAbi from './abi/VTRUNFTMarketplace.json';
 import { Analytics } from '@vercel/analytics/react';
 
@@ -299,6 +300,17 @@ function App() {
                             <Footer />
                         </div>
                         {import.meta.env.PROD && <Analytics />}
+                        <Toaster 
+                            position="top-right"
+                            toastOptions={{
+                                style: {
+                                    background: 'rgba(17, 25, 40, 0.95)',
+                                    border: '1px solid rgba(0, 255, 255, 0.3)',
+                                    color: '#00ffff',
+                                    backdropFilter: 'blur(16px)',
+                                },
+                            }}
+                        />
                     </BrowserRouter>
                 </MarketplaceProvider>
             </WalletProvider>

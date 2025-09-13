@@ -2,6 +2,8 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { ethers } from 'ethers';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Sparkles, TrendingUp, Users, DollarSign, BarChart3, RefreshCw } from 'lucide-react';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { useSupabase } from '../context/SupabaseContext';
@@ -10,6 +12,11 @@ import { isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
 import ListingCard from '../components/ListingCard';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
+import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
+import { HolographicCard } from '../components/ui/holographic-card';
+import { showToast } from '../components/ui/toast';
+import { cn } from '../lib/utils';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import './HomePage.css';
 
@@ -763,83 +770,191 @@ function HomePage() {
     // Lucky pick handler (fun)
     const openLuckyCollection = () => {
         const pool = listings || [];
-        if (!pool.length) return;
-        const pick = pool[Math.floor(Math.random() * pool.length)];
-        const addr = (pick?.nftContract || '').toLowerCase();
-        if (addr) window.location.href = `/collections/${addr}`;
+        if (!pool.length) {
+            showToast('No collections available for lucky jump!', 'warning');
+            return;
+        }
+        
+        showToast('🚀 Warping to a random collection...', 'info');
+        
+        setTimeout(() => {
+            const pick = pool[Math.floor(Math.random() * pool.length)];
+            const addr = (pick?.nftContract || '').toLowerCase();
+            if (addr) {
+                showToast('✨ Lucky jump complete!', 'success');
+                window.location.href = `/collections/${addr}`;
+            }
+        }, 1000);
     };
 
     return (
-        <div className="hp">
+        <div className="min-h-screen bg-cyber-dark">
             {/* HERO */}
-            <section className="hp-hero">
-                <div className="hp-hero__bg" aria-hidden />
-                <div className="hp-hero__content">
-                    <h1>
-                        Trade in the <span className="hp-glow">neon shadows</span>.
-                        <br /> Own the <span className="hp-glow-2">future</span>.
-                    </h1>
-                    <p className="hp-subtitle">
-                        BlockDust is a fast, gas-light NFT marketplace on Vitruveo. Discover rare mints,
-                        support creators, and flip collectibles—safely and in style.
-                    </p>
-                    <div className="hp-cta">
-                        <Link to="/marketplace" className="hp-btn hp-btn--primary">Explore NFTs</Link>
-                        <Link to="/sell" className="hp-btn">List Your NFT</Link>
-                        <Link to="/auctions/create" className="hp-btn">Create Auction</Link>
-                        <button type="button" className="hp-btn hp-btn--ghost hp-btn--lucky" onClick={openLuckyCollection} title="Warp to a random collection">
-                            ✨ Lucky Jump
-                        </button>
-                    </div>
-
-                    {/* Quick mini-stats */}
-                    <div className="hp-mini">
-                        <div className="hp-mini__card" title="Total live listings">
-                            <div className="hp-mini__label">Active Listings</div>
-                            <div className="hp-mini__value">{totalListingsAnim.toLocaleString()}</div>
-                        </div>
-
-                        <div className="hp-mini__card" title="All-time market volume (USDC)">
-                            <div className="hp-mini__label">Market Volume</div>
-                            <div className="hp-mini__value">{formatUSD(totalVolumeAnim)}</div>
-                        </div>
-
-                        <div className="hp-mini__card" title="Sum of current listing prices (USDC)">
-                            <div className="hp-mini__label">Live Listing Value</div>
-                            <div className="hp-mini__value">{formatUSD(currentVolAnim)}</div>
-                        </div>
-
-                        <div
-                            className="hp-mini__card hp-mini__card--floor"
-                            title="Lowest active listing price across the market (USDC)"
+            <motion.section 
+                className="relative overflow-hidden bg-gradient-to-br from-cyber-dark via-cyber-light to-cyber-accent"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.8 }}
+            >
+                {/* Animated background grid */}
+                <div className="absolute inset-0 cyber-bg opacity-30" aria-hidden />
+                <div className="absolute inset-0 bg-gradient-to-r from-neon-cyan/5 via-transparent to-neon-pink/5 animate-pulse" />
+                
+                <div className="container mx-auto px-4 py-20 relative z-10">
+                    <motion.div 
+                        className="text-center max-w-4xl mx-auto"
+                        initial={{ y: 50, opacity: 0 }}
+                        animate={{ y: 0, opacity: 1 }}
+                        transition={{ delay: 0.2, duration: 0.8 }}
+                    >
+                        <motion.h1 
+                            className="text-4xl md:text-6xl font-bold mb-6"
+                            initial={{ scale: 0.9 }}
+                            animate={{ scale: 1 }}
+                            transition={{ delay: 0.4, duration: 0.6 }}
                         >
-                            <div className="hp-mini__label">
-                                Floor (USDC)
-                                <span
-                                    className={`hp-badge hp-badge--${floorFromStats ? 'stat' : 'live'}`}
-                                    aria-label={`Floor source: ${floorFromStats ? 'Stat' : 'Live'}`}
-                                    title={`Source: ${floorFromStats ? 'Backend stat' : 'Derived from listings'}`}
-                                >
-                                    {floorFromStats ? 'Stat' : 'Live'}
-                                </span>
-                                <button
-                                    className="hp-mini__refresh"
-                                    onClick={computeLiveFloor}
-                                    type="button"
-                                    title="Recalculate live floor"
-                                >
-                                    ↻
-                                </button>
-                            </div>
-                            <div className="hp-mini__value">
-                                {floorLoading ? '…' : formatUSD(floorUSDC)}
-                            </div>
-                        </div>
-                    </div>
+                            Trade in the{" "}
+                            <motion.span 
+                                className="neon-text-cyan animate-cyber-glow"
+                                whileHover={{ scale: 1.05 }}
+                            >
+                                neon shadows
+                            </motion.span>
+                            .<br />
+                            Own the{" "}
+                            <motion.span 
+                                className="neon-text-pink animate-cyber-glow"
+                                whileHover={{ scale: 1.05 }}
+                            >
+                                future
+                            </motion.span>
+                            .
+                        </motion.h1>
+                        
+                        <motion.p 
+                            className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ delay: 0.6, duration: 0.6 }}
+                        >
+                            BlockDust is a fast, gas-light NFT marketplace on Vitruveo. Discover rare mints,
+                            support creators, and flip collectibles—safely and in style.
+                        </motion.p>
+                        
+                        <motion.div 
+                            className="flex flex-wrap justify-center gap-4 mb-12"
+                            initial={{ y: 30, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            transition={{ delay: 0.8, duration: 0.6 }}
+                        >
+                            <Button asChild variant="cyber" size="lg" className="btn-hover-lift">
+                                <Link to="/marketplace">Explore NFTs</Link>
+                            </Button>
+                            <Button asChild variant="neon" size="lg" className="btn-hover-glow">
+                                <Link to="/sell">List Your NFT</Link>
+                            </Button>
+                            <Button asChild variant="neon-pink" size="lg" className="btn-hover-glow">
+                                <Link to="/auctions/create">Create Auction</Link>
+                            </Button>
+                            <Button 
+                                variant="ghost" 
+                                size="lg" 
+                                onClick={openLuckyCollection}
+                                className="neon-border-green hover:bg-neon-green/10"
+                                title="Warp to a random collection"
+                            >
+                                <Sparkles className="mr-2 h-4 w-4" />
+                                Lucky Jump
+                            </Button>
+                        </motion.div>
 
-                    {status && <div className="hp-status">{status}</div>}
+                        {/* Quick mini-stats */}
+                        <motion.div 
+                            className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto"
+                            initial={{ y: 50, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            transition={{ delay: 1, duration: 0.6 }}
+                        >
+                            <HolographicCard variant="neon" size="sm" className="text-center">
+                                <div className="text-sm text-muted-foreground mb-1">Active Listings</div>
+                                <motion.div 
+                                    className="text-2xl font-bold text-neon-cyan"
+                                    key={totalListingsAnim}
+                                    initial={{ scale: 1.2 }}
+                                    animate={{ scale: 1 }}
+                                    transition={{ duration: 0.3 }}
+                                >
+                                    {totalListingsAnim.toLocaleString()}
+                                </motion.div>
+                            </HolographicCard>
+
+                            <HolographicCard variant="cyber" size="sm" className="text-center">
+                                <div className="text-sm text-muted-foreground mb-1">Market Volume</div>
+                                <motion.div 
+                                    className="text-2xl font-bold text-primary"
+                                    key={totalVolumeAnim}
+                                    initial={{ scale: 1.2 }}
+                                    animate={{ scale: 1 }}
+                                    transition={{ duration: 0.3 }}
+                                >
+                                    {formatUSD(totalVolumeAnim)}
+                                </motion.div>
+                            </HolographicCard>
+
+                            <HolographicCard variant="neon" size="sm" className="text-center">
+                                <div className="text-sm text-muted-foreground mb-1">Live Listing Value</div>
+                                <motion.div 
+                                    className="text-2xl font-bold text-neon-green"
+                                    key={currentVolAnim}
+                                    initial={{ scale: 1.2 }}
+                                    animate={{ scale: 1 }}
+                                    transition={{ duration: 0.3 }}
+                                >
+                                    {formatUSD(currentVolAnim)}
+                                </motion.div>
+                            </HolographicCard>
+
+                            <HolographicCard variant="holographic" size="sm" className="text-center">
+                                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-1">
+                                    Floor (USDC)
+                                    <Badge variant={floorFromStats ? "neon-green" : "neon"} className="text-xs">
+                                        {floorFromStats ? 'Stat' : 'Live'}
+                                    </Badge>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={computeLiveFloor}
+                                        className="h-5 w-5 p-0"
+                                        title="Recalculate live floor"
+                                    >
+                                        <RefreshCw className={cn("h-3 w-3", floorLoading && "animate-spin")} />
+                                    </Button>
+                                </div>
+                                <motion.div 
+                                    className="text-2xl font-bold text-neon-pink"
+                                    key={floorUSDC}
+                                    initial={{ scale: 1.2 }}
+                                    animate={{ scale: 1 }}
+                                    transition={{ duration: 0.3 }}
+                                >
+                                    {floorLoading ? '…' : formatUSD(floorUSDC)}
+                                </motion.div>
+                            </HolographicCard>
+                        </motion.div>
+
+                        {status && (
+                            <motion.div 
+                                className="mt-6 text-center text-muted-foreground"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ delay: 1.2 }}
+                            >
+                                {status}
+                            </motion.div>
+                        )}
+                    </motion.div>
                 </div>
-            </section>
+            </motion.section>
 
             {/* FEATURED */}
             <section className="hp-featured">
