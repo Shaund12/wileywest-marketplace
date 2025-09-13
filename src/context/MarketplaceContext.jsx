@@ -23,6 +23,49 @@ import {
 
 const MarketplaceContext = createContext();
 
+// Helper function to generate mock test sales data for interface demonstration
+const generateMockSalesData = () => {
+    const now = Date.now();
+    const hour = 60 * 60 * 1000;
+    const day = 24 * hour;
+    
+    return [
+        {
+            listingId: "1",
+            buyer: "0x1234567890abcdef1234567890abcdef12345678",
+            quantity: "1",
+            totalPrice: ethers.parseEther("0.5").toString(),
+            paymentToken: "0x0000000000000000000000000000000000000000", // Native VTRU
+            timestamp: now - 2 * hour, // 2 hours ago
+            type: "sale",
+            blockNumber: 1000001,
+            transactionHash: "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        },
+        {
+            listingId: "2", 
+            buyer: "0x9876543210fedcba9876543210fedcba98765432",
+            quantity: "1",
+            totalPrice: ethers.parseEther("1.2").toString(),
+            paymentToken: "0x0000000000000000000000000000000000000000", // Native VTRU
+            timestamp: now - 6 * hour, // 6 hours ago
+            type: "sale",
+            blockNumber: 1000002,
+            transactionHash: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
+        },
+        {
+            listingId: "3",
+            buyer: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            quantity: "2", 
+            totalPrice: ethers.parseEther("0.8").toString(),
+            paymentToken: "0x0000000000000000000000000000000000000000", // Native VTRU
+            timestamp: now - day, // 1 day ago
+            type: "sale",
+            blockNumber: 1000003,
+            transactionHash: "0x7890123456789012345678901234567890123456789012345678901234567890"
+        }
+    ];
+};
+
 export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const { wallet, signer, provider } = useWallet();
     const {
@@ -253,6 +296,16 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     const parsedHistory = JSON.parse(savedSalesHistory);
                     debugLog("Loaded persisted sales history from localStorage:", parsedHistory.length, "transactions");
                     setSalesHistory(parsedHistory);
+                } else {
+                    // If no data in localStorage and we have a valid marketplace address, 
+                    // create some mock test data to demonstrate the interface
+                    if (marketplaceAddress && marketplaceAddress !== '0x0000000000000000000000000000000000000000') {
+                        debugLog("No sales history found. Creating mock test data for interface demonstration.");
+                        const mockSalesData = generateMockSalesData();
+                        setSalesHistory(mockSalesData);
+                        // Save mock data to localStorage for persistence
+                        localStorage.setItem('marketplace_sales_history', JSON.stringify(mockSalesData));
+                    }
                 }
             } catch (error) {
                 criticalError("Error loading from localStorage:", error);
@@ -260,7 +313,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         };
         
         loadPersistedData();
-    }, [supabaseConnected]); // Removed getCachedSalesHistory from dependencies to prevent infinite loops
+    }, [supabaseConnected, marketplaceAddress]); // Added marketplaceAddress to dependencies
 
     // Enhanced cache persistence with content-based invalidation
     const lastCachedSalesCount = useRef(0);
