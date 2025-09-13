@@ -8,6 +8,8 @@ import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
 import ListingCard from '../components/ListingCard';
 import { formatPriceWithUSDC, convertToUSDCValue, getTokenDecimals } from '../utils/tokenUtils';
+import { batchLoadMetadata } from '../utils/metadataLoader';
+import { normalizeNFTMetadata } from '../utils/nftUtils';
 import './CollectionPage.css';
 
 const ERC721_METADATA_ABI = [
@@ -59,12 +61,120 @@ export default function CollectionPage() {
     const [searchQuery, setSearchQuery] = useState('');
     const [featuredIndex, setFeaturedIndex] = useState(0);
 
+    // Collection-specific metadata loading state
+    const [collectionListings, setCollectionListings] = useState([]);
+    const [metadataLoading, setMetadataLoading] = useState(false);
+    const [metadataLoaded, setMetadataLoaded] = useState(false);
+
+    // Reset metadata loading state when collection address changes
+    useEffect(() => {
+        setCollectionListings([]);
+        setMetadataLoading(false);
+        setMetadataLoaded(false);
+    }, [addr]);
+
     // Ensure listings on cold entry
     useEffect(() => {
         if (!isInitialized && typeof fetchListings === 'function') {
             fetchListings().catch(() => { });
         }
     }, [isInitialized, fetchListings]);
+
+    // Enhanced metadata loading specifically for collection items
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadCollectionMetadata = async () => {
+            if (!provider || !isAddress(addr) || !listings || listings.length === 0) {
+                setCollectionListings([]);
+                setMetadataLoaded(true);
+                return;
+            }
+
+            // Filter listings for this collection
+            const collectionItems = listings.filter((l) => 
+                (l?.nftContract || '').toLowerCase() === addr.toLowerCase()
+            );
+
+            if (collectionItems.length === 0) {
+                setCollectionListings([]);
+                setMetadataLoaded(true);
+                return;
+            }
+
+            console.log(`🔍 [COLLECTION] Loading metadata for ${collectionItems.length} items in collection ${addr}`);
+            setMetadataLoading(true);
+
+            try {
+                // Prepare NFT objects for batch metadata loading
+                const nftsForMetadata = collectionItems.map(listing => ({
+                    contractAddress: listing.nftContract,
+                    tokenId: listing.tokenId,
+                    metadata: listing.metadata, // Pass existing metadata if any
+                    id: listing.id
+                }));
+
+                // Load metadata for all collection NFTs using batchLoadMetadata
+                let nftsWithMetadata = [];
+                try {
+                    console.log(`📦 [COLLECTION] Using batchLoadMetadata for ${nftsForMetadata.length} NFTs...`);
+                    nftsWithMetadata = await batchLoadMetadata(nftsForMetadata, provider, 10); // Smaller batch size for collections
+                    console.log(`✅ [COLLECTION] Successfully loaded metadata for ${nftsWithMetadata.length} NFTs`);
+                } catch (metadataError) {
+                    console.warn(`⚠️ [COLLECTION] batchLoadMetadata failed, falling back to normalization:`, metadataError);
+                    // Fallback to normalization
+                    nftsWithMetadata = nftsForMetadata.map(nft => ({
+                        ...nft,
+                        metadata: normalizeNFTMetadata(nft.metadata, nft.contractAddress, nft.tokenId)
+                    }));
+                }
+
+                if (cancelled) return;
+
+                // Merge the loaded metadata back into the listings
+                const processedListings = collectionItems.map(listing => {
+                    const nftWithMetadata = nftsWithMetadata.find(nft => nft.id === listing.id);
+                    const metadata = nftWithMetadata?.metadata || normalizeNFTMetadata(listing.metadata, listing.nftContract, listing.tokenId);
+                    
+                    return {
+                        ...listing,
+                        metadata: metadata,
+                        image: metadata.image || listing.image,
+                        imageUrl: metadata.imageUrl || listing.imageUrl || metadata.image,
+                        name: metadata.name || listing.name,
+                        description: metadata.description || listing.description
+                    };
+                });
+
+                console.log(`🎉 [COLLECTION] Processed ${processedListings.length} listings with enhanced metadata`);
+                setCollectionListings(processedListings);
+                setMetadataLoaded(true);
+
+            } catch (error) {
+                console.error(`❌ [COLLECTION] Error loading collection metadata:`, error);
+                if (!cancelled) {
+                    // Fallback to original listings with basic normalization
+                    const fallbackListings = collectionItems.map(listing => ({
+                        ...listing,
+                        metadata: normalizeNFTMetadata(listing.metadata, listing.nftContract, listing.tokenId)
+                    }));
+                    setCollectionListings(fallbackListings);
+                    setMetadataLoaded(true);
+                }
+            } finally {
+                if (!cancelled) {
+                    setMetadataLoading(false);
+                }
+            }
+        };
+
+        // Only start loading if we have listings and haven't loaded yet
+        if (listings && listings.length > 0 && !metadataLoaded && !metadataLoading) {
+            loadCollectionMetadata();
+        }
+
+        return () => { cancelled = true; };
+    }, [addr, listings, provider, metadataLoaded, metadataLoading]);
 
     // Enhanced collection metadata resolution
     useEffect(() => {
@@ -102,10 +212,14 @@ export default function CollectionPage() {
         return () => { cancelled = true; };
     }, [addr, provider]);
 
-    // Filter and sort items
+    // Filter and sort items - use collectionListings with enhanced metadata
     const filteredItems = useMemo(() => {
-        if (!Array.isArray(listings)) return [];
-        let items = listings.filter((l) => (l?.nftContract || '').toLowerCase() === addr);
+        // Use collectionListings if metadata is loaded, otherwise use filtered listings
+        const sourceItems = metadataLoaded ? collectionListings : 
+            (Array.isArray(listings) ? listings.filter((l) => (l?.nftContract || '').toLowerCase() === addr) : []);
+        
+        if (!Array.isArray(sourceItems)) return [];
+        let items = [...sourceItems]; // Make a copy to avoid mutating original
 
         // Apply search filter
         if (searchQuery.trim()) {
@@ -169,7 +283,7 @@ export default function CollectionPage() {
         });
 
         return items;
-    }, [listings, addr, searchQuery, filterBy, sortBy]);
+    }, [collectionListings, listings, addr, searchQuery, filterBy, sortBy, metadataLoaded]);
 
     // Calculate collection stats with proper token handling
     const [collectionStats, setCollectionStats] = useState({
@@ -423,10 +537,12 @@ export default function CollectionPage() {
             </div>
 
             {/* Main Content */}
-            {!isInitialized ? (
+            {!isInitialized || metadataLoading ? (
                 <div className="collection-loading">
                     <div className="loading-spinner"></div>
-                    <p className="loading-text">Loading collection items...</p>
+                    <p className="loading-text">
+                        {!isInitialized ? 'Loading collection items...' : 'Loading NFT metadata from blockchain...'}
+                    </p>
                 </div>
             ) : filteredItems.length === 0 ? (
                 <div className="enhanced-empty-state">
