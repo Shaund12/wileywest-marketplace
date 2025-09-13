@@ -245,16 +245,19 @@ function MarketplaceStats() {
      * Export transactions to CSV
      */
     const exportTxCsv = () => {
-        if (!transactionHistory?.length) return;
+        // Use transactionHistory first, fallback to salesHistory
+        const dataToExport = transactionHistory?.length > 0 ? transactionHistory : salesHistory.slice(0, 50);
+        if (!dataToExport?.length) return;
+        
         const rows = [
             ['Buyer', 'Total Price (raw)', 'Pretty Amount', 'Token', 'Timestamp', 'ISO Date'],
-            ...transactionHistory.map((tx) => [
+            ...dataToExport.map((tx) => [
                 tx.buyer,
                 tx.totalPrice,
                 formatTokenAmount(tx.totalPrice, tx.paymentToken),
                 getTokenSymbol(tx.paymentToken),
                 tx.timestamp || '',
-                tx.formattedTimestamp || (tx.timestamp ? new Date(tx.timestamp * 1000).toISOString() : ''),
+                tx.formattedTimestamp || (tx.timestamp ? new Date(tx.timestamp).toISOString() : ''),
             ]),
         ];
         downloadCSV(`blockdust-transactions-${Date.now()}.csv`, rows);
@@ -715,13 +718,14 @@ function MarketplaceStats() {
                                 <button className="secondary-button" onClick={doRefresh} disabled={isRefreshing}>
                                     {isRefreshing ? 'Refreshing…' : 'Refresh'}
                                 </button>
-                                {transactionHistory?.length > 0 && (
+                                {(transactionHistory?.length > 0 || salesHistory?.length > 0) && (
                                     <button className="secondary-button" onClick={exportTxCsv}>⬇️ Export CSV</button>
                                 )}
                             </div>
                         </div>
 
-                        {transactionHistory?.length > 0 ? (
+                        {/* Use transactionHistory first, fallback to salesHistory if transactionHistory is empty */}
+                        {(transactionHistory?.length > 0 || salesHistory?.length > 0) ? (
                             <div className="transactions-table" role="table" aria-label="Transactions">
                                 <div className="table-header" role="row">
                                     <span role="columnheader">Buyer</span>
@@ -730,7 +734,8 @@ function MarketplaceStats() {
                                     <span role="columnheader">Date</span>
                                     <span role="columnheader">Action</span>
                                 </div>
-                                {transactionHistory.map((tx, idx) => (
+                                {/* Use transactionHistory if available, otherwise use salesHistory with formatting */}
+                                {(transactionHistory?.length > 0 ? transactionHistory : salesHistory.slice(0, 50)).map((tx, idx) => (
                                     <div key={idx} className="table-row" role="row">
                                         <span className="buyer-address" role="cell" title={tx.buyer}>
                                             {shortAddr(tx.buyer)}
@@ -742,7 +747,7 @@ function MarketplaceStats() {
                                             {getTokenSymbol(tx.paymentToken)}
                                         </span>
                                         <span className="transaction-date" role="cell">
-                                            {tx.formattedTimestamp || (tx.timestamp ? new Date((tx.timestamp) * 1000).toLocaleString() : '—')}
+                                            {tx.formattedTimestamp || (tx.timestamp ? new Date(tx.timestamp).toLocaleString() : '—')}
                                         </span>
                                         <span className="row-actions-cell" role="cell">
                                             <button className="icon-btn" title="Copy buyer address" onClick={() => copy(tx.buyer)}>📋</button>
