@@ -574,6 +574,7 @@ if (typeof window !== 'undefined') {
 
 export default {
     loadNFTMetadata,
+    batchLoadMetadata,
     resolveImageUrl,
     cleanupMetadataCache
 };
