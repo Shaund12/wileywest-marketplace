@@ -459,10 +459,10 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             const currentBlock = await provider.getBlockNumber();
             
             // CONSERVATIVE SCAN: Only scan recent blocks to avoid massive data collection
-            const fromBlock = Math.max(currentBlock - 50000, lastScannedBlock); // Only last 50k blocks
+            const fromBlock = Math.max(currentBlock - 100000, lastScannedBlock); // Extended to last 100k blocks for better test sales coverage
             
             debugLog(`🔍 CONSERVATIVE BLOCKCHAIN SCAN: Recent blocks only from ${fromBlock} to ${currentBlock}`);
-            debugLog(`⚡ Limiting scan to recent 50k blocks to prevent mass data collection`);
+            debugLog(`⚡ Limiting scan to recent 100k blocks to prevent mass data collection`);
             setStatus(`⚡ Conservative scan: recent blocks ${fromBlock} to ${currentBlock} only...`);
             
             let purchasedEvents = [];
@@ -828,11 +828,20 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         if (!provider) return;
 
         try {
+            // Debug current state before calculation
+            debugLog("Calculating marketplace stats with data:", {
+                salesHistoryLength: salesHistory.length,
+                listingsLength: listings.length,
+                canceledListingsSize: canceledListings.size,
+                hasProvider: !!provider
+            });
+            
             // Test network connectivity
             try {
                 await provider.getNetwork();
             } catch (networkError) {
                 debugWarn("Network issue - calculating stats with fallback values");
+                debugLog("Using fallback calculation for", salesHistory.length, "sales");
                 
                 // Enhanced fallback calculations with more timeframes and analytics
                 const now = Date.now();
@@ -961,6 +970,14 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     ...sale,
                     formattedTimestamp: new Date(sale.timestamp).toLocaleString()
                 })).sort((a, b) => b.timestamp - a.timestamp).slice(0, 50);
+
+                debugLog("Fallback stats calculation complete:", {
+                    totalSales: salesHistory.length,
+                    totalNativeVolume,
+                    transactionHistoryLength: transactionHistory.length,
+                    volume24h,
+                    sales24h
+                });
 
                 setMarketplaceStats({
                     totalSales: salesHistory.length,
@@ -1110,6 +1127,15 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 ...sale,
                 formattedTimestamp: new Date(sale.timestamp).toLocaleString()
             })).sort((a, b) => b.timestamp - a.timestamp).slice(0, 50); // Last 50 transactions
+
+            debugLog("USDC stats calculation complete:", {
+                totalSales: salesHistory.length,
+                actualSoldVolumeUSDC,
+                currentListingVolumeUSDC,
+                transactionHistoryLength: transactionHistory.length,
+                volume24hUSDC,
+                sales24h
+            });
 
             // Get top tokens sorted by volume
             const topTokens = Object.values(topTokensMap)
