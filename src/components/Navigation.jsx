@@ -81,7 +81,6 @@ export default function Navigation() {
     const navLinks = [
         { to: "/marketplace", label: "Marketplace" },
         { to: "/hot-listings", label: "Hot Listings" },
-        { to: "/my-auctions", label: "My Auctions" },
         { to: "/sell", label: "Sell NFT" },
         { to: "/auctions/create", label: "Create Auction" },
         { to: "/vibe-dashboard", label: "VIBE" },

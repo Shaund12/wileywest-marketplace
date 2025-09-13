@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
@@ -11,6 +11,7 @@ import CacheStats from '../components/CacheStats';
 import EdgeCacheMonitor from '../components/EdgeCacheMonitor';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 import { NFTScanner } from '../utils/nftScanner';
 import { verifyNFTOwnership, filterOwnedNFTs } from '../utils/nftOwnershipUtils';
 import { loadNFTMetadata, batchLoadMetadata } from '../utils/metadataLoader';
@@ -63,6 +64,186 @@ const IPFS_GATEWAYS = [
     'https://gateway.ipfs.io/ipfs/',
     'https://ipfs.fleek.co/ipfs/',
 ];
+
+// SmartMedia utilities for auction display
+const isString = (v) => typeof v === 'string' && v.trim().length > 0;
+const uniq = (arr) => Array.from(new Set(arr));
+const flatten = (arrs) => arrs.reduce((a, b) => a.concat(b), []);
+const isVideoUrl = (u) => isString(u) && /\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(u);
+
+function expandToCandidateUrls(raw) {
+    if (!isString(raw)) return [];
+    const url = raw.trim();
+    if (url.startsWith('data:')) return [url];
+
+    if (url.startsWith('ar://')) return [`https://arweave.net/${url.slice(5)}`];
+    if (/^https?:\/\/arweave\.net\//i.test(url)) return [url];
+
+    if (url.startsWith('ipfs://')) {
+        const rest = url.slice(7).replace(/^ipfs\//i, '');
+        return IPFS_GATEWAYS.map((g) => g + rest);
+    }
+
+    try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        const ipfsIdx = parts.indexOf('ipfs');
+        if (ipfsIdx !== -1 && parts[ipfsIdx + 1]) {
+            const rest = parts.slice(ipfsIdx + 1).join('/');
+            return IPFS_GATEWAYS.map((g) => g + rest);
+        }
+        return [url];
+    } catch {
+        if (/^[a-z0-9]+$/i.test(url)) return IPFS_GATEWAYS.map((g) => g + url);
+        return [url];
+    }
+}
+
+function findFirstWorkingImage(candidates, timeoutMs = 7000) {
+    return new Promise((resolve, reject) => {
+        if (!candidates?.length) return reject(new Error('No candidates'));
+        if (typeof window === 'undefined') return reject(new Error('No window'));
+
+        let i = 0;
+        const tryNext = () => {
+            if (i >= candidates.length) return reject(new Error('No working image'));
+            const test = candidates[i++];
+            const img = new Image();
+            const timer = setTimeout(() => {
+                img.onload = img.onerror = null;
+                tryNext();
+            }, timeoutMs);
+            img.onload = () => {
+                clearTimeout(timer);
+                resolve(test);
+            };
+            img.onerror = () => {
+                clearTimeout(timer);
+                tryNext();
+            };
+            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+        };
+        tryNext();
+    });
+}
+
+function hashString(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+        h = (h << 5) - h + str.charCodeAt(i);
+        h |= 0;
+    }
+    return Math.abs(h);
+}
+
+function svgFallbackDataUrl({ seed = 'media', width = 200, height = 200, title = 'NFT Preview' }) {
+    const h = hashString(seed);
+    const hue = h % 360;
+    const hue2 = (hue + 180) % 360;
+    const gid = `g${(h % 1e9).toString(36)}`;
+    const blobs = (h % 7) + 3;
+    const label = (title || '').slice(0, 20) || 'NFT Preview';
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  <defs>
+    <linearGradient id="${gid}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="hsl(${hue},70%,18%)"/>
+      <stop offset="100%" stop-color="hsl(${hue2},70%,16%)"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#${gid})"/>
+  ${Array.from({ length: blobs }).map((_, i) => {
+        const a = (h + i * 97) % 360;
+        const r = 12 + ((h >> i) % 28);
+        const cx = (width / (blobs + 1)) * (i + 1);
+        const cy = (height / (blobs + 1)) * ((i % 3) + 1);
+        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
+    }).join('')}
+  <text x="50%" y="${height - 12}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="12" fill="rgba(255,255,255,0.9)" text-anchor="middle">${label}</text>
+</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+const smartUrlCache = new Map();
+
+function SmartMedia({ srcList = [], alt = '', width = 200, height = 200, seed = 'media', title = '', className = '' }) {
+    const [finalUrl, setFinalUrl] = useState(null);
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        const raws = srcList.filter(isString);
+        const key = raws.join('|');
+        if (!raws.length) {
+            setFinalUrl(null);
+            setFailed(true);
+            return;
+        }
+
+        if (smartUrlCache.has(key)) {
+            setFinalUrl(smartUrlCache.get(key));
+            setFailed(false);
+            return;
+        }
+
+        const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
+        const videoCandidate = candidates.find(isVideoUrl);
+        if (videoCandidate) {
+            smartUrlCache.set(key, videoCandidate);
+            if (!cancelled) {
+                setFinalUrl(videoCandidate);
+                setFailed(false);
+            }
+            return;
+        }
+
+        findFirstWorkingImage(candidates)
+            .then((u) => {
+                if (cancelled) return;
+                smartUrlCache.set(key, u);
+                setFinalUrl(u);
+                setFailed(false);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setFinalUrl(null);
+                    setFailed(true);
+                }
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [JSON.stringify(srcList)]);
+
+    const fallback = svgFallbackDataUrl({ seed, width, height, title });
+    const url = failed || !finalUrl ? fallback : finalUrl;
+
+    if (isVideoUrl(url)) {
+        return (
+            <video
+                src={url}
+                controls
+                className={className}
+                width={width}
+                height={height}
+                style={{ display: 'block', borderRadius: 8, background: '#111', maxWidth: '100%', objectFit: 'cover' }}
+            />
+        );
+    }
+    return (
+        <img
+            src={url}
+            alt={alt}
+            className={className}
+            width={width}
+            height={height}
+            loading="lazy"
+            onError={() => setFailed(true)}
+            style={{ display: 'block', borderRadius: 8, maxWidth: '100%', objectFit: 'cover' }}
+        />
+    );
+}
 
 // Small helpers for activity timeline
 const shortAddr = (a = '') => (a ? `${a.slice(0, 6)}…${a.slice(-4)}` : '—');
@@ -157,6 +338,7 @@ const timeAgo = (ms) => {
 
 function ProfilePage() {
     const navigate = useNavigate();
+    const location = useLocation();
     const { wallet, connect, provider, signer, chainId } = useWallet();
     const {
         listings,
@@ -173,6 +355,7 @@ function ProfilePage() {
         cacheProfileData,
         getCachedProfile,
         subscribeToProfiles,
+        getAuctionBids,
         isConnected: supabaseConnected
     } = useSupabase();
 
@@ -202,14 +385,32 @@ function ProfilePage() {
     const [transferToAddress, setTransferToAddress] = useState('');
     const [transferQuantities, setTransferQuantities] = useState({});
     const [isTransferring, setIsTransferring] = useState(false);
+    
+    // Auction-related state
+    const [userAuctionsDetailed, setUserAuctionsDetailed] = useState([]);
+    const [isAuctionsLoading, setIsAuctionsLoading] = useState(false);
+    const [auctionFilter, setAuctionFilter] = useState('all'); // all, active, ended, settled
+    const [auctionMetadata, setAuctionMetadata] = useState({});
+    const [auctionBids, setAuctionBids] = useState({});
+    const [loadingAuctionMetadata, setLoadingAuctionMetadata] = useState(new Set());
+    const [auctionActionStatus, setAuctionActionStatus] = useState('');
+    
     // Pagination removed - using lazy loading instead
     // const [currentPage, setCurrentPage] = useState(1);
     // const [itemsPerPage, setItemsPerPage] = useState(12);
     const modalRef = useRef(null);
 
+    // Handle URL query parameters for tab switching
+    useEffect(() => {
+        const searchParams = new URLSearchParams(location.search);
+        const tabParam = searchParams.get('tab');
+        if (tabParam && ['myListings', 'myAuctions', 'activity', 'collection'].includes(tabParam)) {
+            setActiveTab(tabParam);
+        }
+    }, [location.search]);
+
     // NEW: Activity + auctions state
     const [userAuctions, setUserAuctions] = useState([]);
-    const [isAuctionsLoading, setIsAuctionsLoading] = useState(false);
     const [activityFilter, setActivityFilter] = useState('all'); // all | listings | sales | purchases | auctions
 
     // Calculate collection stats
@@ -323,6 +524,13 @@ function ProfilePage() {
             return () => clearTimeout(timer);
         }
     }, [activeTab, wallet, provider]); // Keep simple dependencies only
+
+    // Load detailed auction data when myAuctions tab is selected
+    useEffect(() => {
+        if (activeTab === 'myAuctions' && wallet && isAuctionsEnabled()) {
+            loadDetailedAuctions();
+        }
+    }, [activeTab, wallet]);
 
     // ENHANCED AUTOMATIC METADATA LOADING with edge cache: Trigger metadata loading when userNfts changes
     useEffect(() => {
@@ -513,6 +721,264 @@ function ProfilePage() {
 
         return filtered;
     }, [wallet, userListings, listings, salesHistory, canceledListings, userAuctions, activityFilter]);
+
+    // Load detailed auction data for My Auctions tab
+    const loadDetailedAuctions = async () => {
+        try {
+            setIsAuctionsLoading(true);
+            setAuctionActionStatus('Loading your auctions...');
+            
+            // Start with existing basic auction data from userAuctions
+            let detailedAuctions = [...userAuctions];
+            
+            // Try to get more detailed data from contract if provider available
+            if (provider && marketplaceAddress && wallet) {
+                try {
+                    setAuctionActionStatus('Scanning blockchain for your auctions...');
+                    
+                    // Import marketplace ABI and create contract instance
+                    const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+                    const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+                    
+                    if (abi && Array.isArray(abi)) {
+                        const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, provider);
+                        
+                        // Get recent auction creation events
+                        const currentBlock = await provider.getBlockNumber();
+                        const fromBlock = Math.max(0, currentBlock - 50000); // Last 50k blocks
+                        
+                        const auctionCreatedEvents = await marketplaceContract.queryFilter(
+                            marketplaceContract.filters.AuctionCreated(),
+                            fromBlock,
+                            currentBlock
+                        );
+                        
+                        // Filter events for current user
+                        const userAuctionEvents = auctionCreatedEvents.filter(event => 
+                            event.args?.seller?.toLowerCase() === wallet.toLowerCase()
+                        );
+                        
+                        if (userAuctionEvents.length > 0) {
+                            setAuctionActionStatus('Loading auction details from blockchain...');
+                            
+                            const contractAuctions = await Promise.all(
+                                userAuctionEvents.map(async (event) => {
+                                    try {
+                                        const auctionId = event.args?.auctionId?.toString() || '';
+                                        if (!auctionId) return null;
+                                        
+                                        const auctionData = await marketplaceContract.auctions(auctionId);
+                                        
+                                        return {
+                                            id: auctionId,
+                                            auctionId: auctionId,
+                                            seller: auctionData.seller,
+                                            nftContract: auctionData.nftContract,
+                                            tokenId: auctionData.tokenId.toString(),
+                                            quantity: auctionData.quantity?.toString() || '1',
+                                            reservePrice: auctionData.reservePrice.toString(),
+                                            startPrice: auctionData.startPrice.toString(),
+                                            endTime: Number(auctionData.endTime),
+                                            paymentToken: auctionData.paymentToken,
+                                            highestBid: auctionData.highestBid.toString(),
+                                            highestBidder: auctionData.highestBidder,
+                                            settled: auctionData.settled,
+                                            timestamp: Number(event.args?.timestamp || Math.floor(Date.now() / 1000)),
+                                            blockNumber: event.blockNumber,
+                                            transactionHash: event.transactionHash
+                                        };
+                                    } catch (error) {
+                                        debugWarn(`Error loading auction ${event.args?.auctionId}:`, error);
+                                        return null;
+                                    }
+                                })
+                            );
+                            
+                            // Filter out null values and merge with existing data
+                            const validContractAuctions = contractAuctions.filter(Boolean);
+                            if (validContractAuctions.length > 0) {
+                                detailedAuctions = validContractAuctions;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    debugWarn('Error loading auctions from contract:', error);
+                }
+            }
+            
+            // Set the detailed auction data
+            setUserAuctionsDetailed(detailedAuctions);
+            setAuctionActionStatus('');
+            
+            // Load metadata for auctions
+            if (detailedAuctions.length > 0) {
+                loadAuctionMetadata(detailedAuctions);
+            }
+            
+        } catch (error) {
+            criticalError('Error in loadDetailedAuctions:', error);
+            setAuctionActionStatus('Error loading auctions');
+        } finally {
+            setIsAuctionsLoading(false);
+        }
+    };
+
+    // Load metadata for auction NFTs
+    const loadAuctionMetadata = async (auctions) => {
+        for (const auction of auctions) {
+            const metadataKey = `${auction.nftContract}-${auction.tokenId}`;
+            
+            if (auctionMetadata[metadataKey] || loadingAuctionMetadata.has(metadataKey)) {
+                continue; // Already loaded or loading
+            }
+            
+            setLoadingAuctionMetadata(prev => new Set([...prev, metadataKey]));
+            
+            try {
+                const metadata = await loadNFTMetadata(auction.nftContract, auction.tokenId, provider);
+                
+                setAuctionMetadata(prev => ({
+                    ...prev,
+                    [metadataKey]: metadata
+                }));
+                
+                // Also try to load auction bids if available
+                if (getCachedAuctions) {
+                    try {
+                        const bids = await getAuctionBids(auction.id || auction.auctionId);
+                        if (bids) {
+                            setAuctionBids(prev => ({
+                                ...prev,
+                                [auction.id || auction.auctionId]: bids
+                            }));
+                        }
+                    } catch (error) {
+                        // Silently fail if bid loading fails
+                        debugWarn('Failed to load bids for auction:', auction.id);
+                    }
+                }
+                
+            } catch (error) {
+                debugWarn(`Failed to load metadata for ${metadataKey}:`, error);
+            } finally {
+                setLoadingAuctionMetadata(prev => {
+                    const newSet = new Set(prev);
+                    newSet.delete(metadataKey);
+                    return newSet;
+                });
+            }
+        }
+    };
+
+    // Auction helper functions
+    const getAuctionStatus = (auction) => {
+        const now = Math.floor(Date.now() / 1000);
+        if (auction.settled) return 'Settled';
+        if (auction.endTime <= now) return 'Ended';
+        return 'Active';
+    };
+
+    const getTimeDisplay = (auction) => {
+        const now = Math.floor(Date.now() / 1000);
+        const diff = auction.endTime - now;
+        
+        if (auction.settled) return 'Settled';
+        if (diff <= 0) return 'Ended';
+        
+        const days = Math.floor(diff / 86400);
+        const hours = Math.floor((diff % 86400) / 3600);
+        const minutes = Math.floor((diff % 3600) / 60);
+        
+        if (days > 0) return `${days}d ${hours}h left`;
+        if (hours > 0) return `${hours}h ${minutes}m left`;
+        return `${minutes}m left`;
+    };
+
+    const handleCancelAuction = async (auction) => {
+        if (!signer) {
+            setAuctionActionStatus('Please connect your wallet');
+            return;
+        }
+
+        const auctionId = auction.id || auction.auctionId;
+        if (!auctionId || auctionId === 'undefined' || auctionId === 'null') {
+            setAuctionActionStatus('Invalid auction ID');
+            return;
+        }
+
+        try {
+            setAuctionActionStatus('Canceling auction...');
+
+            // Import marketplace ABI and create contract instance
+            const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, signer);
+
+            // Cancel the auction
+            const tx = await marketplaceContract.cancelAuction(auctionId);
+            setAuctionActionStatus('Transaction submitted. Waiting for confirmation...');
+            
+            await tx.wait();
+            setAuctionActionStatus('Auction canceled successfully!');
+            
+            // Refresh auctions list
+            setTimeout(() => {
+                loadDetailedAuctions();
+                setAuctionActionStatus('');
+            }, 2000);
+            
+        } catch (error) {
+            criticalError('Error canceling auction:', error);
+            setAuctionActionStatus(`Error: ${error.message || 'Could not cancel auction'}`);
+            setTimeout(() => setAuctionActionStatus(''), 5000);
+        }
+    };
+
+    const handleSettleAuction = async (auction) => {
+        if (!signer) {
+            setAuctionActionStatus('Please connect your wallet');
+            return;
+        }
+
+        const auctionId = auction.id || auction.auctionId;
+        if (!auctionId || auctionId === 'undefined' || auctionId === 'null') {
+            setAuctionActionStatus('Invalid auction ID');
+            return;
+        }
+
+        try {
+            setAuctionActionStatus('Settling auction...');
+
+            // Import marketplace ABI and create contract instance
+            const VTRUNFTMarketplaceABI = await import('../abi/VTRUNFTMarketplace.json');
+            const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
+            if (!abi || !Array.isArray(abi)) {
+                throw new Error('Invalid ABI structure - ABI must be an array');
+            }
+            const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, signer);
+
+            // Settle the auction
+            const tx = await marketplaceContract.settleAuction(auctionId);
+            setAuctionActionStatus('Transaction submitted. Waiting for confirmation...');
+            
+            await tx.wait();
+            setAuctionActionStatus('Auction settled successfully!');
+            
+            // Refresh auctions list
+            setTimeout(() => {
+                loadDetailedAuctions();
+                setAuctionActionStatus('');
+            }, 2000);
+            
+        } catch (error) {
+            criticalError('Error settling auction:', error);
+            setAuctionActionStatus(`Error: ${error.message || 'Could not settle auction'}`);
+            setTimeout(() => setAuctionActionStatus(''), 5000);
+        }
+    };
 
     // Cancel a listing
     const cancelListing = async (listingId) => {
@@ -2073,6 +2539,14 @@ function ProfilePage() {
                 >
                     My Listings
                 </button>
+                {isAuctionsEnabled() && (
+                    <button
+                        className={activeTab === 'myAuctions' ? 'active' : ''}
+                        onClick={() => setActiveTab('myAuctions')}
+                    >
+                        My Auctions
+                    </button>
+                )}
                 <button
                     className={activeTab === 'activity' ? 'active' : ''}
                     onClick={() => setActiveTab('activity')}
@@ -2725,6 +3199,176 @@ function ProfilePage() {
                             </div>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {activeTab === 'myAuctions' && isAuctionsEnabled() && (
+                <div className="auctions-container">
+                    <div className="section-header">
+                        <h2>My Auctions</h2>
+                        <div className="header-actions">
+                            <select
+                                className="input filter-select"
+                                value={auctionFilter}
+                                onChange={(e) => setAuctionFilter(e.target.value)}
+                                title="Filter auctions"
+                            >
+                                <option value="all">All auctions</option>
+                                <option value="active">Active auctions</option>
+                                <option value="ended">Ended auctions</option>
+                                <option value="settled">Settled auctions</option>
+                            </select>
+                            <button
+                                className="secondary-button"
+                                onClick={() => navigate('/auctions/create')}
+                            >
+                                Create Auction
+                            </button>
+                        </div>
+                    </div>
+
+                    {!wallet ? (
+                        <div className="empty-state">
+                            <div className="empty-icon">🔗</div>
+                            <h3>Connect Your Wallet</h3>
+                            <p>Connect your wallet to view your auctions</p>
+                        </div>
+                    ) : isAuctionsLoading ? (
+                        <div className="loading-state">
+                            <div className="loader"></div>
+                            <p>Loading your auctions...</p>
+                        </div>
+                    ) : userAuctionsDetailed.length === 0 ? (
+                        <div className="empty-state">
+                            <div className="empty-icon">🏷️</div>
+                            <h3>No Auctions Found</h3>
+                            <p>You haven't created any auctions yet.</p>
+                            <div style={{ marginTop: '1rem' }}>
+                                <button 
+                                    onClick={() => navigate('/auctions/create')}
+                                    className="primary-button"
+                                >
+                                    Create Your First Auction
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="auctions-grid">
+                            {userAuctionsDetailed
+                                .filter(auction => {
+                                    if (auctionFilter === 'all') return true;
+                                    const status = getAuctionStatus(auction).toLowerCase();
+                                    return status === auctionFilter;
+                                })
+                                .map((auction) => {
+                                    const auctionId = auction.id || auction.auctionId;
+                                    const metadataKey = `${auction.nftContract}-${auction.tokenId}`;
+                                    const metadata = auctionMetadata[metadataKey] || {};
+                                    const bids = auctionBids[auctionId] || [];
+                                    const auctionStatus = getAuctionStatus(auction);
+                                    const isActive = auctionStatus === 'Active';
+                                    const isEnded = auctionStatus === 'Ended';
+                                    const canCancel = isActive && auction.highestBid === '0';
+                                    const canSettle = isEnded && !auction.settled;
+                                    const tokenSymbol = getTokenSymbol(auction.paymentToken);
+                                    
+                                    return (
+                                        <div key={auctionId || `${auction.nftContract}-${auction.tokenId}-${Date.now()}`} className="auction-card">
+                                            <div className="auction-image">
+                                                <SmartMedia
+                                                    srcList={[
+                                                        metadata?.image,
+                                                        metadata?.image_url,
+                                                        metadata?.imageUrl,
+                                                        metadata?.animation_url,
+                                                        metadata?.animationUrl,
+                                                    ]}
+                                                    alt={metadata?.name || `Token #${auction.tokenId}`}
+                                                    width={200}
+                                                    height={200}
+                                                    seed={`${auction.nftContract}-${auction.tokenId}`}
+                                                    title={metadata?.name || `Token #${auction.tokenId}`}
+                                                />
+                                                <div className={`status-badge ${auctionStatus.toLowerCase()}`}>
+                                                    {auctionStatus}
+                                                </div>
+                                            </div>
+
+                                            <div className="auction-details">
+                                                <h4>{metadata?.name || `Token #${auction.tokenId}`}</h4>
+                                                {metadata?.collection && (
+                                                    <p className="collection-name">{metadata.collection.name}</p>
+                                                )}
+                                                
+                                                <div className="auction-stats">
+                                                    <div className="stat">
+                                                        <label>Current Bid</label>
+                                                        <span>
+                                                            {auction.highestBid === '0' 
+                                                                ? `${formatTokenAmount(auction.startPrice, auction.paymentToken)} ${tokenSymbol}`
+                                                                : `${formatTokenAmount(auction.highestBid, auction.paymentToken)} ${tokenSymbol}`
+                                                            }
+                                                        </span>
+                                                    </div>
+                                                    
+                                                    <div className="stat">
+                                                        <label>Reserve</label>
+                                                        <span>{`${formatTokenAmount(auction.reservePrice, auction.paymentToken)} ${tokenSymbol}`}</span>
+                                                    </div>
+                                                    
+                                                    <div className="stat">
+                                                        <label>Time</label>
+                                                        <span>{getTimeDisplay(auction)}</span>
+                                                    </div>
+
+                                                    {bids.length > 0 && (
+                                                        <div className="stat">
+                                                            <label>Total Bids</label>
+                                                            <span>{bids.length}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                <div className="auction-actions">
+                                                    <button 
+                                                        onClick={() => navigate(`/auctions/${auction.id || auction.auctionId}`)}
+                                                        className="secondary-button"
+                                                    >
+                                                        View Details
+                                                    </button>
+                                                    
+                                                    {canCancel && (
+                                                        <button 
+                                                            onClick={() => handleCancelAuction(auction)}
+                                                            className="danger-button"
+                                                            disabled={!!auctionActionStatus}
+                                                        >
+                                                            Cancel
+                                                        </button>
+                                                    )}
+
+                                                    {canSettle && (
+                                                        <button 
+                                                            onClick={() => handleSettleAuction(auction)}
+                                                            className="primary-button"
+                                                            disabled={!!auctionActionStatus}
+                                                        >
+                                                            Settle
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                        </div>
+                    )}
+
+                    {auctionActionStatus && (
+                        <div className="status-message">
+                            {auctionActionStatus}
+                        </div>
+                    )}
                 </div>
             )}
 
