@@ -175,7 +175,7 @@ export default function Navigation() {
                     provider
                 );
 
-                // Get token0, token1, fee, and liquidity data
+                // Get token0, token1, fee, and liquidity data - REAL ON-CHAIN DATA
                 const [token0, token1, feeData, liquidityData, slot0Data] = await Promise.all([
                     poolContract.token0(),
                     poolContract.token1(),
@@ -184,28 +184,14 @@ export default function Navigation() {
                     poolContract.slot0()
                 ]);
 
-                // Calculate TVL based on the current price
-                // This is a simplified version - a real TVL calculation would be more complex
-                // and would account for the actual distribution of liquidity
-                const sqrtPriceX96 = slot0Data.sqrtPriceX96;
-                const liquidity = liquidityData;
-
-                // Convert liquidity to approximate TVL in USD
-                // Using the price and liquidity to estimate the total value
-                const vtruPrice = tokenPrice || 0;
-                let tvlEstimate = 0;
-
-                if (vtruPrice > 0 && liquidity > 0) {
-                    // This is a very simplified estimate based on liquidity and current price
-                    // Real TVL would need detailed calculations based on position ranges
-                    tvlEstimate = Number(ethers.formatUnits(liquidity, 9)) * vtruPrice * 2;
-                }
-
+                // Do not attempt to estimate TVL with simplified math
+                // Instead show the raw liquidity value which is actual blockchain data
                 setLpDetails({
                     poolAddress,
                     fee: Number(feeData),
-                    liquidity: ethers.formatUnits(liquidity, 0),
-                    tvl: tvlEstimate,
+                    liquidity: liquidityData.toString(),
+                    tick: Number(slot0Data.tick),
+                    sqrtPriceX96: slot0Data.sqrtPriceX96.toString(),
                     loading: false,
                     lastUpdate: new Date().toISOString()
                 });
@@ -404,46 +390,40 @@ export default function Navigation() {
                                                             ${tokenPrice ? Number(tokenPrice).toFixed(6) : '--'}
                                                         </span>
                                                     </div>
-
+                                                    
                                                     <div className="flex justify-between items-center">
                                                         <span className="text-muted-foreground">Pool Fee:</span>
                                                         <span className="font-mono">
                                                             {lpDetails.fee ? `${lpDetails.fee / 10000}%` : '--'}
                                                         </span>
                                                     </div>
-
+                                                    
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-muted-foreground">Pool Liquidity:</span>
-                                                        <span className="font-mono">
-                                                            {lpDetails.liquidity ? formatLargeNumber(lpDetails.liquidity) : '--'}
+                                                        <span className="text-muted-foreground">Raw Liquidity:</span>
+                                                        <span className="font-mono text-xs" title={lpDetails.liquidity}>
+                                                            {lpDetails.liquidity ? ethers.formatUnits(lpDetails.liquidity, 0) : '--'}
                                                         </span>
                                                     </div>
-
+                                                    
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-muted-foreground">Estimated TVL:</span>
+                                                        <span className="text-muted-foreground">Current Tick:</span>
                                                         <span className="font-mono">
-                                                            {lpDetails.tvl ? `$${formatLargeNumber(lpDetails.tvl)}` : '--'}
+                                                            {lpDetails.tick !== undefined ? lpDetails.tick : '--'}
                                                         </span>
                                                     </div>
-
-                                                    {lpDetails.poolAddress && (
-                                                        <div className="pt-1">
-                                                            <a
-                                                                href={`${VITRUVEO.blockExplorerUrls[0]}/address/${lpDetails.poolAddress}`}
-                                                                target="_blank"
-                                                                rel="noreferrer"
-                                                                className="text-neon-cyan hover:text-neon-cyan/80 flex items-center justify-center w-full text-xs font-medium mt-1 py-1 rounded-md border border-neon-cyan/30 hover:bg-neon-cyan/5"
-                                                            >
-                                                                View Pool on Explorer
-                                                                <ExternalLink className="ml-1 h-3 w-3" />
-                                                            </a>
-                                                        </div>
-                                                    )}
                                                 </div>
 
-                                                {lpDetails.lastUpdate && (
-                                                    <div className="mt-2 text-[10px] text-muted-foreground text-center">
-                                                        Updated: {new Date(lpDetails.lastUpdate).toLocaleTimeString()}
+                                                {lpDetails.poolAddress && (
+                                                    <div className="pt-1">
+                                                        <a
+                                                            href={`${VITRUVEO.blockExplorerUrls[0]}/address/${lpDetails.poolAddress}`}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="text-neon-cyan hover:text-neon-cyan/80 flex items-center justify-center w-full text-xs font-medium mt-1 py-1 rounded-md border border-neon-cyan/30 hover:bg-neon-cyan/5"
+                                                        >
+                                                            View Pool on Explorer
+                                                            <ExternalLink className="ml-1 h-3 w-3" />
+                                                        </a>
                                                     </div>
                                                 )}
                                             </>
