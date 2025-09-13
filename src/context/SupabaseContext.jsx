@@ -292,10 +292,13 @@ export function SupabaseProvider({ children }) {
         }
 
         try {
+            // Fix: Filter out sold and canceled listings properly
             const { data, error } = await supabase
                 .from('marketplace_listings')
                 .select('*')
                 .eq('active', true)
+                .neq('sale_status', 'sold')
+                .neq('sale_status', 'canceled')
                 .order('updated_at', { ascending: false });
 
             if (error) {
@@ -324,6 +327,7 @@ export function SupabaseProvider({ children }) {
                 description: item.description
             }));
 
+            debugLog(`✅ Loaded ${listings.length} active listings (excluding sold/canceled)`);
             setCache('all_listings', listings, 'listings');
             return listings;
         } catch (error) {
@@ -338,26 +342,50 @@ export function SupabaseProvider({ children }) {
         async (address, profileData) => {
             if (!supabase || !address) return;
             try {
-                debugLog(`💾 Caching profile data for ${address}...`);
-                const profileRecord = {
+                debugLog(`💾 Intelligently caching profile data for ${address}...`);
+                
+                // FIXED: Get existing profile first to merge data intelligently
+                let existingProfile = null;
+                try {
+                    const { data } = await supabase
+                        .from('user_profiles')
+                        .select('*')
+                        .eq('wallet_address', String(address).toLowerCase())
+                        .maybeSingle();
+                    existingProfile = data;
+                } catch (error) {
+                    debugWarn('Error fetching existing profile for merge:', error);
+                }
+                
+                // Merge new data with existing data intelligently
+                const mergedProfile = {
                     wallet_address: String(address).toLowerCase(),
-                    nfts: profileData.nfts || [],
-                    listings: profileData.listings || [],
-                    balance: profileData.balance || '0',
+                    nfts: profileData.nfts || existingProfile?.nfts || [],
+                    listings: profileData.listings || existingProfile?.listings || [],
+                    balance: profileData.balance || existingProfile?.balance || '0',
+                    // Preserve additional fields from existing profile
+                    ...(existingProfile || {}),
+                    // Override with new data
+                    ...profileData,
                     updated_at: new Date().toISOString()
                 };
 
-                const { error } = await supabase
-                    .from('user_profiles')
-                    .upsert(profileRecord, { onConflict: 'wallet_address', ignoreDuplicates: false });
+                // Only update if we actually have meaningful data to save
+                if (mergedProfile.nfts.length > 0 || mergedProfile.listings.length > 0 || mergedProfile.balance !== '0') {
+                    const { error } = await supabase
+                        .from('user_profiles')
+                        .upsert(mergedProfile, { onConflict: 'wallet_address', ignoreDuplicates: false });
 
-                if (error) {
-                    debugWarn('Profile cache error:', error);
-                    updateCacheStats('errors');
+                    if (error) {
+                        debugWarn('Profile cache error:', error);
+                        updateCacheStats('errors');
+                    } else {
+                        debugLog(`✅ Intelligently cached profile for ${address} (${mergedProfile.nfts.length} NFTs, ${mergedProfile.listings.length} listings)`);
+                        const key = getCacheKey('profile', String(address).toLowerCase());
+                        setCache(key, mergedProfile, 'profile');
+                    }
                 } else {
-                    debugLog(`✅ Cached profile for ${address}`);
-                    const key = getCacheKey('profile', String(address).toLowerCase());
-                    setCache(key, profileData, 'profile');
+                    debugLog(`⚠️ Skipping profile cache for ${address} - no meaningful data to save`);
                 }
             } catch (error) {
                 debugWarn('Error caching profile:', error);
