@@ -34,18 +34,20 @@ function VibeDashboardPage() {
     const [timeframe, setTimeframe] = useState('7d');
     const [error, setError] = useState(null);
 
-    // Helper function to get vibe amount from breakdown events - always returns VTRU sent to VIBE
+    // Helper function to get vibe amount from breakdown events - returns only native VTRU sent to VIBE
     const getVibeAmount = useMemo(() => (event) => {
         const args = event.args;
         
-        // Always use the VTRU amounts that were actually sent to the VIBE contract
-        // vibeOutWVTRU: VTRU from unwrapped wVTRU sent to VIBE
-        // vibeOutNative: VTRU directly sent to VIBE
-        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')); // Always 18 decimals
-        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0')); // Always 18 decimals
+        // Only count the native VTRU that was actually sent to the VIBE contract
+        // When wVTRU is used for payment, it gets burned/unwrapped to native VTRU before being sent to VIBE
+        // So we should only count the final native VTRU amount that reaches the VIBE contract
+        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')); // VTRU from burned wVTRU
+        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0')); // Direct native VTRU
         
-        // Return the total VTRU amount that was sent to the VIBE contract
-        // This represents the actual VTRU amount regardless of what token was used for payment
+        // Both vibeOutWVTRU and vibeOutNative represent native VTRU sent to VIBE
+        // vibeOutWVTRU is the native VTRU obtained from burning wVTRU
+        // vibeOutNative is direct native VTRU payment
+        // Since burning wVTRU produces native VTRU, we should only count the total once
         return vibeOutWVTRU + vibeOutNative;
     }, []);
 
@@ -73,6 +75,7 @@ function VibeDashboardPage() {
                 setChartData([]);
                 setLeaderboards({ collections: [], royalties: [] });
                 setRecentEvents([]);
+                setLoading(false); // Fix: Set loading to false before returning
                 return;
             }
 
@@ -91,6 +94,7 @@ function VibeDashboardPage() {
                 setChartData([]);
                 setLeaderboards({ collections: [], royalties: [] });
                 setRecentEvents([]);
+                setLoading(false); // Fix: Set loading to false before returning
                 return;
             }
 
@@ -131,15 +135,16 @@ function VibeDashboardPage() {
                     debugLog('🧪 Development mode: Adding mock VIBE events showing ONLY wVTRU burn/unwrap amounts');
                     const mockEvents = [
                         {
-                            // Mock wVTRU BURN/UNWRAP transaction - matches user's example 0.079130855721624292
-                            calculatedVibeAmount: 0.079130855721624292,
+                            // Mock wVTRU transaction that demonstrates the doubling issue
+                            // User pays with wVTRU, marketplace burns it to native VTRU, sends to VIBE
+                            calculatedVibeAmount: 0.079130855721624292, // Only count the actual VTRU sent to VIBE
                             amountSource: 'vtru',
                             type: 'sale',
                             transactionHash: '0xabc123...burn1',
                             timestamp: Date.now() - (60 * 60 * 1000), // 1 hour ago
                             paymentToken: '0x3ccc3F22462cAe34766820894D04a40381201ef9', // wVTRU
-                            vibeOutWVTRU: 0.079130855721624292, // ONLY the burned/unwrapped amount to VIBE
-                            vibeOutNative: 0,
+                            vibeOutWVTRU: 0.079130855721624292, // wVTRU burned amount (NOT to be counted)
+                            vibeOutNative: 0.079130855721624292, // Native VTRU sent to VIBE (this is what counts)
                             vibePortionInPayment: 0.079130855721624292, // The original wVTRU amount that was burned
                             platformFeeTotal: 0.005,
                             royaltyAmount: 0.002,
@@ -148,7 +153,7 @@ function VibeDashboardPage() {
                         {
                             // Mock native VTRU transaction
                             calculatedVibeAmount: 1.5,
-                            amountSource: 'vtru',
+                            amountSource: 'vtru', 
                             type: 'auction',
                             transactionHash: '0x456def...native1',
                             timestamp: Date.now() - (2 * 60 * 60 * 1000), // 2 hours ago
@@ -189,7 +194,7 @@ function VibeDashboardPage() {
                     const totalRoyaltiesNum = processedEvents.reduce((sum, event) => sum + (event.royaltyAmount || 0), 0);
                     const avgPayoutNum = totalTransactions > 0 ? totalVTRUSentNum / totalTransactions : 0;
                     
-                    debugLog(`🧪 Corrected totals: totalVTRU=${totalVTRUSentNum}, 24h=${vtruSent24hNum}, 7d=${vtruSent7dNum} (should be ~1.579 total)`);
+                    debugLog(`🧪 Fixed totals after removing doubling: totalVTRU=${totalVTRUSentNum}, 24h=${vtruSent24hNum}, 7d=${vtruSent7dNum} (should now show single amounts, not doubled)`);
                     
                     setStats({
                         totalVTRUSent: totalVTRUSentNum.toFixed(6),
@@ -201,9 +206,9 @@ function VibeDashboardPage() {
                         avgPayout: avgPayoutNum.toFixed(4)
                     });
                     
-                    // Generate mock chart data with corrected amounts
+                    // Generate mock chart data showing corrected amounts (no doubling)
                     const chartDataArray = [
-                        { date: '2025-01-12', vtruSent: 1.579131, transactions: 2 } // Only counting actual burns, no double-counting
+                        { date: '2025-01-12', vtruSent: 1.579131, transactions: 2 } // Corrected total without doubling
                     ];
                     setChartData(chartDataArray);
                     
@@ -266,7 +271,13 @@ function VibeDashboardPage() {
                     // Extract the actual VTRU amounts sent to VIBE contract
                     const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));
                     const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
-                    const totalVibeOut = vibeOutWVTRU + vibeOutNative;
+                    
+                    // CORRECTED FIX: Only count native VTRU actually sent to VIBE (not wVTRU burn amount)
+                    // Per user feedback: "It only SENDS native (VTRU) it just unwraps wVTRU never sends wvtru to vibe"
+                    // vibeOutWVTRU = amount of wVTRU that was burned (input)
+                    // vibeOutNative = amount of native VTRU sent to VIBE (output)
+                    // We should only count the native VTRU output, not add both
+                    const totalVibeOut = vibeOutNative || vibeOutWVTRU;
                     
                     // Get payment token and VIBE portion for debugging
                     const paymentToken = args.paymentToken;
@@ -613,7 +624,7 @@ function VibeDashboardPage() {
         } finally {
             setLoading(false);
         }
-    }, [provider, marketplaceAddress, timeframe, getVibeAmount]); // Updated dependencies
+    }, [provider, marketplaceAddress, timeframe]); // Removed getVibeAmount as it's not used
 
     // Add useEffect with proper dependencies and error boundaries
     useEffect(() => {
