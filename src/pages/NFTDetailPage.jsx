@@ -218,7 +218,7 @@ export default function NFTDetailPage() {
                     {/* Image Section */}
                     <div className="nft-detail-image-section">
                         <div className="nft-image-container">
-                            {imageUrl ? (
+                            {imageUrl && (
                                 <img 
                                     src={imageUrl} 
                                     alt={metadata?.name || `NFT #${tokenId}`}
@@ -228,8 +228,8 @@ export default function NFTDetailPage() {
                                         e.target.nextSibling.style.display = 'flex';
                                     }}
                                 />
-                            ) : null}
-                            <div className="nft-image-placeholder" style={imageUrl ? {display: 'none'} : {}}>
+                            )}
+                            <div className="nft-image-placeholder" style={imageUrl ? {display: 'none'} : {display: 'flex'}}>
                                 <span className="placeholder-text">NFT #{tokenId}</span>
                             </div>
                         </div>
