@@ -106,6 +106,7 @@ function findFirstWorkingImage(candidates, timeoutMs = 5000) {
                 if (settled) return;
                 settled = true;
                 clearTimeout(timer);
+                // Return the original clean URL, not the cache-busted test URL
                 resolve(url);
             };
             
@@ -114,7 +115,7 @@ function findFirstWorkingImage(candidates, timeoutMs = 5000) {
                 tryNext();
             };
             
-            // Add cache busting for more reliable testing
+            // Add cache busting ONLY for testing - don't use this URL for final display
             img.src = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now();
         };
         
@@ -340,10 +341,10 @@ const NFTImage = ({
     }, [currentImageUrl, onLoad]);
 
     const handleImageError = useCallback((e) => {
-        debugWarn(`❌ [NFT Image] Failed to load: ${currentImageUrl}`);
+        debugWarn(`❌ [NFT Image] Failed to load: ${currentImageUrl}`, e);
         
-        // Fall back to SVG if main image fails
-        if (currentImageUrl !== fallbackUrl && fallbackUrl) {
+        // If the current image is not a data URL (fallback), try the fallback
+        if (currentImageUrl && !currentImageUrl.startsWith('data:') && fallbackUrl) {
             debugLog(`🔄 [NFT Image] Falling back to SVG: ${fallbackUrl}`);
             setCurrentImageUrl(fallbackUrl);
             setIsLoading(false);
