@@ -285,7 +285,93 @@ export function SupabaseProvider({ children }) {
         [supabase]
     );
 
-    const getCachedListings = useCallback(async () => {
+    // NEW: Validate listings against blockchain to ensure they're still active
+    const validateListingAgainstBlockchain = useCallback(async (listing, marketplaceContract) => {
+        if (!marketplaceContract || !listing) return listing;
+        
+        try {
+            // Check the listing directly on the blockchain
+            const onchainData = await marketplaceContract.listings(listing.id);
+            
+            // If seller is zero address, the listing doesn't exist or was deleted
+            if (!onchainData || onchainData.seller === '0x0000000000000000000000000000000000000000') {
+                debugLog(`🚫 Listing ${listing.id} no longer exists on blockchain`);
+                
+                // Update database to mark as inactive
+                if (supabase) {
+                    try {
+                        await supabase
+                            .from('marketplace_listings')
+                            .update({ 
+                                active: false, 
+                                sale_status: 'sold',
+                                updated_at: new Date().toISOString() 
+                            })
+                            .eq('listing_id', listing.id);
+                        debugLog(`✅ Updated database for sold listing ${listing.id}`);
+                    } catch (dbError) {
+                        debugWarn(`⚠️ Failed to update database for listing ${listing.id}:`, dbError);
+                    }
+                }
+                
+                return null; // Remove this listing from results
+            }
+            
+            // Check if the blockchain active status differs from cached status
+            const blockchainActive = Boolean(onchainData.active);
+            if (blockchainActive !== listing.active) {
+                debugLog(`🔄 Listing ${listing.id} status mismatch - blockchain: ${blockchainActive}, cache: ${listing.active}`);
+                
+                // Update database with correct status
+                if (supabase) {
+                    try {
+                        await supabase
+                            .from('marketplace_listings')
+                            .update({ 
+                                active: blockchainActive, 
+                                sale_status: blockchainActive ? 'active' : 'sold',
+                                updated_at: new Date().toISOString() 
+                            })
+                            .eq('listing_id', listing.id);
+                        debugLog(`✅ Synced listing ${listing.id} status with blockchain`);
+                    } catch (dbError) {
+                        debugWarn(`⚠️ Failed to sync listing ${listing.id} status:`, dbError);
+                    }
+                }
+                
+                // If blockchain says it's inactive, exclude it
+                if (!blockchainActive) {
+                    return null;
+                }
+                
+                // Update the listing object with correct status
+                return {
+                    ...listing,
+                    active: blockchainActive,
+                    saleStatus: blockchainActive ? 'active' : 'sold'
+                };
+            }
+            
+            // Listing is valid and status matches
+            return listing;
+            
+        } catch (error) {
+            debugWarn(`⚠️ Failed to validate listing ${listing.id} against blockchain:`, error.message);
+            
+            // On network error, return the cached listing but log the issue
+            // This prevents the UI from breaking due to network issues
+            if (error.message?.includes('network') || error.message?.includes('timeout')) {
+                debugLog(`📡 Network issue validating listing ${listing.id}, using cached data`);
+                return listing;
+            }
+            
+            // For other errors, exclude the listing to be safe
+            debugLog(`❌ Validation error for listing ${listing.id}, excluding from results`);
+            return null;
+        }
+    }, [supabase]);
+
+    const getCachedListings = useCallback(async (marketplaceContract = null) => {
         if (!supabase) {
             const cachedData = getCache('all_listings');
             return cachedData || [];
@@ -327,15 +413,58 @@ export function SupabaseProvider({ children }) {
                 description: item.description
             }));
 
-            debugLog(`✅ Loaded ${listings.length} active listings (excluding sold/canceled)`);
+            debugLog(`📋 Fetched ${listings.length} cached listings`);
+
+            // NEW: Validate each listing against blockchain if contract provided
+            if (marketplaceContract && listings.length > 0) {
+                debugLog(`🔍 Validating ${listings.length} listings against blockchain...`);
+                
+                // Validate all listings in parallel (with reasonable concurrency limit)
+                const VALIDATION_BATCH_SIZE = 10; // Validate 10 listings at a time
+                const validatedListings = [];
+                
+                for (let i = 0; i < listings.length; i += VALIDATION_BATCH_SIZE) {
+                    const batch = listings.slice(i, i + VALIDATION_BATCH_SIZE);
+                    
+                    try {
+                        const batchResults = await Promise.all(
+                            batch.map(listing => validateListingAgainstBlockchain(listing, marketplaceContract))
+                        );
+                        
+                        // Filter out null results (invalid/sold listings)
+                        const validBatchListings = batchResults.filter(listing => listing !== null);
+                        validatedListings.push(...validBatchListings);
+                        
+                        debugLog(`✅ Validated batch ${Math.floor(i / VALIDATION_BATCH_SIZE) + 1}: ${validBatchListings.length}/${batch.length} valid`);
+                        
+                    } catch (batchError) {
+                        debugWarn(`⚠️ Batch validation error:`, batchError);
+                        // On batch error, include original listings to prevent empty marketplace
+                        validatedListings.push(...batch);
+                    }
+                }
+                
+                const removedCount = listings.length - validatedListings.length;
+                if (removedCount > 0) {
+                    debugLog(`🚫 Removed ${removedCount} sold/invalid listings after blockchain validation`);
+                }
+                
+                debugLog(`✅ Blockchain validation complete: ${validatedListings.length} valid listings confirmed`);
+                setCache('all_listings', validatedListings, 'listings');
+                return validatedListings;
+            }
+
+            // No marketplace contract provided, return cached data
+            debugLog(`✅ Loaded ${listings.length} cached listings (no blockchain validation)`);
             setCache('all_listings', listings, 'listings');
             return listings;
+            
         } catch (error) {
             debugWarn('Error retrieving cached listings:', error);
             updateCacheStats('errors');
             return [];
         }
-    }, [supabase]);
+    }, [supabase, validateListingAgainstBlockchain]);
 
     // ========== PROFILE CACHE ==========
     const cacheProfileData = useCallback(
@@ -1448,6 +1577,7 @@ export function SupabaseProvider({ children }) {
         // DB ops
         cacheListings,
         getCachedListings,
+        validateListingAgainstBlockchain,
         cacheProfileData,
         getCachedProfile,
         cacheSalesHistory,

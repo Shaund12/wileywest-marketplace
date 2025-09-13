@@ -28,6 +28,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     const {
         cacheListings,
         getCachedListings,
+        validateListingAgainstBlockchain,
         cacheSalesHistory,
         getCachedSalesHistory,
         markListingAsSold,
@@ -154,8 +155,9 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         debugLog(`fetchListings(forceRefresh=${forceRefresh}, supabaseConnected=${supabaseConnected})`);
         try {
             if (supabaseConnected && getCachedListings) {
-                setStatus('Loading cached listings...');
-                const cached = await getCachedListings();
+                setStatus('Loading and validating listings against blockchain...');
+                // CRITICAL FIX: Pass marketplace contract for blockchain validation
+                const cached = await getCachedListings(marketplace);
                 if (cached?.length) {
                     const processed = cached.map(l => {
                         if (l?.nftContract && l?.tokenId) {
@@ -173,12 +175,12 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     });
                     setListings(processed);
                     setHotListings(processed.slice(0, 5));
-                    setStatus(`${processed.length} listings loaded`);
+                    setStatus(`${processed.length} valid listings loaded (blockchain verified)`);
                     setTimeout(() => setStatus(''), 2500);
                 } else {
                     setListings([]);
                     setHotListings([]);
-                    setStatus('No listings available (cache empty)');
+                    setStatus('No valid listings available (blockchain verified)');
                 }
                 if (forceRefresh) await triggerManualSync();
             } else {
