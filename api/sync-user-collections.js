@@ -28,8 +28,33 @@ const ERC1155_ABI = [
     'function supportsInterface(bytes4 interfaceId) view returns (bool)'
 ];
 
+// Import known collections for comprehensive scanning
+const KNOWN_COLLECTIONS_REGISTRY = {
+    // Core Vitruveo Collections
+    '0xaEf0a72A661B82CB1d871FCA5117486C664EeF13': { name: 'Vitruveo Core NFT', symbol: 'VCORE' },
+    '0x8e7C7f0DF435Be6773641f8cf62C590d7Dde5a8a': { name: 'Vitruveo Income Building Engine', symbol: 'VIBE' },
+    '0x72D2bFb14b3351d17A63Cd4c8085E034e313c54c': { name: 'Vitruveo Entertainment Revenue Sharing Engine', symbol: 'VERSE' },
+    '0xABA06E4A2Eb17C686Fc67C81d26701D9b82e3a41': { name: 'Vortex', symbol: 'VTX' },
+    '0xFd1716e05225aFE88F6f6e973A155eb0377e1657': { name: 'MintPlace', symbol: 'MPX' },
+    '0xd2c4fb77517bC8D1A9dA13dbEA0Bf4B8B29037dD': { name: 'VTRU Boosters V2', symbol: 'VBOOST' },
+    '0x5c7421fcCA16C685cEC5aaFf745a9a6BDf75Ba06': { name: 'Vitruveo Collector Credit', symbol: 'VCOLC' },
+    '0x8246eb7D32416888aBeB23b1E715ee5A156d3aBe': { name: 'VTRU Boosters', symbol: 'VBOOST' },
+    '0x855B9fa4bb3af6d5947552830eA09f74d3F6d620': { name: 'Sabong Evolution Hatchling', symbol: 'SHAT' },
+    '0x047aeA572c510ecE553151E0dAa4fd84AC69928E': { name: 'Sabong Studios Share Units', symbol: 'S3U' },
+    '0x20152506e44bA17f73DBf8fED08d23156A0344F9': { name: 'Swoops', symbol: 'Swoops' },
+    '0xAA5B03A28D47f29d5bCB81BB7d29a9567df785cf': { name: 'SIC (SOCHAI Insiders Club)', symbol: 'SIC' },
+    '0x97336ac0c0Ba1b5B4CaE5D3ed65714cdE1c86B5c': { name: 'Sabong Evolution Partner NFT', symbol: 'SEP' },
+    '0x89207A7F75C9cb7C8f95f0c2517b029BE1AE29b8': { name: 'neoNKatz', symbol: 'NK' },
+    '0x96Fb9a1Cb848865d8B7698ab3F645B85F37888b8': { name: 'Vitruveo v3 DEX Income', symbol: 'VITDEX' },
+    '0xA1508636fFDbaB8b038F705E87EF7F43b7c59d7F': { name: 'VNFTz', symbol: 'VNFTz' },
+    '0x9acbDedd548De51615Ff2adbA468075330853215': { name: 'VMonsters', symbol: 'VMON' },
+    '0xc5d518d131738481947cFa4670F94eb7b948a1ac': { name: 'V-Share', symbol: 'VSHARE' },
+    '0xE1A5518CEbd226FE2a3251F93A1F6AAef65d3131': { name: 'Skoollz NFT Collection', symbol: 'SKLZ' },
+    '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906': { name: 'Pixel Ninja Cats', symbol: 'PNCAT' }
+};
+
 const KNOWN_NFT_CONTRACTS = [
-    '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906'
+    ...Object.keys(KNOWN_COLLECTIONS_REGISTRY) // All known collections
 ];
 
 let provider;
