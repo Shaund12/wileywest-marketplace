@@ -465,7 +465,7 @@ function ListingCardInner({
 
             {/* Media */}
             <Link to={`/nft/${nftContract}/${tokenId}`} className="listing-image-link">
-                <div className={`${scopedClass?.('listing-image', 'ListingCard') || 'listing-image'} ${loadingMedia ? 'lc-loading' : ''}`}>
+                <div className={`${scopedClass?.('listing-image', 'ListingCard') || 'listing-image'}`}>
                     <NFTImage
                         src={listing?.metadata?.image || listing?.image || listing?.imageUrl}
                         alt={`${nftName} - NFT artwork`}
