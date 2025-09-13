@@ -12,6 +12,7 @@ import EdgeCacheMonitor from '../components/EdgeCacheMonitor';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { NFTScanner } from '../utils/nftScanner';
+import { verifyNFTOwnership, filterOwnedNFTs } from '../utils/nftOwnershipUtils';
 import { loadNFTMetadata, batchLoadMetadata } from '../utils/metadataLoader';
 import { getCachedMetadata, getProxyImageUrl, batchPrewarm } from '../utils/edgeCacheUtils';
 import { VSHARE_ADDRESS, vShareLpSvgDataUrl, vShareDefaultDescription, isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
@@ -1130,7 +1131,7 @@ function ProfilePage() {
                         if (cachedProfile.nfts && cachedProfile.nfts.length > 0) {
                             // Verify ownership of cached NFTs to ensure they weren't sold
                             setStatus(`🔍 Verifying ownership of ${cachedProfile.nfts.length} cached NFTs...`);
-                            const ownedCachedNfts = await filterOwnedNFTs(cachedProfile.nfts, wallet);
+                            const ownedCachedNfts = await filterOwnedNFTs(cachedProfile.nfts, wallet, provider, setStatus);
                             
                             const removedCount = cachedProfile.nfts.length - ownedCachedNfts.length;
                             if (removedCount > 0) {
@@ -1354,7 +1355,7 @@ function ProfilePage() {
                 if (foundNfts.length > 0) {
                     // Verify ownership of all NFTs to ensure they weren't sold
                     setStatus(`🔍 Verifying ownership of ${foundNfts.length} NFTs...`);
-                    const ownedNfts = await filterOwnedNFTs(foundNfts, wallet);
+                    const ownedNfts = await filterOwnedNFTs(foundNfts, wallet, provider, setStatus);
                     
                     const removedCount = foundNfts.length - ownedNfts.length;
                     if (removedCount > 0) {
