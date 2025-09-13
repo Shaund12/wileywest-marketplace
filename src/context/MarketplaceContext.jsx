@@ -2049,6 +2049,43 @@ const resetTokenAllowance = useCallback(
   [signer]
 );
 
+const updateListingPrice = async (listingId, newPricePerUnit) => {
+    if (!signer) {
+        setStatusWithType('Error: Wallet not connected', 'error');
+        return false;
+    }
+    
+    if (!marketplace) {
+        setStatusWithType('Error: Marketplace contract not initialized', 'error');
+        return false;
+    }
+
+    try {
+        setStatusWithType('Updating listing price...', 'info');
+        
+        // Convert price to wei
+        const priceInWei = ethers.parseEther(newPricePerUnit.toString());
+        
+        // Call the contract's updateListingPrice function
+        const tx = await marketplace.updateListingPrice(listingId, priceInWei);
+        
+        setStatusWithType('Confirming price update transaction...', 'info');
+        await tx.wait();
+        
+        setStatusWithType('Listing price updated successfully!', 'success');
+        
+        // Refresh listings to show updated price
+        await fetchListings();
+        
+        return true;
+    } catch (error) {
+        console.error('Error updating listing price:', error);
+        const errorMessage = error?.reason || error?.message || 'Unknown error occurred';
+        setStatusWithType(`Failed to update price: ${errorMessage}`, 'error');
+        return false;
+    }
+};
+
     return (
         <MarketplaceContext.Provider value={{
             marketplace,
@@ -2064,6 +2101,7 @@ const resetTokenAllowance = useCallback(
             fetchListings,
             buyListing,
             createListing,
+            updateListingPrice,
             isInitialized,
             isLoading,
             markListingInactive,

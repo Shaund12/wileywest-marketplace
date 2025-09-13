@@ -23,7 +23,7 @@ const shortAddr = (addr) => addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '
 export default function NFTDetailPage() {
     const { contractAddress, tokenId } = useParams();
     const navigate = useNavigate();
-    const { listings, buyListing, status, createListing } = useMarketplace();
+    const { listings, buyListing, status, createListing, updateListingPrice } = useMarketplace();
     const { wallet, provider, connect } = useWallet();
 
     // States
@@ -134,16 +134,16 @@ export default function NFTDetailPage() {
     };
 
     const handleUpdatePrice = async () => {
-        if (!newPrice || !wallet) return;
+        if (!newPrice || !wallet || !listing) return;
 
         try {
-            const priceInWei = ethers.parseEther(newPrice);
-            // Here you would call an updateListing function if available
-            // For now, we'll just show an alert that this feature needs implementation
-            alert(`Price update to ${newPrice} VTRU would be processed here. This feature needs backend implementation.`);
-            setIsEditingPrice(false);
+            const success = await updateListingPrice(listing.id, newPrice);
+            if (success) {
+                setIsEditingPrice(false);
+                setNewPrice('');
+            }
         } catch (error) {
-            alert(`Error: ${error.message}`);
+            console.error('Error updating price:', error);
         }
     };
 
