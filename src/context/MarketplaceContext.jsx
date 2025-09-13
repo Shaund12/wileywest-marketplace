@@ -2066,8 +2066,11 @@ const updateListingPrice = async (listingId, newPricePerUnit) => {
         // Convert price to wei
         const priceInWei = ethers.parseEther(newPricePerUnit.toString());
         
-        // Call the contract's updateListingPrice function
-        const tx = await marketplace.updateListingPrice(listingId, priceInWei);
+        // CRITICAL FIX: Connect the marketplace contract to the signer before calling the function
+        const marketplaceWithSigner = marketplace.connect(signer);
+        
+        // Call the contract's updateListingPrice function with proper signer
+        const tx = await marketplaceWithSigner.updateListingPrice(listingId, priceInWei);
         
         setStatusWithType('Confirming price update transaction...', 'info');
         await tx.wait();
