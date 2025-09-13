@@ -1977,3 +1977,68 @@ button:disabled {
     }
 }
 
+/* ===== COLLECTION REFRESH STYLES ===== */
+
+/* Collection header with refresh button */
+.collection-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.collection-header label {
+    margin-bottom: 0 !important; /* Override default form-group label margin */
+}
+
+.refresh-collections-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: rgba(51, 204, 255, 0.1);
+    border: 1px solid rgba(51, 204, 255, 0.3);
+    color: var(--sell-accent);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-weight: 500;
+}
+
+.refresh-collections-btn:hover:not(:disabled) {
+    background: rgba(51, 204, 255, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(51, 204, 255, 0.2);
+}
+
+.refresh-collections-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.spinner-small {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .collection-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    
+    .refresh-collections-btn {
+        font-size: 0.8rem;
+        padding: 6px 10px;
+    }
+}
+

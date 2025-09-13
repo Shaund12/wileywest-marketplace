@@ -6,6 +6,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { getSupportedTokens, formatTokenAmount } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import { refreshUserNFTCollections } from '../utils/nftOwnershipUtils';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
@@ -349,7 +350,7 @@ function CreateAuctionPage() {
   const navigate = useNavigate();
   const { wallet, connect, provider, signer, isCorrectNetwork } = useWallet();
   const { status, setStatus, marketplaceAddress } = useMarketplace();
-  const { cacheAuctions, getCachedProfile } = useSupabase();
+  const { cacheAuctions, getCachedProfile, cacheProfileData } = useSupabase();
   const [searchParams] = useSearchParams();
 
   const [formData, setFormData] = useState({
@@ -406,17 +407,33 @@ function CreateAuctionPage() {
     document.title = 'Create Auction • BlockDust';
   }, []);
 
-  // Load user's NFT collections from Supabase
-  const loadUserCollections = async () => {
-    if (!wallet || !getCachedProfile) return;
+  // Load user's NFT collections from Supabase with ownership verification
+  const loadUserCollections = async (forceRefresh = false) => {
+    if (!wallet || !getCachedProfile || !provider) return;
     
     setLoadingCollections(true);
     try {
-      const cachedProfile = await getCachedProfile(wallet);
-      if (cachedProfile && cachedProfile.nfts && cachedProfile.nfts.length > 0) {
+      let nfts = [];
+      
+      if (forceRefresh) {
+        // Refresh and verify ownership
+        nfts = await refreshUserNFTCollections(
+          wallet,
+          provider,
+          getCachedProfile,
+          cacheProfileData,
+          (status) => debugLog(`[CreateAuctionPage] ${status}`)
+        );
+      } else {
+        // Load from cache
+        const cachedProfile = await getCachedProfile(wallet);
+        nfts = (cachedProfile && cachedProfile.nfts) || [];
+      }
+      
+      if (nfts.length > 0) {
         // Group NFTs by contract address
         const collections = {};
-        cachedProfile.nfts.forEach(nft => {
+        nfts.forEach(nft => {
           const contract = nft.contractAddress.toLowerCase();
           if (!collections[contract]) {
             collections[contract] = {
@@ -1356,7 +1373,23 @@ function CreateAuctionPage() {
                 {inputMode === 'dropdown' && (
                   <>
                     <div className="form-group">
-                      <label htmlFor="contractDropdown">Select Collection</label>
+                      <div className="collection-header">
+                        <label htmlFor="contractDropdown">Select Collection</label>
+                        <button
+                          type="button"
+                          className="refresh-collections-btn"
+                          onClick={() => loadUserCollections(true)}
+                          disabled={loadingCollections}
+                          title="Refresh collection to verify ownership and remove sold NFTs"
+                        >
+                          {loadingCollections ? (
+                            <span className="spinner-small">⟳</span>
+                          ) : (
+                            '🔄'
+                          )}
+                          Refresh
+                        </button>
+                      </div>
                       {loadingCollections ? (
                         <div className="loading-collections">
                           <div className="loader"></div>

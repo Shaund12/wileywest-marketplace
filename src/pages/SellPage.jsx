@@ -6,6 +6,7 @@ import { useWallet } from '../context/WalletContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { refreshUserNFTCollections } from '../utils/nftOwnershipUtils';
 import './SellPage.css';
 
 /* =========================================================
@@ -363,7 +364,7 @@ const ERC1155_APPROVAL_ABI = [
 function SellPage() {
     const { createListing, status, setStatus, marketplaceAddress } = useMarketplace();
     const { wallet, connect, provider, signer } = useWallet();
-    const { getCachedProfile } = useSupabase();
+    const { getCachedProfile, cacheProfileData } = useSupabase();
     const [searchParams] = useSearchParams();
     const priceIntervalRef = useRef(null);
     const sellContainerRef = useRef(null);
@@ -423,17 +424,33 @@ function SellPage() {
     const [platformFeeBps, setPlatformFeeBps] = useState(null);
     const [vibeShareBps, setVibeShareBps] = useState(null);
 
-    // Load user's NFT collections from Supabase
-    const loadUserCollections = async () => {
-        if (!wallet || !getCachedProfile) return;
+    // Load user's NFT collections from Supabase with ownership verification
+    const loadUserCollections = async (forceRefresh = false) => {
+        if (!wallet || !getCachedProfile || !provider) return;
         
         setLoadingCollections(true);
         try {
-            const cachedProfile = await getCachedProfile(wallet);
-            if (cachedProfile && cachedProfile.nfts && cachedProfile.nfts.length > 0) {
+            let nfts = [];
+            
+            if (forceRefresh) {
+                // Refresh and verify ownership
+                nfts = await refreshUserNFTCollections(
+                    wallet,
+                    provider,
+                    getCachedProfile,
+                    cacheProfileData,
+                    (status) => debugLog(`[SellPage] ${status}`)
+                );
+            } else {
+                // Load from cache
+                const cachedProfile = await getCachedProfile(wallet);
+                nfts = (cachedProfile && cachedProfile.nfts) || [];
+            }
+            
+            if (nfts.length > 0) {
                 // Group NFTs by contract address
                 const collections = {};
-                cachedProfile.nfts.forEach(nft => {
+                nfts.forEach(nft => {
                     const contract = nft.contractAddress.toLowerCase();
                     if (!collections[contract]) {
                         collections[contract] = {
@@ -1360,7 +1377,23 @@ function SellPage() {
                                 {inputMode === 'dropdown' && (
                                     <>
                                         <div className="form-group">
-                                            <label htmlFor="contractDropdown">Select Collection</label>
+                                            <div className="collection-header">
+                                                <label htmlFor="contractDropdown">Select Collection</label>
+                                                <button
+                                                    type="button"
+                                                    className="refresh-collections-btn"
+                                                    onClick={() => loadUserCollections(true)}
+                                                    disabled={loadingCollections}
+                                                    title="Refresh collection to verify ownership and remove sold NFTs"
+                                                >
+                                                    {loadingCollections ? (
+                                                        <span className="spinner-small">⟳</span>
+                                                    ) : (
+                                                        '🔄'
+                                                    )}
+                                                    Refresh
+                                                </button>
+                                            </div>
                                             {loadingCollections ? (
                                                 <div className="loading-collections">
                                                     <div className="loader"></div>
