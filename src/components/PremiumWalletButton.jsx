@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
-import { Copy, ExternalLink, LogOut, User, Check } from 'lucide-react'
+import { Copy, ExternalLink, LogOut, User, Check, Coins, RefreshCw } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAppKit } from '@reown/appkit/react'
 import { usePremiumWallet } from '../context/PremiumWalletContext'
+import { useTokenBalances } from '../hooks/useTokenBalances'
 import { Button } from './ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar'
@@ -15,9 +16,35 @@ function shortenAddress(address) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
 }
 
+// Token balance display component
+function TokenBalance({ symbol, balance, icon = '🪙', className = '' }) {
+  const { formatted, loading, error } = balance
+  
+  return (
+    <div className={cn("flex items-center justify-between py-1", className)}>
+      <div className="flex items-center space-x-2">
+        <span className="text-sm">{icon}</span>
+        <span className="text-sm font-medium">{symbol}</span>
+      </div>
+      <div className="text-right">
+        {loading ? (
+          <div className="w-4 h-4">
+            <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
+          </div>
+        ) : error ? (
+          <span className="text-xs text-destructive">Error</span>
+        ) : (
+          <span className="text-sm font-mono">{formatted}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function PremiumWalletButton() {
   const { open } = useAppKit()
   const { address, isConnected, isConnecting, disconnect, isCorrectNetwork, switchToVitruveo } = usePremiumWallet()
+  const { balances, isLoading: balancesLoading, refetch: refetchBalances } = useTokenBalances()
   const [copied, setCopied] = useState(false)
 
   const handleCopyAddress = async () => {
@@ -39,6 +66,10 @@ export function PremiumWalletButton() {
     if (address) {
       window.open(`https://explorer.vitruveo.xyz/address/${address}`, '_blank')
     }
+  }
+
+  const handleRefreshBalances = async () => {
+    await refetchBalances()
   }
 
   // Generate blockie avatar
@@ -117,7 +148,7 @@ export function PremiumWalletButton() {
 
         <DropdownMenuContent 
           align="end" 
-          className="w-64 p-2 bg-card/95 backdrop-blur-sm border-border"
+          className="w-80 p-2 bg-card/95 backdrop-blur-sm border-border"
         >
           {/* Account info */}
           <div className="px-2 py-3 border-b border-border">
@@ -141,6 +172,48 @@ export function PremiumWalletButton() {
               </div>
             </div>
           </div>
+
+          {/* Token Balances */}
+          {isCorrectNetwork && (
+            <div className="px-2 py-3 border-b border-border">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-medium flex items-center">
+                  <Coins className="w-4 h-4 mr-1" />
+                  Token Balances
+                </h4>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRefreshBalances}
+                  disabled={balancesLoading}
+                  className="h-6 w-6 p-0"
+                >
+                  <RefreshCw className={cn(
+                    "w-3 h-3",
+                    balancesLoading && "animate-spin"
+                  )} />
+                </Button>
+              </div>
+              
+              <div className="space-y-1">
+                <TokenBalance 
+                  symbol="VTRU" 
+                  balance={balances.vtru} 
+                  icon="⚡" 
+                />
+                <TokenBalance 
+                  symbol="USDC" 
+                  balance={balances.usdc} 
+                  icon="💵" 
+                />
+                <TokenBalance 
+                  symbol="wVTRU" 
+                  balance={balances.wvtru} 
+                  icon="🔄" 
+                />
+              </div>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="py-1">
