@@ -1716,6 +1716,27 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
                 paymentToken
             });
 
+            // Check for duplicate listings - prevent listing the same NFT multiple times
+            setStatus("Checking for existing listings...");
+            debugLog("Checking if NFT is already listed:", { nftContract, tokenId });
+            
+            const existingListing = listings.find(listing => 
+                listing.nftContract && 
+                listing.tokenId &&
+                listing.nftContract.toLowerCase() === nftContract.toLowerCase() && 
+                listing.tokenId.toString() === tokenId.toString() &&
+                listing.active !== false
+            );
+            
+            if (existingListing) {
+                const errorMessage = `This NFT (${nftContract.slice(0, 6)}...${nftContract.slice(-4)}:${tokenId}) is already listed on the marketplace.`;
+                setStatus(`Error: ${errorMessage}`);
+                debugWarn("Duplicate listing prevented:", { existingListing, nftContract, tokenId });
+                throw new Error(errorMessage);
+            }
+            
+            debugLog("✅ No existing listing found, proceeding with creation");
+
             // Check if this is an ERC721 or ERC1155
             let isERC1155 = false;
             try {
