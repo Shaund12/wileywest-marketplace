@@ -6,6 +6,7 @@ import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils
 import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
 import { isVShareContract, vShareLpSvgDataUrl, getVShareMetadata } from '../utils/vShareUtils';
 import { debugWarn } from '../utils/debugUtils';
+import NFTImage from './NFTImage';
 import './ListingCard.css';
 
 /* =========================
@@ -342,9 +343,6 @@ function ListingCardInner({
 
     const [tokenSymbol, setTokenSymbol] = useState('TOKEN');
     const [priceDisplay, setPriceDisplay] = useState({ tokenAmount: '...', tokenSymbol: 'TOKEN', usdcValue: '0.00', formatted: '...', hasUSDCRate: true });
-    const [mediaUrl, setMediaUrl] = useState(null);
-    const [posterUrl, setPosterUrl] = useState(null);
-    const [loadingMedia, setLoadingMedia] = useState(true);
     const [showAttrs, setShowAttrs] = useState(false);
     const [copyOk, setCopyOk] = useState(false);
 
@@ -367,59 +365,6 @@ function ListingCardInner({
         coerceMs(listing?.listedAt);
     const ts = Number.isFinite(tsCandidate) ? tsCandidate : NaN;
     const isNew = Number.isFinite(ts) && (nowMs() - ts) <= 24 * 60 * 60 * 1000;
-
-    /* Resolve media lazily when visible */
-    useEffect(() => {
-        let cancelled = false;
-        if (!inView) { return; }
-        (async () => {
-            try {
-                setLoadingMedia(true);
-                const preferAnim = !!autoPlayAnimation;
-                const url = await resolveWorkingMediaUrl(listing || {}, { preferAnimation: preferAnim });
-                // If video, try to resolve a still image as poster too
-                let poster = null;
-                if (url && isVideoUrl(url)) {
-                    const imgOnly = await resolveWorkingMediaUrl(listing || {}, { preferAnimation: false });
-                    poster = imgOnly && !isVideoUrl(imgOnly) ? imgOnly : null;
-                }
-                if (!cancelled) { setMediaUrl(url); setPosterUrl(poster); setLoadingMedia(false); }
-            } catch (e) {
-                debugWarn?.('resolve media failed', e);
-                if (!cancelled) { setMediaUrl(null); setPosterUrl(null); setLoadingMedia(false); }
-            }
-        })();
-        return () => { cancelled = true; };
-    }, [inView, listing, autoPlayAnimation]);
-
-    /* Prefetch on hover (speeds perceived load) */
-    const prefetchRef = useRef(false);
-    const onHoverPrefetch = useCallback(() => {
-        if (prefetchRef.current || mediaUrl) return;
-        prefetchRef.current = true;
-        resolveWorkingMediaUrl(listing || {}, { preferAnimation: !!autoPlayAnimation }).then(() => { }).catch(() => { });
-    }, [listing, mediaUrl, autoPlayAnimation]);
-
-    // Force media reload (clears cache entry and re-resolves)
-    const onRetryMedia = useCallback(async () => {
-        try {
-            const keyImg = `${nftContract}-${tokenId}-img`;
-            const keyAnim = `${nftContract}-${tokenId}-anim`;
-            delete imageUrlCache[keyImg];
-            delete imageUrlCache[keyAnim];
-        } catch { }
-        try {
-            setLoadingMedia(true);
-            const url = await resolveWorkingMediaUrl(listing || {}, { preferAnimation: !!autoPlayAnimation });
-            let poster = null;
-            if (url && isVideoUrl(url)) {
-                const imgOnly = await resolveWorkingMediaUrl(listing || {}, { preferAnimation: false });
-                poster = imgOnly && !isVideoUrl(imgOnly) ? imgOnly : null;
-            }
-            setMediaUrl(url); setPosterUrl(poster);
-        } catch { setMediaUrl(null); setPosterUrl(null); }
-        finally { setLoadingMedia(false); }
-    }, [listing, nftContract, tokenId, autoPlayAnimation]);
 
     /* Price formatting (with quantity support) */
     const qty = Number(listing?.quantity ?? 1) || 1;
@@ -509,7 +454,6 @@ function ListingCardInner({
             className={`${scopedClass?.('listing-card', 'ListingCard') || 'listing-card'} ${featured ? (scopedClass?.('featured', 'ListingCard') || 'featured') : ''}`}
             role="article"
             aria-label={`NFT listing: ${nftName}`}
-            onMouseEnter={onHoverPrefetch}
         >
             {/* Top chips */}
             <div className={scopedClass?.('lc-chips', 'ListingCard') || 'lc-chips'}>
@@ -522,22 +466,15 @@ function ListingCardInner({
             {/* Media */}
             <Link to={`/nft/${nftContract}/${tokenId}`} className="listing-image-link">
                 <div className={`${scopedClass?.('listing-image', 'ListingCard') || 'listing-image'} ${loadingMedia ? 'lc-loading' : ''}`}>
-                    <AssetMedia
-                        url={inView ? mediaUrl : null}
-                        posterUrl={posterUrl || undefined}
+                    <NFTImage
+                        src={listing?.metadata?.image || listing?.image || listing?.imageUrl}
                         alt={`${nftName} - NFT artwork`}
                         className={scopedClass?.('nft-image', 'ListingCard') || 'nft-image'}
-                        seed={seed}
                         width={300}
                         height={200}
-                        autoPlay={autoPlayAnimation}
-                        contractAddress={listing?.nftContract}
-                        tokenId={listing?.tokenId}
+                        placeholder="🖼️"
+                        showRetry={true}
                     />
-                    {loadingMedia && <div className="lc-blur-placeholder" aria-hidden />}
-                    {!loadingMedia && !mediaUrl && (
-                        <button className="lc-retry" type="button" onClick={onRetryMedia} title="Retry loading media">Retry media</button>
-                    )}
                 </div>
             </Link>
 
