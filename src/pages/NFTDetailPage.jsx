@@ -220,7 +220,9 @@ export default function NFTDetailPage() {
                     <div className="nft-detail-image-section">
                         <div className="nft-image-container">
                             <NFTImage
-                                src={metadata?.image || metadata?.imageUrl}
+                                listing={listing}
+                                contractAddress={contractAddress}
+                                tokenId={tokenId}
                                 alt={metadata?.name || `NFT #${tokenId}`}
                                 className="nft-image"
                                 width={400}

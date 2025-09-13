@@ -467,7 +467,9 @@ function ListingCardInner({
             <Link to={`/nft/${nftContract}/${tokenId}`} className="listing-image-link">
                 <div className={`${scopedClass?.('listing-image', 'ListingCard') || 'listing-image'}`}>
                     <NFTImage
-                        src={listing?.metadata?.image || listing?.image || listing?.imageUrl}
+                        listing={listing}
+                        contractAddress={nftContract}
+                        tokenId={tokenId}
                         alt={`${nftName} - NFT artwork`}
                         className={scopedClass?.('nft-image', 'ListingCard') || 'nft-image'}
                         width={300}
