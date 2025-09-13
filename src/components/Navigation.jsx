@@ -1,7 +1,7 @@
 ﻿import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, ExternalLink, Menu, X, Wallet, Check, ChevronDown, ChevronUp, Activity } from 'lucide-react';
+import { Copy, ExternalLink, Menu, X, Check, ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { usePremiumWallet } from '../context/PremiumWalletContext';
@@ -14,7 +14,8 @@ import {
     fetchTokenPriceInUSDC,
     USDC_POL_ADDRESS,
     WVTRU_ADDRESS,
-    UNISWAP_V3_FACTORY_ADDRESS
+    UNISWAP_V3_FACTORY_ADDRESS,
+    fetchTokenDetails
 } from '../utils/tokenUtils';
 
 const VITRUVEO = {
@@ -38,6 +39,11 @@ const UNISWAP_V3_POOL_ABI = [
     'function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)'
 ];
 
+// Minimal ABI to read token balances
+const ERC20_BALANCE_ABI = [
+    'function balanceOf(address owner) view returns (uint256)'
+];
+
 const FEE_TIERS = [500, 3000, 10000];
 
 function shorten(addr) {
@@ -45,7 +51,7 @@ function shorten(addr) {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
-// Get pool address from factory
+// Get pool address from factory (try common fee tiers)
 async function getUniswapPool(tokenA, tokenB, provider) {
     try {
         const factory = new ethers.Contract(
@@ -71,43 +77,42 @@ async function getUniswapPool(tokenA, tokenB, provider) {
     }
 }
 
-// Format large numbers to readable format
-function formatLargeNumber(num) {
-    if (!num) return '0';
-
-    if (num >= 1e9) {
-        return (num / 1e9).toFixed(2) + 'B';
-    } else if (num >= 1e6) {
-        return (num / 1e6).toFixed(2) + 'M';
-    } else if (num >= 1e3) {
-        return (num / 1e3).toFixed(2) + 'K';
-    } else {
-        return num.toString();
-    }
+function formatAmount(num, isUSDC) {
+    if (num === null || num === undefined || Number.isNaN(num)) return '0';
+    if (isUSDC) return Number(num).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (num >= 1000) return Number(num).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    return Number(num).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
 
 export default function Navigation() {
-    const { wallet, connect, disconnect, chainId, isConnecting, connectionError, provider } = useWallet();
+    const { wallet, chainId, connectionError, provider } = useWallet();
     const { address: premiumAddress, isConnected: premiumConnected, isCorrectNetwork } = usePremiumWallet();
     const [menuOpen, setMenuOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const location = useLocation();
     const [tokenPrice, setTokenPrice] = useState(null);
     const [isLoadingPrice, setIsLoadingPrice] = useState(false);
+
     const [showLPDetails, setShowLPDetails] = useState(false);
     const [lpDetails, setLpDetails] = useState({
         poolAddress: null,
         fee: null,
         loading: false,
-        liquidity: null,
-        tvl: null,
-        lastUpdate: null
+        token0: null,
+        token1: null,
+        symbol0: null,
+        symbol1: null,
+        decimals0: 18,
+        decimals1: 18,
+        reserve0: null,
+        reserve1: null,
+        tick: null
     });
     const lpDetailsRef = useRef(null);
 
     const onVitruveo = useMemo(() => Number(chainId || 0) === VITRUVEO.chainIdDec, [chainId]);
 
-    // Use premium wallet state when available, fallback to old wallet
+    // Use premium wallet state when available, fallback to legacy wallet
     const connectedAddress = premiumConnected ? premiumAddress : wallet;
     const isWalletConnected = premiumConnected || !!wallet;
     const isOnCorrectNetwork = premiumConnected ? isCorrectNetwork : onVitruveo;
@@ -126,14 +131,13 @@ export default function Navigation() {
         };
     }, []);
 
-    // Fetch VTRU price using tokenUtils
+    // Fetch VTRU price using tokenUtils (on-chain via pool tick)
     useEffect(() => {
         async function fetchTokenPrice() {
             if (!provider) return;
 
             setIsLoadingPrice(true);
             try {
-                // Use fetchTokenPriceInUSDC from tokenUtils for native VTRU
                 const price = await fetchTokenPriceInUSDC(ethers.ZeroAddress, provider);
                 setTokenPrice(price);
             } catch (error) {
@@ -144,100 +148,69 @@ export default function Navigation() {
         }
 
         fetchTokenPrice();
-
-        // Refresh price every 2 minutes
-        const interval = setInterval(fetchTokenPrice, 2 * 60 * 1000);
+        const interval = setInterval(fetchTokenPrice, 120_000);
         return () => clearInterval(interval);
     }, [provider]);
 
-    // Fetch LP details when dropdown is opened - using real blockchain data
+    // Fetch LP details when dropdown is opened - REAL on-chain balances
     useEffect(() => {
         async function fetchLPDetails() {
             if (!showLPDetails || !provider) return;
 
             setLpDetails(prev => ({ ...prev, loading: true }));
             try {
-                // Get pool info from Uniswap Factory
-                const { poolAddress, fee } = await getUniswapPool(
-                    WVTRU_ADDRESS,
-                    USDC_POL_ADDRESS,
-                    provider
-                );
+                // Resolve pool (WVTRU/USDC)
+                const { poolAddress, fee } = await getUniswapPool(WVTRU_ADDRESS, USDC_POL_ADDRESS, provider);
+                if (!poolAddress) throw new Error('Pool not found');
 
-                if (!poolAddress) {
-                    throw new Error('Pool not found');
-                }
-
-                // Get real pool data from pool contract
-                const poolContract = new ethers.Contract(
-                    poolAddress,
-                    UNISWAP_V3_POOL_ABI,
-                    provider
-                );
-
-                // Get token0, token1, fee, and liquidity data - REAL ON-CHAIN DATA
-                const [token0, token1, feeData, liquidityData, slot0Data] = await Promise.all([
-                    poolContract.token0(),
-                    poolContract.token1(),
-                    poolContract.fee(),
-                    poolContract.liquidity(),
-                    poolContract.slot0()
+                const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
+                const [token0, token1, feeData, slot0Data] = await Promise.all([
+                    pool.token0(),
+                    pool.token1(),
+                    pool.fee(),
+                    pool.slot0()
                 ]);
 
-                // Do not attempt to estimate TVL with simplified math
-                // Instead show the raw liquidity value which is actual blockchain data
+                // Fetch token metadata
+                const [t0, t1] = await Promise.all([
+                    fetchTokenDetails(token0, provider),
+                    fetchTokenDetails(token1, provider)
+                ]);
+
+                // Read actual ERC20 balances held by pool
+                const erc0 = new ethers.Contract(token0, ERC20_BALANCE_ABI, provider);
+                const erc1 = new ethers.Contract(token1, ERC20_BALANCE_ABI, provider);
+                const [bal0, bal1] = await Promise.all([
+                    erc0.balanceOf(poolAddress),
+                    erc1.balanceOf(poolAddress)
+                ]);
+
+                // Format reserves
+                const reserve0 = Number(ethers.formatUnits(bal0, t0.decimals));
+                const reserve1 = Number(ethers.formatUnits(bal1, t1.decimals));
+
                 setLpDetails({
                     poolAddress,
                     fee: Number(feeData),
-                    liquidity: liquidityData.toString(),
+                    token0,
+                    token1,
+                    symbol0: t0.symbol || 'TOKEN0',
+                    symbol1: t1.symbol || 'TOKEN1',
+                    decimals0: t0.decimals ?? 18,
+                    decimals1: t1.decimals ?? 18,
+                    reserve0,
+                    reserve1,
                     tick: Number(slot0Data.tick),
-                    sqrtPriceX96: slot0Data.sqrtPriceX96.toString(),
-                    loading: false,
-                    lastUpdate: new Date().toISOString()
+                    loading: false
                 });
-
             } catch (error) {
                 console.error('Failed to fetch LP details:', error);
-                setLpDetails(prev => ({
-                    ...prev,
-                    loading: false,
-                    error: error.message
-                }));
+                setLpDetails(prev => ({ ...prev, loading: false, error: error.message }));
             }
         }
 
         fetchLPDetails();
-    }, [showLPDetails, provider, tokenPrice]);
-
-    async function switchToVitruveo() {
-        if (!window.ethereum) return;
-        try {
-            await window.ethereum.request({
-                method: 'wallet_switchEthereumChain',
-                params: [{ chainId: VITRUVEO.chainIdHex }],
-            });
-        } catch (err) {
-            // Unrecognized chain: add and switch
-            if (err?.code === 4902 || /Unrecognized chain ID/i.test(err?.message)) {
-                try {
-                    await window.ethereum.request({
-                        method: 'wallet_addEthereumChain',
-                        params: [{
-                            chainId: VITRUVEO.chainIdHex,
-                            chainName: VITRUVEO.chainName,
-                            rpcUrls: VITRUVEO.rpcUrls,
-                            blockExplorerUrls: VITRUVEO.blockExplorerUrls,
-                            nativeCurrency: VITRUVEO.nativeCurrency,
-                        }],
-                    });
-                } catch (addErr) {
-                    console.error('Add chain error', addErr);
-                }
-            } else {
-                console.error('Switch chain error', err);
-            }
-        }
-    }
+    }, [showLPDetails, provider]);
 
     async function copyAddress() {
         try {
@@ -343,7 +316,7 @@ export default function Navigation() {
                                     {isLoadingPrice ? (
                                         <span className="animate-pulse">Loading...</span>
                                     ) : tokenPrice ? (
-                                        <span>${Number(tokenPrice).toFixed(4)}</span>
+                                        <span>${Number(tokenPrice).toFixed(6)}</span>
                                     ) : (
                                         <span>$--.--</span>
                                     )}
@@ -365,7 +338,7 @@ export default function Navigation() {
                                         animate={{ opacity: 1, y: 0 }}
                                         exit={{ opacity: 0, y: -10 }}
                                         transition={{ duration: 0.2 }}
-                                        className="absolute z-50 mt-2 w-72 rounded-md border border-neon-green/30 bg-card/95 backdrop-blur p-3 shadow-lg"
+                                        className="absolute z-50 mt-2 w-80 rounded-md border border-neon-green/30 bg-card/95 backdrop-blur p-3 shadow-lg"
                                     >
                                         <div className="text-sm font-medium mb-2 text-neon-green flex items-center justify-between">
                                             <span>VTRU/USDC Pool Info</span>
@@ -390,42 +363,49 @@ export default function Navigation() {
                                                             ${tokenPrice ? Number(tokenPrice).toFixed(6) : '--'}
                                                         </span>
                                                     </div>
-                                                    
+
                                                     <div className="flex justify-between items-center">
                                                         <span className="text-muted-foreground">Pool Fee:</span>
                                                         <span className="font-mono">
-                                                            {lpDetails.fee ? `${lpDetails.fee / 10000}%` : '--'}
+                                                            {lpDetails.fee !== null ? `${lpDetails.fee / 10000}%` : '--'}
                                                         </span>
                                                     </div>
-                                                    
+
+                                                    {/* Real on-chain reserves */}
                                                     <div className="flex justify-between items-center">
-                                                        <span className="text-muted-foreground">Raw Liquidity:</span>
-                                                        <span className="font-mono text-xs" title={lpDetails.liquidity}>
-                                                            {lpDetails.liquidity ? ethers.formatUnits(lpDetails.liquidity, 0) : '--'}
+                                                        <span className="text-muted-foreground">Reserves:</span>
+                                                        <span className="font-mono text-right">
+                                                            {lpDetails.reserve0 !== null && lpDetails.symbol0
+                                                                ? `${formatAmount(lpDetails.reserve0, /USDC/i.test(lpDetails.symbol0))} ${lpDetails.symbol0}`
+                                                                : '--'}
+                                                            {'  |  '}
+                                                            {lpDetails.reserve1 !== null && lpDetails.symbol1
+                                                                ? `${formatAmount(lpDetails.reserve1, /USDC/i.test(lpDetails.symbol1))} ${lpDetails.symbol1}`
+                                                                : '--'}
                                                         </span>
                                                     </div>
-                                                    
+
                                                     <div className="flex justify-between items-center">
                                                         <span className="text-muted-foreground">Current Tick:</span>
                                                         <span className="font-mono">
-                                                            {lpDetails.tick !== undefined ? lpDetails.tick : '--'}
+                                                            {lpDetails.tick ?? '--'}
                                                         </span>
                                                     </div>
-                                                </div>
 
-                                                {lpDetails.poolAddress && (
-                                                    <div className="pt-1">
-                                                        <a
-                                                            href={`${VITRUVEO.blockExplorerUrls[0]}/address/${lpDetails.poolAddress}`}
-                                                            target="_blank"
-                                                            rel="noreferrer"
-                                                            className="text-neon-cyan hover:text-neon-cyan/80 flex items-center justify-center w-full text-xs font-medium mt-1 py-1 rounded-md border border-neon-cyan/30 hover:bg-neon-cyan/5"
-                                                        >
-                                                            View Pool on Explorer
-                                                            <ExternalLink className="ml-1 h-3 w-3" />
-                                                        </a>
-                                                    </div>
-                                                )}
+                                                    {lpDetails.poolAddress && (
+                                                        <div className="pt-1">
+                                                            <a
+                                                                href={`${VITRUVEO.blockExplorerUrls[0]}/address/${lpDetails.poolAddress}`}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-neon-cyan hover:text-neon-cyan/80 flex items-center justify-center w-full text-xs font-medium mt-1 py-1 rounded-md border border-neon-cyan/30 hover:bg-neon-cyan/5"
+                                                            >
+                                                                View Pool on Explorer
+                                                                <ExternalLink className="ml-1 h-3 w-3" />
+                                                            </a>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </>
                                         )}
                                     </motion.div>
@@ -535,7 +515,7 @@ export default function Navigation() {
                                             {isLoadingPrice ? (
                                                 <span className="animate-pulse">Loading...</span>
                                             ) : tokenPrice ? (
-                                                <span>${Number(tokenPrice).toFixed(4)}</span>
+                                                <span>${Number(tokenPrice).toFixed(6)}</span>
                                             ) : (
                                                 <span>$--.--</span>
                                             )}
@@ -564,6 +544,10 @@ export default function Navigation() {
                                                         <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-solid border-neon-green border-r-transparent"></div>
                                                         <p className="text-xs mt-1">Loading pool data...</p>
                                                     </div>
+                                                ) : lpDetails.error ? (
+                                                    <div className="text-center text-destructive text-xs">
+                                                        Failed to load pool data: {lpDetails.error}
+                                                    </div>
                                                 ) : (
                                                     <div className="space-y-1 text-xs">
                                                         <div className="flex justify-between">
@@ -572,15 +556,23 @@ export default function Navigation() {
                                                         </div>
                                                         <div className="flex justify-between">
                                                             <span className="text-muted-foreground">Fee:</span>
-                                                            <span>{lpDetails.fee ? `${lpDetails.fee / 10000}%` : '--'}</span>
+                                                            <span>{lpDetails.fee !== null ? `${lpDetails.fee / 10000}%` : '--'}</span>
                                                         </div>
                                                         <div className="flex justify-between">
-                                                            <span className="text-muted-foreground">Liquidity:</span>
-                                                            <span>{lpDetails.liquidity ? formatLargeNumber(lpDetails.liquidity) : '--'}</span>
+                                                            <span className="text-muted-foreground">Reserves:</span>
+                                                            <span className="text-right">
+                                                                {lpDetails.reserve0 !== null && lpDetails.symbol0
+                                                                    ? `${formatAmount(lpDetails.reserve0, /USDC/i.test(lpDetails.symbol0))} ${lpDetails.symbol0}`
+                                                                    : '--'}
+                                                                {'  |  '}
+                                                                {lpDetails.reserve1 !== null && lpDetails.symbol1
+                                                                    ? `${formatAmount(lpDetails.reserve1, /USDC/i.test(lpDetails.symbol1))} ${lpDetails.symbol1}`
+                                                                    : '--'}
+                                                            </span>
                                                         </div>
                                                         <div className="flex justify-between">
-                                                            <span className="text-muted-foreground">Est. TVL:</span>
-                                                            <span>{lpDetails.tvl ? `$${formatLargeNumber(lpDetails.tvl)}` : '--'}</span>
+                                                            <span className="text-muted-foreground">Tick:</span>
+                                                            <span>{lpDetails.tick ?? '--'}</span>
                                                         </div>
                                                     </div>
                                                 )}
@@ -601,7 +593,9 @@ export default function Navigation() {
                                             <Button
                                                 variant="outline"
                                                 size="sm"
-                                                onClick={copyAddress}
+                                                onClick={async () => {
+                                                    await copyAddress();
+                                                }}
                                                 className="font-mono text-xs"
                                             >
                                                 {copied ? (
@@ -611,11 +605,7 @@ export default function Navigation() {
                                                 )}
                                                 {shorten(connectedAddress)}
                                             </Button>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                asChild
-                                            >
+                                            <Button variant="ghost" size="sm" asChild>
                                                 <a
                                                     href={`${VITRUVEO.blockExplorerUrls[0]}/address/${connectedAddress}`}
                                                     target="_blank"
