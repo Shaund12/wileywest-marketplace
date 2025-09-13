@@ -37,7 +37,8 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
         cleanupOrphanedListings,
         subscribeToListings,
         isConnected: supabaseConnected,
-        supabase
+        supabase,
+        clearCache
     } = useSupabase();
     const [marketplace, setMarketplace] = useState(null);
     const [listings, setListings] = useState([]);
@@ -860,6 +861,81 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     debugWarn("Failed to instant sync after new listing creation:", syncError);
                     // Fallback to regular refresh
                     setTimeout(fetchListings, 1000);
+                }
+            });
+
+            // CRITICAL FIX: Listen for listing price updates to prevent stale Supabase cache
+            contract.on("ListingUpdated", async (listingId, newPricePerUnit, event) => {
+                debugLog("🔄 Listing price updated on blockchain:", { listingId: listingId.toString(), newPricePerUnit: newPricePerUnit.toString() });
+                
+                try {
+                    const id = listingId.toString();
+                    const newPrice = newPricePerUnit.toString();
+                    
+                    // IMMEDIATE: Update Supabase cache with new price to prevent stale data
+                    if (supabaseConnected && supabase) {
+                        debugLog(`💾 CRITICAL: Immediately updating Supabase cache for listing ${id} with new price ${ethers.formatEther(newPrice)} VTRU`);
+                        
+                        try {
+                            const { error } = await supabase
+                                .from('marketplace_listings')
+                                .update({ 
+                                    price_per_unit: newPrice,
+                                    updated_at: new Date().toISOString()
+                                })
+                                .eq('listing_id', id);
+                                
+                            if (error) {
+                                debugWarn(`❌ Failed to update Supabase cache for listing ${id}:`, error);
+                            } else {
+                                debugLog(`✅ Successfully updated Supabase cache for listing ${id} with new price`);
+                            }
+                        } catch (cacheError) {
+                            debugWarn(`❌ Error updating Supabase cache for listing ${id}:`, cacheError);
+                        }
+                    }
+                    
+                    // IMMEDIATE: Update local listings state to reflect new price
+                    setListings(prevListings => 
+                        prevListings.map(listing => 
+                            listing.id.toString() === id 
+                                ? { ...listing, pricePerUnit: newPrice }
+                                : listing
+                        )
+                    );
+                    
+                    // IMMEDIATE: Update hot listings state if this listing is in hot listings
+                    setHotListings(prevHotListings => 
+                        prevHotListings.map(listing => 
+                            listing.id.toString() === id 
+                                ? { ...listing, pricePerUnit: newPrice }
+                                : listing
+                        )
+                    );
+                    
+                    // IMMEDIATE: Clear cache for this specific listing to force fresh load
+                    if (clearCache) {
+                        clearCache(`listing:${id}`);
+                        clearCache('all_listings');
+                    }
+                    
+                    // Trigger instant sync as backup to ensure everything is synchronized
+                    debugLog(`⚡ Price update detected - triggering instant sync for listing ${id}...`);
+                    try {
+                        await triggerInstantSync(id);
+                        debugLog(`✅ Instant sync completed after price update for listing ${id}`);
+                        
+                        setStatusWithType(`Listing #${id} price updated and synced instantly!`, 'success');
+                        setTimeout(() => clearStatus(), 3000);
+                    } catch (syncError) {
+                        debugWarn("Failed to instant sync after price update:", syncError);
+                        // Price was still updated in cache and local state, so this is non-critical
+                    }
+                    
+                } catch (error) {
+                    criticalError("Error processing ListingUpdated event:", error);
+                    // Fallback: refresh all listings to eventually get the updated price
+                    setTimeout(() => fetchListings(false), 2000);
                 }
             });
 
@@ -2073,12 +2149,54 @@ const updateListingPrice = async (listingId, newPricePerUnit) => {
         const tx = await marketplaceWithSigner.updateListingPrice(listingId, priceInWei);
         
         setStatusWithType('Confirming price update transaction...', 'info');
-        await tx.wait();
+        const receipt = await tx.wait();
         
-        setStatusWithType('Listing price updated successfully!', 'success');
+        // CRITICAL: Immediately update Supabase cache to prevent stale data
+        if (supabaseConnected && supabase) {
+            debugLog(`💾 CRITICAL: Force updating Supabase cache for listing ${listingId} with new price ${newPricePerUnit} VTRU`);
+            
+            try {
+                const { error } = await supabase
+                    .from('marketplace_listings')
+                    .update({ 
+                        price_per_unit: priceInWei.toString(),
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('listing_id', listingId.toString());
+                    
+                if (error) {
+                    debugWarn(`❌ Failed to force update Supabase cache for listing ${listingId}:`, error);
+                } else {
+                    debugLog(`✅ Successfully force updated Supabase cache for listing ${listingId}`);
+                }
+            } catch (cacheError) {
+                debugWarn(`❌ Error force updating Supabase cache for listing ${listingId}:`, cacheError);
+            }
+        }
         
-        // Refresh listings to show updated price
-        await fetchListings();
+        // CRITICAL: Clear relevant cache entries to force fresh data
+        if (clearCache) {
+            clearCache(`listing:${listingId}`);
+            clearCache('all_listings');
+            debugLog(`🧹 Cleared cache entries for listing ${listingId}`);
+        }
+        
+        setStatusWithType('Price updated successfully! Syncing with database...', 'success');
+        
+        // CRITICAL: Force instant sync to ensure database consistency
+        try {
+            debugLog(`⚡ Triggering instant sync after manual price update for listing ${listingId}...`);
+            await triggerInstantSync(listingId.toString());
+            debugLog(`✅ Instant sync completed after manual price update`);
+        } catch (syncError) {
+            debugWarn("Instant sync failed after price update (non-critical):", syncError);
+        }
+        
+        // CRITICAL: Force complete listings refresh to show updated price everywhere
+        await fetchListings(false);
+        
+        setStatusWithType('Listing price updated and synchronized!', 'success');
+        setTimeout(() => clearStatus(), 3000);
         
         return true;
     } catch (error) {
