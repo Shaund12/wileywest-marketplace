@@ -346,6 +346,7 @@ function ProfilePage() {
         status,
         setStatus,
         marketplace,
+        marketplaceAddress,
         // NEW: include sales + canceled for activity
         salesHistory,
         canceledListings
@@ -356,6 +357,7 @@ function ProfilePage() {
         getCachedProfile,
         subscribeToProfiles,
         getAuctionBids,
+        getCachedAuctions,
         isConnected: supabaseConnected
     } = useSupabase();
 
@@ -470,49 +472,69 @@ function ProfilePage() {
     useEffect(() => {
         let cancelled = false;
         async function loadAuctions() {
-            if (!wallet || !supabaseConnected || !supabase || !isAuctionsEnabled()) {
+            if (!wallet || !isAuctionsEnabled()) {
                 setUserAuctions([]);
                 return;
             }
             setIsAuctionsLoading(true);
             try {
-                // Try common table names. If none exist, silently ignore.
-                const tryTables = ['auctions', 'marketplace_auctions', 'auction_listings'];
-                let rows = [];
-                for (const table of tryTables) {
+                let auctions = [];
+                
+                // Try to get auctions from getCachedAuctions first
+                if (getCachedAuctions) {
                     try {
-                        const { data, error } = await supabase
-                            .from(table)
-                            .select('*')
-                            .eq('seller', wallet.toLowerCase());
-                        if (!error && Array.isArray(data) && data.length) {
-                            rows = data;
-                            break;
-                        }
-                    } catch { /* ignore */ }
+                        auctions = await getCachedAuctions(wallet.toLowerCase(), marketplaceAddress);
+                        debugLog(`📦 Loaded ${auctions.length} auctions from cache for user ${wallet}`);
+                    } catch (error) {
+                        debugWarn('Failed to load auctions from cache:', error);
+                    }
                 }
+                
+                // If no cached auctions and Supabase is available, try direct table query as fallback
+                if (auctions.length === 0 && supabaseConnected && supabase) {
+                    try {
+                        // Try common table names. If none exist, silently ignore.
+                        const tryTables = ['auctions', 'marketplace_auctions', 'auction_listings'];
+                        let rows = [];
+                        for (const table of tryTables) {
+                            try {
+                                const { data, error } = await supabase
+                                    .from(table)
+                                    .select('*')
+                                    .eq('seller', wallet.toLowerCase());
+                                if (!error && Array.isArray(data) && data.length) {
+                                    rows = data;
+                                    break;
+                                }
+                            } catch { /* ignore */ }
+                        }
+                        
+                        // Normalize minimal fields
+                        auctions = rows.map(r => ({
+                            id: String(r.id ?? r.auction_id ?? ''),
+                            nftContract: (r.nft_contract || r.contract || '').toLowerCase(),
+                            tokenId: String(r.token_id ?? r.tokenId ?? ''),
+                            seller: (r.seller || '').toLowerCase(),
+                            startPrice: String(r.start_price ?? r.startPrice ?? r.reserve ?? '0'),
+                            paymentToken: r.payment_token || r.paymentToken || ethers.ZeroAddress,
+                            status: (r.status || '').toLowerCase(), // e.g. active, ended, canceled
+                            createdAt: r.created_at || r.createdAt || null,
+                            endsAt: r.ends_at || r.endsAt || null
+                        }));
+                    } catch (error) {
+                        debugWarn('Failed to load auctions from Supabase tables:', error);
+                    }
+                }
+                
                 if (cancelled) return;
-
-                // Normalize minimal fields
-                const normalized = rows.map(r => ({
-                    id: String(r.id ?? r.auction_id ?? ''),
-                    nftContract: (r.nft_contract || r.contract || '').toLowerCase(),
-                    tokenId: String(r.token_id ?? r.tokenId ?? ''),
-                    seller: (r.seller || '').toLowerCase(),
-                    startPrice: String(r.start_price ?? r.startPrice ?? r.reserve ?? '0'),
-                    paymentToken: r.payment_token || r.paymentToken || ethers.ZeroAddress,
-                    status: (r.status || '').toLowerCase(), // e.g. active, ended, canceled
-                    createdAt: r.created_at || r.createdAt || null,
-                    endsAt: r.ends_at || r.endsAt || null
-                }));
-                setUserAuctions(normalized);
+                setUserAuctions(auctions);
             } finally {
                 if (!cancelled) setIsAuctionsLoading(false);
             }
         }
         if (activeTab === 'activity') loadAuctions();
         return () => { cancelled = true; };
-    }, [activeTab, wallet, supabaseConnected, supabase]);
+    }, [activeTab, wallet, supabaseConnected, supabase, getCachedAuctions, marketplaceAddress]);
 
     // OPTIMIZED: Load user's NFT collection when collection tab is selected
     useEffect(() => {
@@ -731,8 +753,22 @@ function ProfilePage() {
             // Start with existing basic auction data from userAuctions
             let detailedAuctions = [...userAuctions];
             
+            // Try to get auctions from getCachedAuctions first
+            if (getCachedAuctions && wallet) {
+                try {
+                    setAuctionActionStatus('Loading cached auction data...');
+                    const cachedAuctions = await getCachedAuctions(wallet.toLowerCase(), marketplaceAddress);
+                    if (cachedAuctions && cachedAuctions.length > 0) {
+                        debugLog(`📦 Loaded ${cachedAuctions.length} detailed auctions from cache`);
+                        detailedAuctions = cachedAuctions;
+                    }
+                } catch (error) {
+                    debugWarn('Failed to load cached auctions:', error);
+                }
+            }
+            
             // Try to get more detailed data from contract if provider available
-            if (provider && marketplaceAddress && wallet) {
+            if (provider && marketplaceAddress && wallet && marketplaceAddress !== '0x0000000000000000000000000000000000000000') {
                 try {
                     setAuctionActionStatus('Scanning blockchain for your auctions...');
                     
@@ -803,6 +839,15 @@ function ProfilePage() {
                     }
                 } catch (error) {
                     debugWarn('Error loading auctions from contract:', error);
+                    // If contract loading fails, still try to show cached auction data
+                    setAuctionActionStatus('Unable to load recent auctions from blockchain. Showing cached data.');
+                }
+            } else {
+                // If no valid marketplace address, show message to user
+                if (marketplaceAddress === '0x0000000000000000000000000000000000000000') {
+                    setAuctionActionStatus('Marketplace contract not configured. Unable to load auction history.');
+                } else {
+                    setAuctionActionStatus('Blockchain provider not available. Unable to load auction history.');
                 }
             }
             
