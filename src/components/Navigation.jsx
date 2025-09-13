@@ -1,7 +1,7 @@
-﻿import React, { useMemo, useState, useEffect } from 'react';
+﻿import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, ExternalLink, Menu, X, Wallet, Check } from 'lucide-react';
+import { Copy, ExternalLink, Menu, X, Wallet, Check, ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { usePremiumWallet } from '../context/PremiumWalletContext';
@@ -10,7 +10,12 @@ import { Button } from './ui/button';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { cn } from '../lib/utils';
 import logo from '../assets/blockdust-logo.png';
-import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
+import {
+    fetchTokenPriceInUSDC,
+    USDC_POL_ADDRESS,
+    WVTRU_ADDRESS,
+    UNISWAP_V3_FACTORY_ADDRESS
+} from '../utils/tokenUtils';
 
 const VITRUVEO = {
     chainIdHex: '0x5d2', // 1490
@@ -21,9 +26,64 @@ const VITRUVEO = {
     nativeCurrency: { name: 'Vitruveo', symbol: 'VTRU', decimals: 18 },
 };
 
+const UNISWAP_V3_FACTORY_ABI = [
+    'function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool)'
+];
+
+const UNISWAP_V3_POOL_ABI = [
+    'function token0() external view returns (address)',
+    'function token1() external view returns (address)',
+    'function fee() external view returns (uint24)',
+    'function liquidity() external view returns (uint128)',
+    'function slot0() external view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)'
+];
+
+const FEE_TIERS = [500, 3000, 10000];
+
 function shorten(addr) {
     if (!addr) return '';
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+// Get pool address from factory
+async function getUniswapPool(tokenA, tokenB, provider) {
+    try {
+        const factory = new ethers.Contract(
+            UNISWAP_V3_FACTORY_ADDRESS,
+            UNISWAP_V3_FACTORY_ABI,
+            provider
+        );
+
+        for (const fee of FEE_TIERS) {
+            try {
+                const poolAddress = await factory.getPool(tokenA, tokenB, fee);
+                if (poolAddress && poolAddress !== ethers.ZeroAddress) {
+                    return { poolAddress, fee };
+                }
+            } catch {
+                // ignore per-tier errors
+            }
+        }
+        return { poolAddress: null, fee: null };
+    } catch (error) {
+        console.error('Error getting pool address', error);
+        return { poolAddress: null, fee: null };
+    }
+}
+
+// Format large numbers to readable format
+function formatLargeNumber(num) {
+    if (!num) return '0';
+
+    if (num >= 1e9) {
+        return (num / 1e9).toFixed(2) + 'B';
+    } else if (num >= 1e6) {
+        return (num / 1e6).toFixed(2) + 'M';
+    } else if (num >= 1e3) {
+        return (num / 1e3).toFixed(2) + 'K';
+    } else {
+        return num.toString();
+    }
 }
 
 export default function Navigation() {
@@ -34,6 +94,16 @@ export default function Navigation() {
     const location = useLocation();
     const [tokenPrice, setTokenPrice] = useState(null);
     const [isLoadingPrice, setIsLoadingPrice] = useState(false);
+    const [showLPDetails, setShowLPDetails] = useState(false);
+    const [lpDetails, setLpDetails] = useState({
+        poolAddress: null,
+        fee: null,
+        loading: false,
+        liquidity: null,
+        tvl: null,
+        lastUpdate: null
+    });
+    const lpDetailsRef = useRef(null);
 
     const onVitruveo = useMemo(() => Number(chainId || 0) === VITRUVEO.chainIdDec, [chainId]);
 
@@ -41,6 +111,20 @@ export default function Navigation() {
     const connectedAddress = premiumConnected ? premiumAddress : wallet;
     const isWalletConnected = premiumConnected || !!wallet;
     const isOnCorrectNetwork = premiumConnected ? isCorrectNetwork : onVitruveo;
+
+    // Close LP details dropdown when clicking outside
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (lpDetailsRef.current && !lpDetailsRef.current.contains(event.target)) {
+                setShowLPDetails(false);
+            }
+        }
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, []);
 
     // Fetch VTRU price using tokenUtils
     useEffect(() => {
@@ -65,6 +149,79 @@ export default function Navigation() {
         const interval = setInterval(fetchTokenPrice, 2 * 60 * 1000);
         return () => clearInterval(interval);
     }, [provider]);
+
+    // Fetch LP details when dropdown is opened - using real blockchain data
+    useEffect(() => {
+        async function fetchLPDetails() {
+            if (!showLPDetails || !provider) return;
+
+            setLpDetails(prev => ({ ...prev, loading: true }));
+            try {
+                // Get pool info from Uniswap Factory
+                const { poolAddress, fee } = await getUniswapPool(
+                    WVTRU_ADDRESS,
+                    USDC_POL_ADDRESS,
+                    provider
+                );
+
+                if (!poolAddress) {
+                    throw new Error('Pool not found');
+                }
+
+                // Get real pool data from pool contract
+                const poolContract = new ethers.Contract(
+                    poolAddress,
+                    UNISWAP_V3_POOL_ABI,
+                    provider
+                );
+
+                // Get token0, token1, fee, and liquidity data
+                const [token0, token1, feeData, liquidityData, slot0Data] = await Promise.all([
+                    poolContract.token0(),
+                    poolContract.token1(),
+                    poolContract.fee(),
+                    poolContract.liquidity(),
+                    poolContract.slot0()
+                ]);
+
+                // Calculate TVL based on the current price
+                // This is a simplified version - a real TVL calculation would be more complex
+                // and would account for the actual distribution of liquidity
+                const sqrtPriceX96 = slot0Data.sqrtPriceX96;
+                const liquidity = liquidityData;
+
+                // Convert liquidity to approximate TVL in USD
+                // Using the price and liquidity to estimate the total value
+                const vtruPrice = tokenPrice || 0;
+                let tvlEstimate = 0;
+
+                if (vtruPrice > 0 && liquidity > 0) {
+                    // This is a very simplified estimate based on liquidity and current price
+                    // Real TVL would need detailed calculations based on position ranges
+                    tvlEstimate = Number(ethers.formatUnits(liquidity, 9)) * vtruPrice * 2;
+                }
+
+                setLpDetails({
+                    poolAddress,
+                    fee: Number(feeData),
+                    liquidity: ethers.formatUnits(liquidity, 0),
+                    tvl: tvlEstimate,
+                    loading: false,
+                    lastUpdate: new Date().toISOString()
+                });
+
+            } catch (error) {
+                console.error('Failed to fetch LP details:', error);
+                setLpDetails(prev => ({
+                    ...prev,
+                    loading: false,
+                    error: error.message
+                }));
+            }
+        }
+
+        fetchLPDetails();
+    }, [showLPDetails, provider, tokenPrice]);
 
     async function switchToVitruveo() {
         if (!window.ethereum) return;
@@ -181,31 +338,120 @@ export default function Navigation() {
 
                     {/* Right side actions */}
                     <div className="flex items-center space-x-3">
-                        {/* Token Price Display */}
-                        <motion.div
-                            className="hidden sm:flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-neon-green/10 text-neon-green border border-neon-green/30"
-                            initial={{ scale: 0 }}
-                            animate={{ scale: 1 }}
-                            transition={{ delay: 0.3 }}
-                        >
-                            <Tooltip>
-                                <TooltipTrigger asChild>
-                                    <div className="flex items-center">
-                                        <span className="mr-1">VTRU:</span>
-                                        {isLoadingPrice ? (
-                                            <span className="animate-pulse">Loading...</span>
-                                        ) : tokenPrice ? (
-                                            <span>${Number(tokenPrice).toFixed(4)}</span>
+                        {/* Token Price Display with Dropdown */}
+                        <div className="hidden sm:block relative" ref={lpDetailsRef}>
+                            <motion.div
+                                className={cn(
+                                    "flex items-center px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer",
+                                    showLPDetails
+                                        ? "bg-neon-green/20 text-neon-green border-neon-green/50"
+                                        : "bg-neon-green/10 text-neon-green border-neon-green/30"
+                                )}
+                                initial={{ scale: 0 }}
+                                animate={{ scale: 1 }}
+                                transition={{ delay: 0.3 }}
+                                onClick={() => setShowLPDetails(!showLPDetails)}
+                            >
+                                <div className="flex items-center">
+                                    <span className="mr-1">VTRU:</span>
+                                    {isLoadingPrice ? (
+                                        <span className="animate-pulse">Loading...</span>
+                                    ) : tokenPrice ? (
+                                        <span>${Number(tokenPrice).toFixed(4)}</span>
+                                    ) : (
+                                        <span>$--.--</span>
+                                    )}
+                                    <span className="ml-1">
+                                        {showLPDetails ? (
+                                            <ChevronUp className="h-3 w-3" />
                                         ) : (
-                                            <span>$--.--</span>
+                                            <ChevronDown className="h-3 w-3" />
                                         )}
-                                    </div>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                    <p>Current VTRU/USDC price from Uniswap V3</p>
-                                </TooltipContent>
-                            </Tooltip>
-                        </motion.div>
+                                    </span>
+                                </div>
+                            </motion.div>
+
+                            {/* LP Details Dropdown */}
+                            <AnimatePresence>
+                                {showLPDetails && (
+                                    <motion.div
+                                        initial={{ opacity: 0, y: -10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -10 }}
+                                        transition={{ duration: 0.2 }}
+                                        className="absolute z-50 mt-2 w-72 rounded-md border border-neon-green/30 bg-card/95 backdrop-blur p-3 shadow-lg"
+                                    >
+                                        <div className="text-sm font-medium mb-2 text-neon-green flex items-center justify-between">
+                                            <span>VTRU/USDC Pool Info</span>
+                                            <Activity className="h-4 w-4" />
+                                        </div>
+
+                                        {lpDetails.loading ? (
+                                            <div className="py-2 text-center">
+                                                <div className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-solid border-neon-green border-r-transparent"></div>
+                                                <p className="text-xs mt-1">Loading pool data...</p>
+                                            </div>
+                                        ) : lpDetails.error ? (
+                                            <div className="py-2 text-center text-destructive text-xs">
+                                                Failed to load pool data: {lpDetails.error}
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="space-y-2 text-xs">
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-muted-foreground">Current Price:</span>
+                                                        <span className="font-mono text-neon-green">
+                                                            ${tokenPrice ? Number(tokenPrice).toFixed(6) : '--'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-muted-foreground">Pool Fee:</span>
+                                                        <span className="font-mono">
+                                                            {lpDetails.fee ? `${lpDetails.fee / 10000}%` : '--'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-muted-foreground">Pool Liquidity:</span>
+                                                        <span className="font-mono">
+                                                            {lpDetails.liquidity ? formatLargeNumber(lpDetails.liquidity) : '--'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-muted-foreground">Estimated TVL:</span>
+                                                        <span className="font-mono">
+                                                            {lpDetails.tvl ? `$${formatLargeNumber(lpDetails.tvl)}` : '--'}
+                                                        </span>
+                                                    </div>
+
+                                                    {lpDetails.poolAddress && (
+                                                        <div className="pt-1">
+                                                            <a
+                                                                href={`${VITRUVEO.blockExplorerUrls[0]}/address/${lpDetails.poolAddress}`}
+                                                                target="_blank"
+                                                                rel="noreferrer"
+                                                                className="text-neon-cyan hover:text-neon-cyan/80 flex items-center justify-center w-full text-xs font-medium mt-1 py-1 rounded-md border border-neon-cyan/30 hover:bg-neon-cyan/5"
+                                                            >
+                                                                View Pool on Explorer
+                                                                <ExternalLink className="ml-1 h-3 w-3" />
+                                                            </a>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {lpDetails.lastUpdate && (
+                                                    <div className="mt-2 text-[10px] text-muted-foreground text-center">
+                                                        Updated: {new Date(lpDetails.lastUpdate).toLocaleTimeString()}
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
 
                         {/* Network indicator */}
                         <motion.div
@@ -293,23 +539,74 @@ export default function Navigation() {
                                     </motion.div>
                                 ))}
 
-                                {/* Token Price in mobile menu */}
+                                {/* Token Price in mobile menu with toggle for details */}
                                 <motion.div
                                     initial={{ x: -50, opacity: 0 }}
                                     animate={{ x: 0, opacity: 1 }}
                                     transition={{ delay: navLinks.length * 0.1 }}
                                     className="px-4 py-2 text-sm"
                                 >
-                                    <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium bg-neon-green/10 text-neon-green border border-neon-green/30 w-fit">
-                                        <span>VTRU:</span>
-                                        {isLoadingPrice ? (
-                                            <span className="animate-pulse">Loading...</span>
-                                        ) : tokenPrice ? (
-                                            <span>${Number(tokenPrice).toFixed(4)}</span>
-                                        ) : (
-                                            <span>$--.--</span>
-                                        )}
+                                    <div
+                                        className="flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium bg-neon-green/10 text-neon-green border border-neon-green/30"
+                                        onClick={() => setShowLPDetails(!showLPDetails)}
+                                    >
+                                        <div className="flex items-center">
+                                            <span className="mr-1">VTRU:</span>
+                                            {isLoadingPrice ? (
+                                                <span className="animate-pulse">Loading...</span>
+                                            ) : tokenPrice ? (
+                                                <span>${Number(tokenPrice).toFixed(4)}</span>
+                                            ) : (
+                                                <span>$--.--</span>
+                                            )}
+                                        </div>
+                                        <span>
+                                            {showLPDetails ? (
+                                                <ChevronUp className="h-3 w-3" />
+                                            ) : (
+                                                <ChevronDown className="h-3 w-3" />
+                                            )}
+                                        </span>
                                     </div>
+
+                                    {/* Mobile LP Details */}
+                                    <AnimatePresence>
+                                        {showLPDetails && (
+                                            <motion.div
+                                                initial={{ opacity: 0, height: 0 }}
+                                                animate={{ opacity: 1, height: "auto" }}
+                                                exit={{ opacity: 0, height: 0 }}
+                                                transition={{ duration: 0.2 }}
+                                                className="mt-2 p-3 rounded-md border border-neon-green/20 bg-black/20"
+                                            >
+                                                {lpDetails.loading ? (
+                                                    <div className="py-2 text-center">
+                                                        <div className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-solid border-neon-green border-r-transparent"></div>
+                                                        <p className="text-xs mt-1">Loading pool data...</p>
+                                                    </div>
+                                                ) : (
+                                                    <div className="space-y-1 text-xs">
+                                                        <div className="flex justify-between">
+                                                            <span className="text-muted-foreground">Price:</span>
+                                                            <span>${tokenPrice ? Number(tokenPrice).toFixed(6) : '--'}</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span className="text-muted-foreground">Fee:</span>
+                                                            <span>{lpDetails.fee ? `${lpDetails.fee / 10000}%` : '--'}</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span className="text-muted-foreground">Liquidity:</span>
+                                                            <span>{lpDetails.liquidity ? formatLargeNumber(lpDetails.liquidity) : '--'}</span>
+                                                        </div>
+                                                        <div className="flex justify-between">
+                                                            <span className="text-muted-foreground">Est. TVL:</span>
+                                                            <span>{lpDetails.tvl ? `$${formatLargeNumber(lpDetails.tvl)}` : '--'}</span>
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </motion.div>
+                                        )}
+                                    </AnimatePresence>
                                 </motion.div>
 
                                 {/* Mobile wallet info */}
