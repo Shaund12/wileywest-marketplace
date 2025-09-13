@@ -1,6 +1,7 @@
 ﻿// src/context/WalletContext.jsx
 import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
+import { usePremiumWallet } from './PremiumWalletContext';
 
 const WalletContext = createContext();
 
@@ -66,6 +67,36 @@ export function WalletProvider({ children }) {
     const [isConnecting, setIsConnecting] = useState(false);
     const [connectionError, setConnectionError] = useState(null);
     const [status, setStatus] = useState('idle');      // idle | initialising | ready | error
+
+    // Integration with PremiumWallet
+    const premiumWallet = usePremiumWallet();
+    
+    // Sync with PremiumWallet state when available
+    useEffect(() => {
+        if (premiumWallet?.address && premiumWallet?.provider && premiumWallet?.signer) {
+            // PremiumWallet is connected, sync the state
+            setWallet(premiumWallet.address);
+            setProvider(premiumWallet.provider);
+            setSigner(premiumWallet.signer);
+            setChainId(premiumWallet.chainId);
+            setStatus('ready');
+            setConnectionError(null);
+            setIsConnecting(false);
+        } else if (!premiumWallet?.isConnected && premiumWallet?.address === undefined) {
+            // PremiumWallet is disconnected, reset legacy state
+            setWallet(null);
+            setSigner(null);
+            setStatus('idle');
+            setConnectionError(null);
+            setIsConnecting(false);
+        }
+    }, [
+        premiumWallet?.address, 
+        premiumWallet?.isConnected, 
+        premiumWallet?.provider, 
+        premiumWallet?.signer,
+        premiumWallet?.chainId
+    ]);
 
     // Guarded state setters
     const safeSet = (fn) => (...args) => { if (mountedRef.current) fn(...args); };
@@ -266,6 +297,26 @@ export function WalletProvider({ children }) {
     // ======= Public API =======
     const connect = useCallback(
         async ({ forceSwitchToTarget = !!TARGET.num } = {}) => {
+            // If PremiumWallet is available and not connected, use its connect method
+            if (premiumWallet && !premiumWallet.isConnected) {
+                try {
+                    _setIsConnecting(true);
+                    _setConnectionError(null);
+                    
+                    // Use PremiumWallet's AppKit modal to connect
+                    const { open } = await import('@reown/appkit/react');
+                    open();
+                    return true; // The modal will handle the connection
+                } catch (e) {
+                    console.error('[Wallet] PremiumWallet connect error:', e);
+                    _setConnectionError(e.message || String(e));
+                    return false;
+                } finally {
+                    _setIsConnecting(false);
+                }
+            }
+            
+            // Fallback to traditional wallet connection
             if (!window.ethereum) {
                 _setConnectionError('No injected wallet found. Please install MetaMask or a compatible wallet.');
                 return false;
@@ -297,15 +348,25 @@ export function WalletProvider({ children }) {
                 _setIsConnecting(false);
             }
         },
-        [ensureCorrectNetwork, updateWalletState, _setConnectionError, _setIsConnecting]
+        [premiumWallet, ensureCorrectNetwork, updateWalletState, _setConnectionError, _setIsConnecting]
     );
 
-    const disconnect = useCallback(() => {
+    const disconnect = useCallback(async () => {
+        // If PremiumWallet is connected, use its disconnect method
+        if (premiumWallet?.isConnected) {
+            try {
+                await premiumWallet.disconnect();
+            } catch (e) {
+                console.error('[Wallet] PremiumWallet disconnect error:', e);
+            }
+        }
+        
+        // Also clear legacy state
         _setWallet(null);
         _setSigner(null);
         localStorage.removeItem('walletConnected');
         // keep read-only provider alive
-    }, []);
+    }, [premiumWallet]);
 
     const signMessage = useCallback(
         async (message) => {

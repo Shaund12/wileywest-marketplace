@@ -32,8 +32,14 @@ const VibeDashboardPage = lazy(() => import('./pages/VibeDashboardPage'));
 
 // Providers
 import { WalletProvider } from './context/WalletContext';
+import { PremiumWalletProvider } from './context/PremiumWalletContext';
 import { MarketplaceProvider } from './context/MarketplaceContext';
 import { SupabaseProvider } from './context/SupabaseContext';
+
+// Wagmi and AppKit
+import { WagmiProvider } from 'wagmi';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { wagmiAdapter } from './config/appkit';
 
 const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
 const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '';
@@ -239,82 +245,92 @@ function useIdleRoutePrefetch() {
 function App() {
     useIdleRoutePrefetch();
 
+    // Create QueryClient for React Query
+    const queryClient = new QueryClient();
+
     return (
-        <SupabaseProvider>
-            <WalletProvider rpcUrl={rpcUrl}>
-                {/* Pass ABI array, not the whole artifact */}
-                <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi.abi}>
-                    <BrowserRouter>
-                        <RouteProgressBar />
-                        <ScrollToTop />
-                        <TitleSetter />
-                        <OnlineStatusBanner />
-                        <EnvWarningBanner />
-                        <div className="app-container">
-                            <Navigation />
-                            <div className="main-content">
-                                <RouteErrorBoundary>
-                                    <Suspense fallback={
-                                        <div className="hp" style={{ maxWidth: 900, margin: '3rem auto', padding: '0 1.25rem' }}>
-                                            <div className="hp-section__head"><h2>Loading…</h2></div>
-                                            <div className="hp-mini">
-                                                <div className="hp-mini__card"><div className="hp-mini__label">Preparing</div><div className="hp-mini__value">…</div></div>
-                                                <div className="hp-mini__card"><div className="hp-mini__label">Routes</div><div className="hp-mini__value">…</div></div>
-                                                <div className="hp-mini__card"><div className="hp-mini__label">Assets</div><div className="hp-mini__value">…</div></div>
-                                            </div>
+        <WagmiProvider config={wagmiAdapter.wagmiConfig}>
+            <QueryClientProvider client={queryClient}>
+                <SupabaseProvider>
+                    <PremiumWalletProvider>
+                        {/* Keep old WalletProvider for backward compatibility during transition */}
+                        <WalletProvider rpcUrl={rpcUrl}>
+                            {/* Pass ABI array, not the whole artifact */}
+                            <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi.abi}>
+                                <BrowserRouter>
+                                    <RouteProgressBar />
+                                    <ScrollToTop />
+                                    <TitleSetter />
+                                    <OnlineStatusBanner />
+                                    <EnvWarningBanner />
+                                    <div className="app-container">
+                                        <Navigation />
+                                        <div className="main-content">
+                                            <RouteErrorBoundary>
+                                                <Suspense fallback={
+                                                    <div className="hp" style={{ maxWidth: 900, margin: '3rem auto', padding: '0 1.25rem' }}>
+                                                        <div className="hp-section__head"><h2>Loading…</h2></div>
+                                                        <div className="hp-mini">
+                                                            <div className="hp-mini__card"><div className="hp-mini__label">Preparing</div><div className="hp-mini__value">…</div></div>
+                                                            <div className="hp-mini__card"><div className="hp-mini__label">Routes</div><div className="hp-mini__value">…</div></div>
+                                                            <div className="hp-mini__card"><div className="hp-mini__label">Assets</div><div className="hp-mini__value">…</div></div>
+                                                        </div>
+                                                    </div>
+                                                }>
+                                                    <Routes>
+                                                        <Route path="/" element={<HomePage />} />
+                                                        <Route path="/profile" element={<ProfilePage />} />
+                                                        <Route path="/marketplace" element={<MarketplacePage />} />
+                                                        <Route path="/hot-listings" element={<HotListingsPage />} />
+                                                        <Route path="/sell" element={<SellPage />} />
+                        
+
+                                                        <Route path="/terms" element={<TermsPage />} />
+                                                        <Route path="/privacy" element={<PrivacyPage />} />
+
+                                                        {/* collections routes */}
+                                                        <Route path="/collections" element={<div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
+                                                            <div className="hp-section__head"><h2>Collections</h2></div>
+                                                            <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
+                                                        </div>} />
+                                                        <Route path="/collections/:address" element={<CollectionPage />} />
+                                                        <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
+
+                                                        {/* Auction routes - always enabled */}
+                                                        <Route path="/auctions/create" element={<CreateAuctionPage />} />
+                                                        <Route path="/auctions/:id" element={<AuctionDetailPage />} />
+                                                        <Route path="/my-auctions" element={<MyAuctionsPage />} />
+                                                        <Route path="/admin/paths" element={<AdminPathsPage />} />
+                                                        <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
+                        
+
+                                                        {/* Fallback */}
+                                                        <Route path="*" element={<Navigate to="/" replace />} />
+                                                    </Routes>
+                                                </Suspense>
+                                            </RouteErrorBoundary>
                                         </div>
-                                    }>
-                                        <Routes>
-                                            <Route path="/" element={<HomePage />} />
-                                            <Route path="/profile" element={<ProfilePage />} />
-                                            <Route path="/marketplace" element={<MarketplacePage />} />
-                                            <Route path="/hot-listings" element={<HotListingsPage />} />
-                                            <Route path="/sell" element={<SellPage />} />
-                
-
-                                            <Route path="/terms" element={<TermsPage />} />
-                                            <Route path="/privacy" element={<PrivacyPage />} />
-
-                                            {/* collections routes */}
-                                            <Route path="/collections" element={<div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
-                                                <div className="hp-section__head"><h2>Collections</h2></div>
-                                                <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
-                                            </div>} />
-                                            <Route path="/collections/:address" element={<CollectionPage />} />
-                                            <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
-
-                                            {/* Auction routes - always enabled */}
-                                            <Route path="/auctions/create" element={<CreateAuctionPage />} />
-                                            <Route path="/auctions/:id" element={<AuctionDetailPage />} />
-                                            <Route path="/my-auctions" element={<MyAuctionsPage />} />
-                                            <Route path="/admin/paths" element={<AdminPathsPage />} />
-                                            <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
-                
-
-                                            {/* Fallback */}
-                                            <Route path="*" element={<Navigate to="/" replace />} />
-                                        </Routes>
-                                    </Suspense>
-                                </RouteErrorBoundary>
-                            </div>
-                            <Footer />
-                        </div>
-                        {import.meta.env.PROD && <Analytics />}
-                        <Toaster 
-                            position="top-right"
-                            toastOptions={{
-                                style: {
-                                    background: 'rgba(17, 25, 40, 0.95)',
-                                    border: '1px solid rgba(0, 255, 255, 0.3)',
-                                    color: '#00ffff',
-                                    backdropFilter: 'blur(16px)',
-                                },
-                            }}
-                        />
-                    </BrowserRouter>
-                </MarketplaceProvider>
-            </WalletProvider>
-        </SupabaseProvider>
+                                        <Footer />
+                                    </div>
+                                    {import.meta.env.PROD && <Analytics />}
+                                    <Toaster 
+                                        position="top-right"
+                                        toastOptions={{
+                                            style: {
+                                                background: 'rgba(17, 25, 40, 0.95)',
+                                                border: '1px solid rgba(0, 255, 255, 0.3)',
+                                                color: '#00ffff',
+                                                backdropFilter: 'blur(16px)',
+                                            },
+                                        }}
+                                    />
+                                </BrowserRouter>
+                            </MarketplaceProvider>
+                        </WalletProvider>
+                    </PremiumWalletProvider>
+                </SupabaseProvider>
+            </QueryClientProvider>
+        </WagmiProvider>
     );
 }
 
