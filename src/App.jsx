@@ -1,4 +1,4 @@
-﻿import './styles.css';
+﻿import './globals.css';
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import MarketplaceAbi from './abi/VTRUNFTMarketplace.json';

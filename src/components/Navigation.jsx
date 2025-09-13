@@ -1,6 +1,11 @@
 ﻿import React, { useMemo, useState } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Copy, ExternalLink, Menu, X, Wallet, Check } from 'lucide-react';
 import { useWallet } from '../context/WalletContext';
+import { Button } from './ui/button';
+import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
+import { cn } from '../lib/utils';
 import logo from '../assets/blockdust-logo.png';
 
 const VITRUVEO = {
@@ -65,114 +70,323 @@ export default function Navigation() {
         }
     }
 
+    const navLinks = [
+        { to: "/marketplace", label: "Marketplace" },
+        { to: "/hot-listings", label: "Hot Listings" },
+        { to: "/my-auctions", label: "My Auctions" },
+        { to: "/sell", label: "Sell NFT" },
+        { to: "/auctions/create", label: "Create Auction" },
+        { to: "/vibe-dashboard", label: "VIBE" },
+    ];
+
     return (
-        <header className="bd-nav">
-            <div className="bd-nav__wrap">
-                <div className="bd-nav__left">
-                    <Link to="/" className="bd-nav__brand" aria-label="BlockDust Home">
-                        <img src={logo} alt="" className="bd-nav__logo" />
-                        <span className="bd-nav__title">BlockDust</span>
-                    </Link>
-
-                    <nav className={`bd-nav__links ${menuOpen ? 'is-open' : ''}`} aria-label="Primary">
-                        <NavLink to="/marketplace" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                            Marketplace
-                        </NavLink>
-                        <NavLink to="/hot-listings" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                            Hot Listings
-                        </NavLink>
-
-
-                        <NavLink to="/my-auctions" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                            My Auctions
-                        </NavLink>
-                        <NavLink to="/sell" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                            Sell NFT
-                        </NavLink>
-                        <NavLink to="/auctions/create" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                            Create Auction
-                        </NavLink>
-                        <NavLink to="/vibe-dashboard" className={({ isActive }) => `bd-link ${isActive ? 'is-active' : ''}`}>
-                            VIBE
-                        </NavLink>
-                    </nav>
-                </div>
-
-                <div className="bd-nav__right">
-                    {/* Network pill */}
-                    <div
-                        className={`bd-net ${wallet ? (onVitruveo ? 'ok' : 'warn') : ''}`}
-                        title={
-                            !wallet ? 'Wallet not connected' : onVitruveo ? 'Connected to Vitruveo' : 'Wrong network'
-                        }
+        <TooltipProvider>
+            <motion.header 
+                className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
+                initial={{ y: -100 }}
+                animate={{ y: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+            >
+                <div className="container flex h-16 max-w-screen-2xl items-center justify-between px-4">
+                    {/* Logo */}
+                    <motion.div 
+                        className="flex items-center space-x-4"
+                        whileHover={{ scale: 1.05 }}
+                        transition={{ type: "spring", stiffness: 400, damping: 10 }}
                     >
-                        <span className="bd-dot" />
-                        {wallet ? (onVitruveo ? 'Vitruveo' : 'Wrong network') : 'No wallet'}
-                    </div>
-
-                    {/* Wallet actions */}
-                    {!wallet ? (
-                        <button
-                            className="bd-btn bd-btn--primary"
-                            onClick={connect}
-                            disabled={isConnecting}
-                            aria-busy={isConnecting}
+                        <Link 
+                            to="/" 
+                            className="flex items-center space-x-2 text-lg font-bold"
+                            aria-label="BlockDust Home"
                         >
-                            {isConnecting ? 'Connecting…' : 'Connect Wallet'}
-                        </button>
-                    ) : (
-                        <div className="bd-wallet">
-                            {!onVitruveo && (
-                                <button className="bd-btn bd-btn--warning" onClick={switchToVitruveo}>
-                                    Switch to Vitruveo
-                                </button>
+                            <motion.img 
+                                src={logo} 
+                                alt="" 
+                                className="h-8 w-8 rounded-lg"
+                                whileHover={{ rotate: 360 }}
+                                transition={{ duration: 0.6 }}
+                            />
+                            <span className="neon-text-cyan font-extrabold tracking-tight">
+                                BlockDust
+                            </span>
+                        </Link>
+                    </motion.div>
+
+                    {/* Desktop Navigation */}
+                    <nav className="hidden md:flex items-center space-x-1" aria-label="Primary">
+                        {navLinks.map((link) => (
+                            <NavLink
+                                key={link.to}
+                                to={link.to}
+                                className={({ isActive }) =>
+                                    cn(
+                                        "px-3 py-2 text-sm font-medium transition-all duration-200 rounded-md relative group",
+                                        isActive
+                                            ? "text-neon-cyan neon-text-cyan bg-primary/10"
+                                            : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                                    )
+                                }
+                            >
+                                {({ isActive }) => (
+                                    <>
+                                        {link.label}
+                                        {isActive && (
+                                            <motion.div
+                                                className="absolute inset-0 bg-primary/20 rounded-md neon-border-cyan"
+                                                layoutId="activeTab"
+                                                initial={false}
+                                                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                                            />
+                                        )}
+                                    </>
+                                )}
+                            </NavLink>
+                        ))}
+                    </nav>
+
+                    {/* Right side actions */}
+                    <div className="flex items-center space-x-3">
+                        {/* Network indicator */}
+                        <motion.div
+                            className={cn(
+                                "hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border",
+                                wallet
+                                    ? onVitruveo
+                                        ? "bg-neon-green/10 text-neon-green border-neon-green/30"
+                                        : "bg-neon-pink/10 text-neon-pink border-neon-pink/30"
+                                    : "bg-muted/50 text-muted-foreground border-muted"
                             )}
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ delay: 0.2 }}
+                        >
+                            <div
+                                className={cn(
+                                    "w-2 h-2 rounded-full",
+                                    wallet
+                                        ? onVitruveo
+                                            ? "bg-neon-green animate-pulse"
+                                            : "bg-neon-pink animate-pulse"
+                                        : "bg-muted-foreground"
+                                )}
+                            />
+                            <span>
+                                {!wallet ? 'No wallet' : onVitruveo ? 'Vitruveo' : 'Wrong network'}
+                            </span>
+                        </motion.div>
 
-                            <Link to="/profile" className="bd-btn bd-btn--ghost" aria-current={location.pathname.startsWith('/profile') ? 'page' : undefined}>
-                                My Profile
-                            </Link>
-
-                            <div className="bd-addr">
-                                <button className="bd-addr__btn" onClick={copyAddress} title="Copy address">
-                                    {shorten(wallet)}
-                                </button>
-                                {copied && <span className="bd-addr__copied">Copied</span>}
-                                <a
-                                    className="bd-addr__explorer"
-                                    href={`${VITRUVEO.blockExplorerUrls[0]}/address/${wallet}`}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    title="View on explorer"
+                        {/* Wallet section */}
+                        {!wallet ? (
+                            <Button
+                                onClick={connect}
+                                disabled={isConnecting}
+                                variant="cyber"
+                                size="sm"
+                                className="relative overflow-hidden"
+                            >
+                                <motion.div
+                                    initial={false}
+                                    animate={isConnecting ? { rotate: 360 } : { rotate: 0 }}
+                                    transition={{ duration: 1, repeat: isConnecting ? Infinity : 0 }}
                                 >
-                                    ↗
-                                </a>
-                            </div>
+                                    <Wallet className="mr-2 h-4 w-4" />
+                                </motion.div>
+                                {isConnecting ? 'Connecting…' : 'Connect Wallet'}
+                            </Button>
+                        ) : (
+                            <motion.div 
+                                className="flex items-center space-x-2"
+                                initial={{ opacity: 0, x: 20 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: 0.1 }}
+                            >
+                                {!onVitruveo && (
+                                    <Button
+                                        onClick={switchToVitruveo}
+                                        variant="neon-pink"
+                                        size="sm"
+                                    >
+                                        Switch to Vitruveo
+                                    </Button>
+                                )}
 
-                            <button className="bd-btn bd-btn--ghost" onClick={disconnect}>
-                                Disconnect
-                            </button>
-                        </div>
+                                <Link to="/profile">
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className={cn(
+                                            location.pathname.startsWith('/profile') && "bg-accent"
+                                        )}
+                                    >
+                                        My Profile
+                                    </Button>
+                                </Link>
+
+                                {/* Address display */}
+                                <div className="hidden sm:flex items-center space-x-1">
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={copyAddress}
+                                                className="font-mono text-xs"
+                                            >
+                                                {copied ? (
+                                                    <Check className="mr-1 h-3 w-3 text-neon-green" />
+                                                ) : (
+                                                    <Copy className="mr-1 h-3 w-3" />
+                                                )}
+                                                {shorten(wallet)}
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>
+                                            {copied ? 'Copied!' : 'Copy address'}
+                                        </TooltipContent>
+                                    </Tooltip>
+
+                                    <Tooltip>
+                                        <TooltipTrigger asChild>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                asChild
+                                            >
+                                                <a
+                                                    href={`${VITRUVEO.blockExplorerUrls[0]}/address/${wallet}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                >
+                                                    <ExternalLink className="h-3 w-3" />
+                                                </a>
+                                            </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent>View on explorer</TooltipContent>
+                                    </Tooltip>
+                                </div>
+
+                                <Button
+                                    onClick={disconnect}
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-muted-foreground hover:text-destructive"
+                                >
+                                    Disconnect
+                                </Button>
+                            </motion.div>
+                        )}
+
+                        {/* Mobile menu button */}
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="md:hidden"
+                            onClick={() => setMenuOpen(!menuOpen)}
+                            aria-label="Toggle menu"
+                            aria-expanded={menuOpen}
+                        >
+                            <motion.div
+                                animate={{ rotate: menuOpen ? 180 : 0 }}
+                                transition={{ duration: 0.2 }}
+                            >
+                                {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+                            </motion.div>
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Mobile Navigation */}
+                <AnimatePresence>
+                    {menuOpen && (
+                        <motion.div
+                            className="md:hidden border-t border-border bg-card/95 backdrop-blur"
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.2 }}
+                        >
+                            <nav className="container py-4 space-y-2">
+                                {navLinks.map((link, index) => (
+                                    <motion.div
+                                        key={link.to}
+                                        initial={{ x: -50, opacity: 0 }}
+                                        animate={{ x: 0, opacity: 1 }}
+                                        transition={{ delay: index * 0.1 }}
+                                    >
+                                        <NavLink
+                                            to={link.to}
+                                            className={({ isActive }) =>
+                                                cn(
+                                                    "block px-4 py-2 text-sm font-medium rounded-md transition-colors",
+                                                    isActive
+                                                        ? "text-neon-cyan bg-primary/10 neon-border-cyan"
+                                                        : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                                                )
+                                            }
+                                            onClick={() => setMenuOpen(false)}
+                                        >
+                                            {link.label}
+                                        </NavLink>
+                                    </motion.div>
+                                ))}
+
+                                {/* Mobile wallet info */}
+                                {wallet && (
+                                    <motion.div
+                                        className="pt-4 border-t border-border mt-4"
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        transition={{ delay: 0.3 }}
+                                    >
+                                        <div className="flex items-center justify-between px-4 py-2">
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={copyAddress}
+                                                className="font-mono text-xs"
+                                            >
+                                                {copied ? (
+                                                    <Check className="mr-1 h-3 w-3 text-neon-green" />
+                                                ) : (
+                                                    <Copy className="mr-1 h-3 w-3" />
+                                                )}
+                                                {shorten(wallet)}
+                                            </Button>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                asChild
+                                            >
+                                                <a
+                                                    href={`${VITRUVEO.blockExplorerUrls[0]}/address/${wallet}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                >
+                                                    <ExternalLink className="h-4 w-4" />
+                                                </a>
+                                            </Button>
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </nav>
+                        </motion.div>
                     )}
+                </AnimatePresence>
 
-                    <button
-                        className={`bd-burger ${menuOpen ? 'is-open' : ''}`}
-                        onClick={() => setMenuOpen(v => !v)}
-                        aria-label="Toggle menu"
-                        aria-expanded={menuOpen}
-                        aria-controls="primary-navigation"
-                    >
-                        <span />
-                        <span />
-                        <span />
-                    </button>
-                </div>
-            </div>
-
-            {connectionError && (
-                <div className="bd-nav__notice" role="status">
-                    {connectionError}
-                </div>
-            )}
-        </header>
+                {/* Connection Error Banner */}
+                <AnimatePresence>
+                    {connectionError && (
+                        <motion.div
+                            className="bg-destructive/10 border-t border-destructive/20 px-4 py-2 text-center text-sm text-destructive"
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                        >
+                            {connectionError}
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </motion.header>
+        </TooltipProvider>
     );
 }
