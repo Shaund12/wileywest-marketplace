@@ -20,6 +20,7 @@ import {
     isNetworkError,
     retryWithBackoff
 } from '../utils/networkUtils';
+import { batchLoadMetadata } from '../utils/metadataLoader';
 
 const MarketplaceContext = createContext();
 
@@ -159,23 +160,57 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                 // CRITICAL FIX: Pass marketplace contract for blockchain validation
                 const cached = await getCachedListings(marketplace);
                 if (cached?.length) {
-                    const processed = cached.map(l => {
-                        if (l?.nftContract && l?.tokenId) {
-                            const norm = normalizeNFTMetadata(l.metadata, l.nftContract, l.tokenId);
-                            return {
-                                ...l,
-                                metadata: norm,
-                                image: norm.image || l.image,
-                                imageUrl: norm.imageUrl || l.imageUrl || norm.image,
-                                name: norm.name || l.name,
-                                description: norm.description || l.description
-                            };
+                    // CRITICAL FIX: Load metadata for all listings using batchLoadMetadata
+                    setStatus('Loading NFT metadata from blockchain...');
+                    debugLog(`📋 Loading metadata for ${cached.length} listings using batchLoadMetadata...`);
+                    
+                    // Prepare NFT objects for batch metadata loading
+                    const nftsForMetadata = cached.map(listing => ({
+                        contractAddress: listing.nftContract,
+                        tokenId: listing.tokenId,
+                        metadata: listing.metadata, // Pass existing metadata if any
+                        id: listing.id
+                    }));
+                    
+                    // Load metadata for all NFTs in parallel using batchLoadMetadata
+                    let nftsWithMetadata = [];
+                    try {
+                        if (provider) {
+                            nftsWithMetadata = await batchLoadMetadata(nftsForMetadata, provider, 15);
+                            debugLog(`✅ Successfully loaded metadata for ${nftsWithMetadata.length} NFTs`);
+                        } else {
+                            debugWarn('Provider not available, skipping metadata loading');
+                            nftsWithMetadata = nftsForMetadata.map(nft => ({
+                                ...nft,
+                                metadata: normalizeNFTMetadata(nft.metadata, nft.contractAddress, nft.tokenId)
+                            }));
                         }
-                        return l;
+                    } catch (metadataError) {
+                        debugWarn('Failed to load metadata with batchLoadMetadata, falling back to normalization:', metadataError);
+                        nftsWithMetadata = nftsForMetadata.map(nft => ({
+                            ...nft,
+                            metadata: normalizeNFTMetadata(nft.metadata, nft.contractAddress, nft.tokenId)
+                        }));
+                    }
+                    
+                    // Merge the loaded metadata back into the listings
+                    const processed = cached.map(listing => {
+                        const nftWithMetadata = nftsWithMetadata.find(nft => nft.id === listing.id);
+                        const metadata = nftWithMetadata?.metadata || normalizeNFTMetadata(listing.metadata, listing.nftContract, listing.tokenId);
+                        
+                        return {
+                            ...listing,
+                            metadata: metadata,
+                            image: metadata.image || listing.image,
+                            imageUrl: metadata.imageUrl || listing.imageUrl || metadata.image,
+                            name: metadata.name || listing.name,
+                            description: metadata.description || listing.description
+                        };
                     });
+                    
                     setListings(processed);
                     setHotListings(processed.slice(0, 5));
-                    setStatus(`${processed.length} valid listings loaded (blockchain verified)`);
+                    setStatus(`${processed.length} listings loaded with metadata from blockchain`);
                     setTimeout(() => setStatus(''), 2500);
                 } else {
                     setListings([]);
