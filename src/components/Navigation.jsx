@@ -3,6 +3,8 @@ import { NavLink, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Copy, ExternalLink, Menu, X, Wallet, Check } from 'lucide-react';
 import { useWallet } from '../context/WalletContext';
+import { usePremiumWallet } from '../context/PremiumWalletContext';
+import { PremiumWalletButton } from './PremiumWalletButton';
 import { Button } from './ui/button';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { cn } from '../lib/utils';
@@ -24,11 +26,17 @@ function shorten(addr) {
 
 export default function Navigation() {
     const { wallet, connect, disconnect, chainId, isConnecting, connectionError } = useWallet();
+    const { address: premiumAddress, isConnected: premiumConnected, isCorrectNetwork } = usePremiumWallet();
     const [menuOpen, setMenuOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const location = useLocation();
 
     const onVitruveo = useMemo(() => Number(chainId || 0) === VITRUVEO.chainIdDec, [chainId]);
+    
+    // Use premium wallet state when available, fallback to old wallet
+    const connectedAddress = premiumConnected ? premiumAddress : wallet;
+    const isWalletConnected = premiumConnected || !!wallet;
+    const isOnCorrectNetwork = premiumConnected ? isCorrectNetwork : onVitruveo;
 
     async function switchToVitruveo() {
         if (!window.ethereum) return;
@@ -62,7 +70,7 @@ export default function Navigation() {
 
     async function copyAddress() {
         try {
-            await navigator.clipboard.writeText(wallet);
+            await navigator.clipboard.writeText(connectedAddress);
             setCopied(true);
             setTimeout(() => setCopied(false), 1200);
         } catch (e) {
@@ -150,8 +158,8 @@ export default function Navigation() {
                         <motion.div
                             className={cn(
                                 "hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium border",
-                                wallet
-                                    ? onVitruveo
+                                isWalletConnected
+                                    ? isOnCorrectNetwork
                                         ? "bg-neon-green/10 text-neon-green border-neon-green/30"
                                         : "bg-neon-pink/10 text-neon-pink border-neon-pink/30"
                                     : "bg-muted/50 text-muted-foreground border-muted"
@@ -163,118 +171,20 @@ export default function Navigation() {
                             <div
                                 className={cn(
                                     "w-2 h-2 rounded-full",
-                                    wallet
-                                        ? onVitruveo
+                                    isWalletConnected
+                                        ? isOnCorrectNetwork
                                             ? "bg-neon-green animate-pulse"
                                             : "bg-neon-pink animate-pulse"
                                         : "bg-muted-foreground"
                                 )}
                             />
                             <span>
-                                {!wallet ? 'No wallet' : onVitruveo ? 'Vitruveo' : 'Wrong network'}
+                                {!isWalletConnected ? 'No wallet' : isOnCorrectNetwork ? 'Vitruveo' : 'Wrong network'}
                             </span>
                         </motion.div>
 
-                        {/* Wallet section */}
-                        {!wallet ? (
-                            <Button
-                                onClick={connect}
-                                disabled={isConnecting}
-                                variant="cyber"
-                                size="sm"
-                                className="relative overflow-hidden"
-                            >
-                                <motion.div
-                                    initial={false}
-                                    animate={isConnecting ? { rotate: 360 } : { rotate: 0 }}
-                                    transition={{ duration: 1, repeat: isConnecting ? Infinity : 0 }}
-                                >
-                                    <Wallet className="mr-2 h-4 w-4" />
-                                </motion.div>
-                                {isConnecting ? 'Connecting…' : 'Connect Wallet'}
-                            </Button>
-                        ) : (
-                            <motion.div 
-                                className="flex items-center space-x-2"
-                                initial={{ opacity: 0, x: 20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ delay: 0.1 }}
-                            >
-                                {!onVitruveo && (
-                                    <Button
-                                        onClick={switchToVitruveo}
-                                        variant="neon-pink"
-                                        size="sm"
-                                    >
-                                        Switch to Vitruveo
-                                    </Button>
-                                )}
-
-                                <Link to="/profile">
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className={cn(
-                                            location.pathname.startsWith('/profile') && "bg-accent"
-                                        )}
-                                    >
-                                        My Profile
-                                    </Button>
-                                </Link>
-
-                                {/* Address display */}
-                                <div className="hidden sm:flex items-center space-x-1">
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={copyAddress}
-                                                className="font-mono text-xs"
-                                            >
-                                                {copied ? (
-                                                    <Check className="mr-1 h-3 w-3 text-neon-green" />
-                                                ) : (
-                                                    <Copy className="mr-1 h-3 w-3" />
-                                                )}
-                                                {shorten(wallet)}
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>
-                                            {copied ? 'Copied!' : 'Copy address'}
-                                        </TooltipContent>
-                                    </Tooltip>
-
-                                    <Tooltip>
-                                        <TooltipTrigger asChild>
-                                            <Button
-                                                variant="ghost"
-                                                size="sm"
-                                                asChild
-                                            >
-                                                <a
-                                                    href={`${VITRUVEO.blockExplorerUrls[0]}/address/${wallet}`}
-                                                    target="_blank"
-                                                    rel="noreferrer"
-                                                >
-                                                    <ExternalLink className="h-3 w-3" />
-                                                </a>
-                                            </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent>View on explorer</TooltipContent>
-                                    </Tooltip>
-                                </div>
-
-                                <Button
-                                    onClick={disconnect}
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-muted-foreground hover:text-destructive"
-                                >
-                                    Disconnect
-                                </Button>
-                            </motion.div>
-                        )}
+                        {/* Premium Wallet Button */}
+                        <PremiumWalletButton />
 
                         {/* Mobile menu button */}
                         <Button
@@ -331,7 +241,7 @@ export default function Navigation() {
                                 ))}
 
                                 {/* Mobile wallet info */}
-                                {wallet && (
+                                {isWalletConnected && (
                                     <motion.div
                                         className="pt-4 border-t border-border mt-4"
                                         initial={{ opacity: 0 }}
@@ -350,7 +260,7 @@ export default function Navigation() {
                                                 ) : (
                                                     <Copy className="mr-1 h-3 w-3" />
                                                 )}
-                                                {shorten(wallet)}
+                                                {shorten(connectedAddress)}
                                             </Button>
                                             <Button
                                                 variant="ghost"
@@ -358,7 +268,7 @@ export default function Navigation() {
                                                 asChild
                                             >
                                                 <a
-                                                    href={`${VITRUVEO.blockExplorerUrls[0]}/address/${wallet}`}
+                                                    href={`${VITRUVEO.blockExplorerUrls[0]}/address/${connectedAddress}`}
                                                     target="_blank"
                                                     rel="noreferrer"
                                                 >

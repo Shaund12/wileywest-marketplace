@@ -14,12 +14,18 @@
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-toast": "^1.2.15",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@reown/appkit": "^1.8.4",
+    "@reown/appkit-adapter-wagmi": "^1.8.4",
     "@supabase/supabase-js": "^2.0.0",
     "@tailwindcss/forms": "^0.5.10",
     "@tailwindcss/typography": "^0.5.16",
+    "@tanstack/react-query": "^5.87.4",
     "@vercel/analytics": "^1.1.1",
+    "@wagmi/connectors": "^5.9.9",
+    "@wagmi/core": "^2.20.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "ethereum-blockies-base64": "^1.0.2",
     "ethers": "^6.9.0",
     "framer-motion": "^12.23.12",
     "lucide-react": "^0.544.0",
@@ -28,7 +34,8 @@
     "react-router-dom": "^7.7.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "^3.4.17",
+    "viem": "^2.37.5"
   },
   "devDependencies": {
     "@shadcn/ui": "^0.0.4",
