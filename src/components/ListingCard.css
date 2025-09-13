@@ -304,3 +304,34 @@
         border-color: rgba(255,255,255,.25);
         transform: translateY(-1px);
     }
+
+/* Clickable image and title links */
+.listing-image-link {
+    display: block;
+    text-decoration: none;
+    color: inherit;
+    transition: all 0.2s ease;
+}
+
+.listing-image-link:hover {
+    transform: scale(1.02);
+}
+
+.listing-title-link {
+    text-decoration: none;
+    color: inherit;
+    transition: color 0.2s ease;
+}
+
+.listing-title-link:hover {
+    color: var(--accent-color, #ff6b35);
+}
+
+.listing-title-link h3 {
+    margin: 0;
+    transition: color 0.2s ease;
+}
+
+.listing-title-link:hover h3 {
+    color: var(--accent-color, #ff6b35);
+}

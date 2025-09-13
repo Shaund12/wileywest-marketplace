@@ -195,7 +195,17 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     
                     // Merge the loaded metadata back into the listings
                     const processed = cached.map(listing => {
-                        const nftWithMetadata = nftsWithMetadata.find(nft => nft.id === listing.id);
+                        // Use contractAddress + tokenId for more reliable matching instead of ID
+                        const nftWithMetadata = nftsWithMetadata.find(nft => 
+                            nft.contractAddress && listing.nftContract &&
+                            nft.contractAddress.toLowerCase() === listing.nftContract.toLowerCase() &&
+                            String(nft.tokenId) === String(listing.tokenId)
+                        );
+                        
+                        if (!nftWithMetadata) {
+                            debugWarn(`❌ No metadata match found for ${listing.nftContract}:${listing.tokenId}, falling back to normalization`);
+                        }
+                        
                         const metadata = nftWithMetadata?.metadata || normalizeNFTMetadata(listing.metadata, listing.nftContract, listing.tokenId);
                         
                         return {

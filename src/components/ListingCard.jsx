@@ -520,29 +520,33 @@ function ListingCardInner({
             </div>
 
             {/* Media */}
-            <div className={`${scopedClass?.('listing-image', 'ListingCard') || 'listing-image'} ${loadingMedia ? 'lc-loading' : ''}`}>
-                <AssetMedia
-                    url={inView ? mediaUrl : null}
-                    posterUrl={posterUrl || undefined}
-                    alt={`${nftName} - NFT artwork`}
-                    className={scopedClass?.('nft-image', 'ListingCard') || 'nft-image'}
-                    seed={seed}
-                    width={300}
-                    height={200}
-                    autoPlay={autoPlayAnimation}
-                    contractAddress={listing?.nftContract}
-                    tokenId={listing?.tokenId}
-                />
-                {loadingMedia && <div className="lc-blur-placeholder" aria-hidden />}
-                {!loadingMedia && !mediaUrl && (
-                    <button className="lc-retry" type="button" onClick={onRetryMedia} title="Retry loading media">Retry media</button>
-                )}
-            </div>
+            <Link to={`/nft/${nftContract}/${tokenId}`} className="listing-image-link">
+                <div className={`${scopedClass?.('listing-image', 'ListingCard') || 'listing-image'} ${loadingMedia ? 'lc-loading' : ''}`}>
+                    <AssetMedia
+                        url={inView ? mediaUrl : null}
+                        posterUrl={posterUrl || undefined}
+                        alt={`${nftName} - NFT artwork`}
+                        className={scopedClass?.('nft-image', 'ListingCard') || 'nft-image'}
+                        seed={seed}
+                        width={300}
+                        height={200}
+                        autoPlay={autoPlayAnimation}
+                        contractAddress={listing?.nftContract}
+                        tokenId={listing?.tokenId}
+                    />
+                    {loadingMedia && <div className="lc-blur-placeholder" aria-hidden />}
+                    {!loadingMedia && !mediaUrl && (
+                        <button className="lc-retry" type="button" onClick={onRetryMedia} title="Retry loading media">Retry media</button>
+                    )}
+                </div>
+            </Link>
 
             {/* Details */}
             <div className={scopedClass?.('listing-details', 'ListingCard') || 'listing-details'}>
                 <div className={scopedClass?.('listing-info', 'ListingCard') || 'listing-info'}>
-                    <h3 className={scopedClass?.('listing-title', 'ListingCard') || 'listing-title'} title={nftName}>{nftName}</h3>
+                    <Link to={`/nft/${nftContract}/${tokenId}`} className="listing-title-link">
+                        <h3 className={scopedClass?.('listing-title', 'ListingCard') || 'listing-title'} title={nftName}>{nftName}</h3>
+                    </Link>
                     <div className={`${scopedClass?.('listing-contract', 'ListingCard') || 'listing-contract'} ${scopedClass?.('small', 'ListingCard') || 'small'}`}>
                         <span title={nftContract}>{shortAddr(nftContract)}</span> {tokenId ? `· #${tokenId}` : ''}
                         <button className="lc-mini-btn" type="button" onClick={copyContract} title="Copy contract">📋</button>

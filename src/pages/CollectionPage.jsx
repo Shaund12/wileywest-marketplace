@@ -133,7 +133,12 @@ export default function CollectionPage() {
 
                 // Merge the loaded metadata back into the listings
                 const processedListings = collectionItems.map(listing => {
-                    const nftWithMetadata = nftsWithMetadata.find(nft => nft.id === listing.id);
+                    // Use contractAddress + tokenId for more reliable matching instead of ID
+                    const nftWithMetadata = nftsWithMetadata.find(nft => 
+                        nft.contractAddress && listing.nftContract &&
+                        nft.contractAddress.toLowerCase() === listing.nftContract.toLowerCase() &&
+                        String(nft.tokenId) === String(listing.tokenId)
+                    );
                     const metadata = nftWithMetadata?.metadata || normalizeNFTMetadata(listing.metadata, listing.nftContract, listing.tokenId);
                     
                     return {
