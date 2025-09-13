@@ -1,7 +1,8 @@
-﻿import React, { useMemo, useState } from 'react';
+﻿import React, { useMemo, useState, useEffect } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Copy, ExternalLink, Menu, X, Wallet, Check } from 'lucide-react';
+import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { usePremiumWallet } from '../context/PremiumWalletContext';
 import { PremiumWalletButton } from './PremiumWalletButton';
@@ -9,6 +10,7 @@ import { Button } from './ui/button';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { cn } from '../lib/utils';
 import logo from '../assets/blockdust-logo.png';
+import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 
 const VITRUVEO = {
     chainIdHex: '0x5d2', // 1490
@@ -25,18 +27,44 @@ function shorten(addr) {
 }
 
 export default function Navigation() {
-    const { wallet, connect, disconnect, chainId, isConnecting, connectionError } = useWallet();
+    const { wallet, connect, disconnect, chainId, isConnecting, connectionError, provider } = useWallet();
     const { address: premiumAddress, isConnected: premiumConnected, isCorrectNetwork } = usePremiumWallet();
     const [menuOpen, setMenuOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const location = useLocation();
+    const [tokenPrice, setTokenPrice] = useState(null);
+    const [isLoadingPrice, setIsLoadingPrice] = useState(false);
 
     const onVitruveo = useMemo(() => Number(chainId || 0) === VITRUVEO.chainIdDec, [chainId]);
-    
+
     // Use premium wallet state when available, fallback to old wallet
     const connectedAddress = premiumConnected ? premiumAddress : wallet;
     const isWalletConnected = premiumConnected || !!wallet;
     const isOnCorrectNetwork = premiumConnected ? isCorrectNetwork : onVitruveo;
+
+    // Fetch VTRU price using tokenUtils
+    useEffect(() => {
+        async function fetchTokenPrice() {
+            if (!provider) return;
+
+            setIsLoadingPrice(true);
+            try {
+                // Use fetchTokenPriceInUSDC from tokenUtils for native VTRU
+                const price = await fetchTokenPriceInUSDC(ethers.ZeroAddress, provider);
+                setTokenPrice(price);
+            } catch (error) {
+                console.error('Failed to fetch VTRU price:', error);
+            } finally {
+                setIsLoadingPrice(false);
+            }
+        }
+
+        fetchTokenPrice();
+
+        // Refresh price every 2 minutes
+        const interval = setInterval(fetchTokenPrice, 2 * 60 * 1000);
+        return () => clearInterval(interval);
+    }, [provider]);
 
     async function switchToVitruveo() {
         if (!window.ethereum) return;
@@ -88,7 +116,7 @@ export default function Navigation() {
 
     return (
         <TooltipProvider>
-            <motion.header 
+            <motion.header
                 className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
                 initial={{ y: -100 }}
                 animate={{ y: 0 }}
@@ -96,19 +124,19 @@ export default function Navigation() {
             >
                 <div className="container flex h-16 max-w-screen-2xl items-center justify-between px-4">
                     {/* Logo */}
-                    <motion.div 
+                    <motion.div
                         className="flex items-center space-x-4"
                         whileHover={{ scale: 1.05 }}
                         transition={{ type: "spring", stiffness: 400, damping: 10 }}
                     >
-                        <Link 
-                            to="/" 
+                        <Link
+                            to="/"
                             className="flex items-center space-x-2 text-lg font-bold"
                             aria-label="BlockDust Home"
                         >
-                            <motion.img 
-                                src={logo} 
-                                alt="" 
+                            <motion.img
+                                src={logo}
+                                alt=""
                                 className="h-8 w-8 rounded-lg"
                                 whileHover={{ rotate: 360 }}
                                 transition={{ duration: 0.6 }}
@@ -153,6 +181,32 @@ export default function Navigation() {
 
                     {/* Right side actions */}
                     <div className="flex items-center space-x-3">
+                        {/* Token Price Display */}
+                        <motion.div
+                            className="hidden sm:flex items-center px-3 py-1.5 rounded-full text-xs font-medium bg-neon-green/10 text-neon-green border border-neon-green/30"
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ delay: 0.3 }}
+                        >
+                            <Tooltip>
+                                <TooltipTrigger asChild>
+                                    <div className="flex items-center">
+                                        <span className="mr-1">VTRU:</span>
+                                        {isLoadingPrice ? (
+                                            <span className="animate-pulse">Loading...</span>
+                                        ) : tokenPrice ? (
+                                            <span>${Number(tokenPrice).toFixed(4)}</span>
+                                        ) : (
+                                            <span>$--.--</span>
+                                        )}
+                                    </div>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                    <p>Current VTRU/USDC price from Uniswap V3</p>
+                                </TooltipContent>
+                            </Tooltip>
+                        </motion.div>
+
                         {/* Network indicator */}
                         <motion.div
                             className={cn(
@@ -238,6 +292,25 @@ export default function Navigation() {
                                         </NavLink>
                                     </motion.div>
                                 ))}
+
+                                {/* Token Price in mobile menu */}
+                                <motion.div
+                                    initial={{ x: -50, opacity: 0 }}
+                                    animate={{ x: 0, opacity: 1 }}
+                                    transition={{ delay: navLinks.length * 0.1 }}
+                                    className="px-4 py-2 text-sm"
+                                >
+                                    <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full text-xs font-medium bg-neon-green/10 text-neon-green border border-neon-green/30 w-fit">
+                                        <span>VTRU:</span>
+                                        {isLoadingPrice ? (
+                                            <span className="animate-pulse">Loading...</span>
+                                        ) : tokenPrice ? (
+                                            <span>${Number(tokenPrice).toFixed(4)}</span>
+                                        ) : (
+                                            <span>$--.--</span>
+                                        )}
+                                    </div>
+                                </motion.div>
 
                                 {/* Mobile wallet info */}
                                 {isWalletConnected && (
