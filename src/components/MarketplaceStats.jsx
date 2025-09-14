@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useMarketplace } from '../context/MarketplaceContext';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 import { scopedClass } from '../utils/nftUtils';
-import './marketplace.css';
+import './MarketplaceStats.css'
 
 /**
  * Tiny utilities
