@@ -159,7 +159,6 @@ export default function HotListingsPage() {
 
     // normalizedKey -> { name, symbol, type, address (original), items[] }
     const [grouped, setGrouped] = useState({});
-    the
     const [order, setOrder] = useState([]); // array of normalized keys
 
     // UI state
@@ -337,7 +336,6 @@ export default function HotListingsPage() {
             const rank = (t) => (t === 'ERC721' ? 0 : t === 'ERC1155' ? 1 : 2);
             ord.sort((a, b) => rank(grouped[a].type) - rank(grouped[b].type));
         } else if (sort === 'floor_low' || sort === 'floor_high' || sort === 'avg_high') {
-            // rely on cached stats if present; fall back to item count
             const getFloor = (k) => stats[k]?.floorUSDC ?? Number.POSITIVE_INFINITY;
             const getAvg = (k) => stats[k]?.avgUSDC ?? 0;
             const byFloorAsc = (a, b) => getFloor(a) - getFloor(b);
@@ -407,11 +405,9 @@ export default function HotListingsPage() {
         (k) => {
             setExpanded((prev) => {
                 const next = { ...prev, [k]: !prev[k] };
-                // if opening now, kick off stats
                 if (!prev[k]) loadStats(k);
                 return next;
             });
-            // scroll into view when expanding
             const el = document.getElementById(`section-${k}`);
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         },
