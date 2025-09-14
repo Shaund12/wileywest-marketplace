@@ -471,9 +471,9 @@ export function SupabaseProvider({ children }) {
         async (address, profileData) => {
             if (!supabase || !address) return;
             try {
-                debugLog(`💾 Intelligently caching profile data for ${address}...`);
+                debugLog(`💾 PRODUCTION: Caching profile data for ${address}...`);
                 
-                // FIXED: Get existing profile first to merge data intelligently
+                // PRODUCTION FIX: Get existing profile first to merge data intelligently
                 let existingProfile = null;
                 try {
                     const { data } = await supabase
@@ -492,6 +492,8 @@ export function SupabaseProvider({ children }) {
                     nfts: profileData.nfts || existingProfile?.nfts || [],
                     listings: profileData.listings || existingProfile?.listings || [],
                     balance: profileData.balance || existingProfile?.balance || '0',
+                    // PRODUCTION: Always preserve and create essential profile fields
+                    created_at: existingProfile?.created_at || new Date().toISOString(),
                     // Preserve additional fields from existing profile
                     ...(existingProfile || {}),
                     // Override with new data
@@ -499,22 +501,18 @@ export function SupabaseProvider({ children }) {
                     updated_at: new Date().toISOString()
                 };
 
-                // Only update if we actually have meaningful data to save
-                if (mergedProfile.nfts.length > 0 || mergedProfile.listings.length > 0 || mergedProfile.balance !== '0') {
-                    const { error } = await supabase
-                        .from('user_profiles')
-                        .upsert(mergedProfile, { onConflict: 'wallet_address', ignoreDuplicates: false });
+                // PRODUCTION FIX: Always create/update profile, even with 0 NFTs (essential for production)
+                const { error } = await supabase
+                    .from('user_profiles')
+                    .upsert(mergedProfile, { onConflict: 'wallet_address', ignoreDuplicates: false });
 
-                    if (error) {
-                        debugWarn('Profile cache error:', error);
-                        updateCacheStats('errors');
-                    } else {
-                        debugLog(`✅ Intelligently cached profile for ${address} (${mergedProfile.nfts.length} NFTs, ${mergedProfile.listings.length} listings)`);
-                        const key = getCacheKey('profile', String(address).toLowerCase());
-                        setCache(key, mergedProfile, 'profile');
-                    }
+                if (error) {
+                    debugWarn('Profile cache error:', error);
+                    updateCacheStats('errors');
                 } else {
-                    debugLog(`⚠️ Skipping profile cache for ${address} - no meaningful data to save`);
+                    debugLog(`✅ PRODUCTION: Profile ${existingProfile ? 'updated' : 'created'} for ${address} (${mergedProfile.nfts.length} NFTs, ${mergedProfile.listings.length} listings)`);
+                    const key = getCacheKey('profile', String(address).toLowerCase());
+                    setCache(key, mergedProfile, 'profile');
                 }
             } catch (error) {
                 debugWarn('Error caching profile:', error);
