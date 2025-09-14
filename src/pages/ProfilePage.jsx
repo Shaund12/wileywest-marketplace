@@ -2260,13 +2260,25 @@ function ProfilePage() {
     const burnNft = async (nft, quantity = null) => {
         if (!signer) return false;
 
+        // Dead address - if burn fails, send NFT here
+        const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
+
         try {
             // Check if burn is supported
             const burnSupported = await checkBurnSupport(nft.contractAddress, nft.type);
             if (!burnSupported) {
-                setStatus(`❌ Burn not supported by this NFT contract`);
-                setTimeout(() => setStatus(''), 5000);
-                return false;
+                debugWarn(`Burn not supported for ${nft.contractAddress}, attempting transfer to dead address...`);
+                setStatus(`⚠️ Burn not supported, transferring to dead address...`);
+                
+                // If burn is not supported, transfer to dead address instead
+                const transferSuccess = await transferNft(nft, DEAD_ADDRESS, quantity);
+                if (transferSuccess) {
+                    setStatus(`🔥 NFT sent to dead address (equivalent to burn)!`);
+                    return true;
+                } else {
+                    setStatus(`❌ Both burn and dead address transfer failed`);
+                    return false;
+                }
             }
 
             const contract = new ethers.Contract(
@@ -2298,9 +2310,27 @@ function ProfilePage() {
             return true;
         } catch (error) {
             criticalError('Burn failed:', error);
-            setStatus(`❌ Burn failed: ${error.message}`);
-            setTimeout(() => setStatus(''), 5000);
-            return false;
+            debugWarn(`Burn transaction failed for ${nft.contractAddress}:${nft.tokenId}, attempting transfer to dead address...`);
+            
+            // If burn fails, try to transfer to dead address as fallback
+            setStatus(`⚠️ Burn failed, attempting transfer to dead address...`);
+            
+            try {
+                const transferSuccess = await transferNft(nft, DEAD_ADDRESS, quantity);
+                if (transferSuccess) {
+                    setStatus(`🔥 NFT sent to dead address (burn fallback successful)!`);
+                    return true;
+                } else {
+                    setStatus(`❌ Both burn and dead address transfer failed: ${error.message}`);
+                    setTimeout(() => setStatus(''), 5000);
+                    return false;
+                }
+            } catch (transferError) {
+                criticalError('Dead address transfer also failed:', transferError);
+                setStatus(`❌ Both burn and dead address transfer failed: ${error.message}`);
+                setTimeout(() => setStatus(''), 5000);
+                return false;
+            }
         }
     };
 

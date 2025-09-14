@@ -78,7 +78,7 @@ function expandToCandidateUrls(raw) {
     }
 }
 
-// Robust image loading that handles IPFS black box issues
+// Robust image loading that handles IPFS black box issues with enhanced cache busting
 function loadImageWithCacheBusting(url, options = {}) {
     const { timeout = 3000, retryWithCacheBust = true } = options;
     
@@ -106,18 +106,22 @@ function loadImageWithCacheBusting(url, options = {}) {
                 debugLog(`✅ [NFT Image] Successfully loaded image: ${img.src} (${img.naturalWidth}x${img.naturalHeight})`);
                 resolve(img.src);
             } else {
-                debugWarn(`⚠️ [NFT Image] Image loaded but has no dimensions: ${img.src}`);
+                debugWarn(`⚠️ [NFT Image] Image loaded but has no dimensions (black box detected): ${img.src}`);
                 
-                // Try with cache busting if we haven't already
+                // Try with aggressive cache busting if we haven't already
                 if (retryWithCacheBust && !img.src.includes('cb=')) {
-                    const cacheBustedUrl = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now() + '&retry=1';
-                    debugLog(`🔄 [NFT Image] Retrying with cache busting: ${cacheBustedUrl}`);
+                    const timestamp = Date.now();
+                    const randomStr = Math.random().toString(36).substring(7);
+                    const cacheBustedUrl = url + 
+                        (url.includes('?') ? '&' : '?') + 
+                        `cb=${timestamp}&rnd=${randomStr}&fix=blackbox&v=2`;
+                    debugLog(`🔄 [NFT Image] Retrying with enhanced cache busting: ${cacheBustedUrl}`);
                     
                     loadImageWithCacheBusting(cacheBustedUrl, { timeout, retryWithCacheBust: false })
                         .then(resolve)
                         .catch(reject);
                 } else {
-                    reject(new Error('Image has no dimensions'));
+                    reject(new Error('Image has no dimensions (potential black box)'));
                 }
             }
         };
@@ -128,11 +132,15 @@ function loadImageWithCacheBusting(url, options = {}) {
             
             debugWarn(`❌ [NFT Image] Error loading image: ${img.src}`, e?.type || 'unknown error');
             
-            // For IPFS URLs, try with cache busting to overcome browser caching issues
+            // For IPFS URLs, try with enhanced cache busting to overcome browser caching issues
             if (retryWithCacheBust && !img.src.includes('cb=') && 
                 (url.includes('ipfs') || url.includes('dweb') || url.includes('gateway'))) {
-                const cacheBustedUrl = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now() + '&bypass=1';
-                debugLog(`🔄 [NFT Image] IPFS error, retrying with cache busting: ${cacheBustedUrl}`);
+                const timestamp = Date.now();
+                const randomStr = Math.random().toString(36).substring(7);
+                const cacheBustedUrl = url + 
+                    (url.includes('?') ? '&' : '?') + 
+                    `cb=${timestamp}&rnd=${randomStr}&bypass=1&reload=force&v=2`;
+                debugLog(`🔄 [NFT Image] IPFS error, retrying with enhanced cache busting: ${cacheBustedUrl}`);
                 
                 loadImageWithCacheBusting(cacheBustedUrl, { timeout, retryWithCacheBust: false })
                     .then(resolve)
@@ -160,10 +168,34 @@ function loadImageWithCacheBusting(url, options = {}) {
         // Set important attributes to prevent black box issues
         img.crossOrigin = 'anonymous';
         img.decoding = 'async';
+        img.loading = 'eager';
         
-        // Start loading the image
-        debugLog(`🔍 [NFT Image] Starting to load: ${url}`);
-        img.src = url;
+        // Add additional headers via fetch for better cache control
+        if (url.startsWith('http') && (url.includes('ipfs') || url.includes('gateway'))) {
+            // For IPFS gateways, try to fetch with proper headers first
+            fetch(url, {
+                method: 'HEAD',
+                mode: 'cors',
+                cache: 'no-cache',
+                headers: {
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Expires': '0'
+                }
+            }).then(() => {
+                // If HEAD request succeeds, proceed with image loading
+                debugLog(`🔍 [NFT Image] Starting to load with cache headers: ${url}`);
+                img.src = url;
+            }).catch(() => {
+                // If HEAD request fails, proceed anyway
+                debugLog(`🔍 [NFT Image] Starting to load (HEAD failed): ${url}`);
+                img.src = url;
+            });
+        } else {
+            // Start loading the image directly for non-IPFS URLs
+            debugLog(`🔍 [NFT Image] Starting to load: ${url}`);
+            img.src = url;
+        }
     });
 }
 
@@ -433,19 +465,25 @@ const NFTImage = ({
         const img = e.target;
         debugWarn(`❌ [NFT Image] Failed to render: ${currentImageUrl}`, e?.type || 'unknown error');
         
-        // Check if this is a potential black box issue (image claims to load but doesn't display)
-        const potentialBlackBox = !img.naturalWidth && !img.naturalHeight && img.complete;
+        // Enhanced black box detection
+        const potentialBlackBox = (
+            (!img.naturalWidth && !img.naturalHeight && img.complete) ||
+            (img.naturalWidth === 0 && img.naturalHeight === 0) ||
+            (img.complete && !img.src.startsWith('data:'))
+        );
         
         if (potentialBlackBox) {
-            debugWarn(`🚫 [NFT Image] Detected potential black box issue for: ${currentImageUrl}`);
+            debugWarn(`🚫 [NFT Image] Detected black box issue for: ${currentImageUrl}`);
             
             // For black box issues, try to force reload with more aggressive cache busting
             if (!currentImageUrl.includes('force=') && !currentImageUrl.startsWith('data:')) {
+                const timestamp = Date.now();
+                const randomStr = Math.random().toString(36).substring(7);
                 const forceReloadUrl = currentImageUrl + 
                     (currentImageUrl.includes('?') ? '&' : '?') + 
-                    'force=' + Date.now() + '&fix=blackbox';
+                    `force=${timestamp}&fix=blackbox&rnd=${randomStr}&nocache=1&reload=force`;
                     
-                debugLog(`🔄 [NFT Image] Attempting force reload: ${forceReloadUrl}`);
+                debugLog(`🔄 [NFT Image] Attempting aggressive force reload: ${forceReloadUrl}`);
                 setCurrentImageUrl(forceReloadUrl);
                 return; // Don't proceed to fallback yet
             }
