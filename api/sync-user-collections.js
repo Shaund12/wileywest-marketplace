@@ -22,11 +22,11 @@ const ERC721_ABI = [
     'function ownerOf(uint256 tokenId) view returns (address)',
     'function supportsInterface(bytes4 interfaceId) view returns (bool)'
 ];
+
 const ERC1155_ABI = [
     'function balanceOf(address owner, uint256 id) view returns (uint256)',
     'function uri(uint256 id) view returns (string)',
     'function supportsInterface(bytes4 interfaceId) view returns (bool)',
-    // events for parsing
     'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ];
@@ -36,7 +36,7 @@ const ERC1155_IFACE = new ethers.Interface([
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ]);
 
-// Import known collections for comprehensive scanning
+// Known collections (Vitruveo)
 const KNOWN_COLLECTIONS_REGISTRY = {
     '0xaEf0a72A661B82CB1d871FCA5117486C664EeF13': { name: 'Vitruveo Core NFT', symbol: 'VCORE' },
     '0x8e7C7f0DF435Be6773641f8cf62C590d7Dde5a8a': { name: 'Vitruveo Income Building Engine', symbol: 'VIBE' },
@@ -60,9 +60,7 @@ const KNOWN_COLLECTIONS_REGISTRY = {
     '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906': { name: 'Pixel Ninja Cats', symbol: 'PNCAT' }
 };
 
-const KNOWN_NFT_CONTRACTS = [
-    ...Object.keys(KNOWN_COLLECTIONS_REGISTRY)
-];
+const KNOWN_NFT_CONTRACTS = [...Object.keys(KNOWN_COLLECTIONS_REGISTRY)];
 
 let provider;
 let supabase;
@@ -111,6 +109,7 @@ async function discoverContractsForWallet(wallet, fromBlock, toBlock) {
     const single1155 = ethers.id('TransferSingle(address,address,address,uint256,uint256)');
     const batch1155 = ethers.id('TransferBatch(address,address,address,uint256[],uint256[])');
     const walletTopic = ethers.zeroPadValue(wallet.toLowerCase(), 32);
+
     for (let start = fromBlock; start <= toBlock; start += CONFIG.CHUNK_BLOCKS) {
         const end = Math.min(start + CONFIG.CHUNK_BLOCKS - 1, toBlock);
         try {
@@ -126,26 +125,27 @@ async function discoverContractsForWallet(wallet, fromBlock, toBlock) {
             bLogs.forEach(l => set.add(l.address.toLowerCase()));
         } catch { }
     }
+
     return [...set];
 }
 
-// ERC721 scan with fallback: try Enumerable, else parse logs, then ownerOf to confirm
+// ERC721 scan with enumerable/fallback via logs + ownerOf verification
 async function scanERC721(contractAddr, wallet, fromBlock, toBlock) {
     const out = [];
     const c = new ethers.Contract(contractAddr, ERC721_ABI, provider);
 
-    // Try enumerable path if supported
+    // Try ERC721Enumerable
     let enumerable = false;
     try {
-        enumerable = await c.supportsInterface('0x780e9d63').catch(() => false); // ERC721Enumerable
+        enumerable = await c.supportsInterface('0x780e9d63').catch(() => false);
     } catch { }
 
     if (!enumerable) {
-        // Probe tokenOfOwnerByIndex; some contracts don't advertise but still implement
+        // Probe tokenOfOwnerByIndex even if interface not reported
         try {
             const bal = await c.balanceOf(wallet);
             if (bal > 0n) {
-                await c.tokenOfOwnerByIndex(wallet, 0); // probe
+                await c.tokenOfOwnerByIndex(wallet, 0);
                 enumerable = true;
             }
         } catch { }
@@ -171,13 +171,15 @@ async function scanERC721(contractAddr, wallet, fromBlock, toBlock) {
                             metadata: {}
                         });
                     }
-                } catch { break; }
+                } catch {
+                    break;
+                }
             }
         }
         return out;
     }
 
-    // Fallback: parse logs to discover candidate tokenIds, then verify ownerOf
+    // Fallback: parse Transfer logs to find candidate tokenIds then confirm via ownerOf
     const transferTopic721 = ethers.id('Transfer(address,address,uint256)');
     const walletTopic = ethers.zeroPadValue(wallet.toLowerCase(), 32);
     const tokenIds = new Set();
@@ -185,12 +187,10 @@ async function scanERC721(contractAddr, wallet, fromBlock, toBlock) {
     for (let start = fromBlock; start <= toBlock; start += CONFIG.CHUNK_BLOCKS) {
         const end = Math.min(start + CONFIG.CHUNK_BLOCKS - 1, toBlock);
         try {
-            // to = wallet
             const toLogs = await provider.getLogs({ address: contractAddr, fromBlock: start, toBlock: end, topics: [transferTopic721, null, walletTopic] });
             toLogs.forEach(l => { const tid = l.topics[3]; if (tid) tokenIds.add(BigInt(tid).toString()); });
         } catch { }
         try {
-            // from = wallet
             const fromLogs = await provider.getLogs({ address: contractAddr, fromBlock: start, toBlock: end, topics: [transferTopic721, walletTopic] });
             fromLogs.forEach(l => { const tid = l.topics[3]; if (tid) tokenIds.add(BigInt(tid).toString()); });
         } catch { }
@@ -213,9 +213,11 @@ async function scanERC721(contractAddr, wallet, fromBlock, toBlock) {
             }
         } catch { }
     }
+
     return out;
 }
 
+// ERC1155 scan with TransferSingle + TransferBatch decoding
 async function scanERC1155(contractAddr, wallet, fromBlock, toBlock) {
     const out = [];
     const c = new ethers.Contract(contractAddr, ERC1155_ABI, provider);
@@ -229,13 +231,12 @@ async function scanERC1155(contractAddr, wallet, fromBlock, toBlock) {
         try {
             const sLogs = await provider.getLogs({ fromBlock: start, toBlock: end, address: contractAddr, topics: [single, null, null, walletTopic] });
             sLogs.forEach(l => {
-                const tid = l.topics[4]; // id is indexed in TransferSingle
+                const tid = l.topics[4];
                 if (tid) tokenIds.add(BigInt(tid).toString());
             });
         } catch { }
         try {
             const bLogs = await provider.getLogs({ fromBlock: start, toBlock: end, address: contractAddr, topics: [batch, null, null, walletTopic] });
-            // Parse ids from data for TransferBatch
             bLogs.forEach(l => {
                 try {
                     const parsed = ERC1155_IFACE.parseLog(l);
@@ -246,7 +247,6 @@ async function scanERC1155(contractAddr, wallet, fromBlock, toBlock) {
         } catch { }
     }
 
-    // If nothing discovered via logs, probe first 25 ids as last resort
     if (tokenIds.size === 0) {
         for (let i = 1; i <= 25; i++) tokenIds.add(String(i));
     }
@@ -268,6 +268,7 @@ async function scanERC1155(contractAddr, wallet, fromBlock, toBlock) {
             }
         } catch { }
     }
+
     return out;
 }
 
@@ -278,21 +279,23 @@ async function fetchMetadataInParallel(nfts) {
         chunks.push(nfts.slice(i, i + CONFIG.MAX_METADATA_CONCURRENCY));
     }
     for (const chunk of chunks) {
-        await Promise.allSettled(chunk.map(async (n) => {
-            if (!n.tokenURI) return;
-            let uri = n.tokenURI;
-            if (uri.startsWith('ipfs://')) uri = `${ipfsGateway}${uri.slice(7)}`;
-            try {
-                const meta = await fetchJson(uri, CONFIG.METADATA_TIMEOUT);
-                let image = meta.image || meta.image_url || null;
-                if (image && image.startsWith('ipfs://')) image = `${ipfsGateway}${image.slice(7)}`;
-                n.metadata = { ...meta };
-                n.image = image;
-                n.name = meta.name || null;
-            } catch {
-                // ignore
-            }
-        }));
+        await Promise.allSettled(
+            chunk.map(async (n) => {
+                if (!n.tokenURI) return;
+                let uri = n.tokenURI;
+                if (uri.startsWith('ipfs://')) uri = `${ipfsGateway}${uri.slice(7)}`;
+                try {
+                    const meta = await fetchJson(uri, CONFIG.METADATA_TIMEOUT);
+                    let image = meta.image || meta.image_url || null;
+                    if (image && image.startsWith('ipfs://')) image = `${ipfsGateway}${image.slice(7)}`;
+                    n.metadata = { ...meta };
+                    n.image = image;
+                    n.name = meta.name || null;
+                } catch {
+                    // ignore metadata failures
+                }
+            })
+        );
     }
     return nfts;
 }
@@ -305,56 +308,66 @@ async function upsertProfile(wallet, data) {
     });
 }
 
+// Main scan that forces genesis on first run (no profile) or when fullRescan is true
 async function fullOrIncrementalScan(wallet, fullRescan = false) {
     const latest = await provider.getBlockNumber();
-    let fromBlock = 0;
-    let lastFull = null;
 
-    const { data: existing } = await supabase
+    // Load existing profile (if any)
+    const { data: existing, error: existingError } = await supabase
         .from('user_profiles')
         .select('last_full_scan_block,nfts')
         .eq('wallet_address', wallet.toLowerCase())
-        .single();
+        .single()
+        .then(r => r)
+        .catch(err => ({ data: null, error: err }));
 
-    if (existing && existing.last_full_scan_block && !fullRescan) {
-        fromBlock = existing.last_full_scan_block + 1;
-        lastFull = existing.last_full_scan_block;
-    }
+    const isFirstProfile = !!existingError || !existing || typeof existing.last_full_scan_block !== 'number';
 
+    const fromBlock = (fullRescan || isFirstProfile) ? 0 : Math.max(0, Number(existing.last_full_scan_block) + 1);
     const toBlock = latest;
-    const contracts = await discoverContractsForWallet(wallet, fullRescan ? 0 : fromBlock, toBlock);
+
+    // Discover contracts that touched the wallet in the range
+    const contracts = await discoverContractsForWallet(wallet, fromBlock, toBlock);
 
     const results = [];
     for (const addr of contracts) {
         const type = await classifyContract(addr);
         if (!type) continue;
         if (type === 'ERC721') {
-            const items = await scanERC721(addr, wallet, fullRescan ? 0 : fromBlock, toBlock);
+            const items = await scanERC721(addr, wallet, fromBlock, toBlock);
             results.push(...items);
         } else {
-            const items = await scanERC1155(addr, wallet, fullRescan ? 0 : fromBlock, toBlock);
+            const items = await scanERC1155(addr, wallet, fromBlock, toBlock);
             results.push(...items);
         }
     }
 
+    // Fetch metadata opportunistically
     await fetchMetadataInParallel(results);
 
-    // Merge with existing NFTs (preserve old if incremental & no duplicates)
+    // Merge with existing NFTs only for incremental case with existing profile
     let merged = results;
-    if (existing && Array.isArray(existing.nfts) && !fullRescan) {
+    if (!fullRescan && !isFirstProfile && Array.isArray(existing.nfts)) {
         const seen = new Set(results.map(n => `${n.contractAddress}-${n.tokenId}`));
         const retained = existing.nfts.filter(n => !seen.has(`${n.contractAddress}-${n.tokenId}`));
         merged = [...retained, ...results];
     }
 
-    // Always advance the scan marker to the latest block scanned
+    // Advance the marker to the latest scanned block
     await upsertProfile(wallet, {
         nfts: merged,
-        last_full_scan_block: latest, // fix: advance marker for incremental scans
+        last_full_scan_block: toBlock,
         sync_status: 'completed'
     });
 
-    return { count: merged.length, fromBlock: fullRescan ? 0 : (existing?.last_full_scan_block ?? 0), toBlock: latest, contracts: contracts.length };
+    return {
+        count: merged.length,
+        nfts: merged.length,
+        fromBlock,
+        toBlock,
+        contracts: contracts.length,
+        mode: (fullRescan || isFirstProfile) ? 'full' : 'incremental'
+    };
 }
 
 async function immediateSync(wallet, fullRescan) {
@@ -364,9 +377,9 @@ async function immediateSync(wallet, fullRescan) {
         return {
             success: true,
             wallet,
-            nfts: stats.count,
-            stats, // include stats for frontend compatibility (expects stats.nfts)
-            mode: fullRescan ? 'full' : 'incremental'
+            nfts: stats.count,  // top-level for convenience
+            stats,              // includes stats.nfts for frontend compatibility
+            mode: stats.mode
         };
     } catch (e) {
         await upsertProfile(wallet, { sync_status: 'error' });
@@ -389,6 +402,7 @@ module.exports = async function handler(req, res) {
         const wallet = body.walletAddress;
         const immediate = body.immediate === true;
         const fullRescan = body.fullRescan === true;
+
         if (wallet && immediate) {
             const out = await immediateSync(wallet, fullRescan);
             return res.status(200).json({
@@ -398,6 +412,7 @@ module.exports = async function handler(req, res) {
                 durationMs: Date.now() - start
             });
         }
+
         return res.status(200).json({
             success: true,
             message: 'Provide {walletAddress, immediate:true} POST body to trigger sync',
@@ -406,4 +421,4 @@ module.exports = async function handler(req, res) {
     } catch (e) {
         return res.status(500).json({ error: e.message, durationMs: Date.now() - start });
     }
-};
+}
