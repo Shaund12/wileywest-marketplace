@@ -482,40 +482,44 @@ export function SupabaseProvider({ children }) {
                         .eq('wallet_address', String(address).toLowerCase())
                         .maybeSingle();
                     existingProfile = data;
+                    debugLog(`🔍 PRODUCTION: ${existingProfile ? 'Found existing profile' : 'No existing profile'} for ${address}`);
                 } catch (error) {
                     debugWarn('Error fetching existing profile for merge:', error);
                 }
                 
-                // Merge new data with existing data intelligently
-                const mergedProfile = {
+                // CRITICAL FIX: Only include fields that exist in the database schema
+                const profileToSave = {
                     wallet_address: String(address).toLowerCase(),
                     nfts: profileData.nfts || existingProfile?.nfts || [],
                     listings: profileData.listings || existingProfile?.listings || [],
                     balance: profileData.balance || existingProfile?.balance || '0',
-                    // PRODUCTION: Always preserve and create essential profile fields
-                    created_at: existingProfile?.created_at || new Date().toISOString(),
-                    // Preserve additional fields from existing profile
-                    ...(existingProfile || {}),
-                    // Override with new data
-                    ...profileData,
                     updated_at: new Date().toISOString()
                 };
 
                 // PRODUCTION FIX: Always create/update profile, even with 0 NFTs (essential for production)
-                const { error } = await supabase
+                debugLog(`💾 PRODUCTION: Upserting profile with ${profileToSave.nfts.length} NFTs for ${address}...`);
+                const { data, error } = await supabase
                     .from('user_profiles')
-                    .upsert(mergedProfile, { onConflict: 'wallet_address', ignoreDuplicates: false });
+                    .upsert(profileToSave, { onConflict: 'wallet_address', ignoreDuplicates: false })
+                    .select();
 
                 if (error) {
-                    debugWarn('Profile cache error:', error);
+                    criticalError('❌ PRODUCTION: Profile cache error:', error);
+                    debugWarn('🔍 PRODUCTION: Error details:', {
+                        message: error.message,
+                        details: error.details,
+                        hint: error.hint,
+                        code: error.code
+                    });
                     updateCacheStats('errors');
                 } else {
-                    debugLog(`✅ PRODUCTION: Profile ${existingProfile ? 'updated' : 'created'} for ${address} (${mergedProfile.nfts.length} NFTs, ${mergedProfile.listings.length} listings)`);
+                    debugLog(`✅ PRODUCTION: Profile ${existingProfile ? 'updated' : 'created'} for ${address} (${profileToSave.nfts.length} NFTs, ${profileToSave.listings.length} listings)`);
+                    debugLog(`🎯 PRODUCTION: Database operation successful - profile now exists in Supabase`);
                     const key = getCacheKey('profile', String(address).toLowerCase());
-                    setCache(key, mergedProfile, 'profile');
+                    setCache(key, profileToSave, 'profile');
                 }
             } catch (error) {
-                debugWarn('Error caching profile:', error);
+                criticalError('❌ PRODUCTION: Error caching profile:', error);
                 updateCacheStats('errors');
             }
         },

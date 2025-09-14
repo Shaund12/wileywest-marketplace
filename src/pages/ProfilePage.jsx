@@ -1873,19 +1873,28 @@ function ProfilePage() {
             // PRODUCTION FIX: Always create profile entry in Supabase, even with 0 NFTs
             if (supabaseConnected && cacheProfileData && !abortSignal?.aborted) {
                 try {
-                    setStatus("💾 Creating/updating profile in database...");
+                    setStatus("💾 PRODUCTION: Creating/updating profile in database (this will ALWAYS create a profile entry)...");
+                    
+                    // Get current balance for the profile
+                    let currentBalance = '0';
+                    try {
+                        const balance = await provider.getBalance(wallet);
+                        currentBalance = balance.toString();
+                    } catch (balanceError) {
+                        debugWarn("Could not get wallet balance:", balanceError);
+                    }
+                    
+                    // CRITICAL FIX: Only pass fields that exist in the database schema
                     await cacheProfileData(wallet, {
                         nfts: foundNfts,
-                        lastScanBlock: await provider.getBlockNumber(),
-                        scanType: scanFromGenesis ? 'production_genesis_complete' : 'production_smart_recent',
-                        timestamp: Date.now(),
-                        // PRODUCTION: Always create profile, even with 0 NFTs
-                        created_at: new Date().toISOString(),
-                        wallet_address: wallet.toLowerCase()
+                        listings: [], // Will be merged with existing data
+                        balance: currentBalance
                     });
-                    debugLog(`✅ PRODUCTION: Profile ${foundNfts.length > 0 ? 'created/updated' : 'created'} in Supabase with ${foundNfts.length} NFTs`);
+                    
+                    setStatus(`✅ PRODUCTION: Profile SUCCESSFULLY created/updated in database with ${foundNfts.length} NFTs`);
+                    debugLog(`🎯 PRODUCTION: Database operation completed - wallet ${wallet} now has a profile in Supabase`);
                 } catch (cacheError) {
-                    debugWarn("Failed to cache profile data:", cacheError);
+                    criticalError("❌ PRODUCTION: Failed to cache profile data:", cacheError);
                 }
             }
             
@@ -3021,11 +3030,20 @@ function ProfilePage() {
                                                 // Cache the results
                                                 if (supabaseConnected && cacheProfileData) {
                                                     try {
+                                                        // Get current balance for the profile
+                                                        let currentBalance = '0';
+                                                        try {
+                                                            const balance = await provider.getBalance(wallet);
+                                                            currentBalance = balance.toString();
+                                                        } catch (balanceError) {
+                                                            debugWarn("Could not get wallet balance:", balanceError);
+                                                        }
+                                                        
+                                                        // CRITICAL FIX: Only pass fields that exist in the database schema
                                                         await cacheProfileData(wallet, {
                                                             nfts,
-                                                            lastScanBlock: await provider.getBlockNumber(),
-                                                            scanType: 'force_comprehensive_genesis',
-                                                            timestamp: Date.now()
+                                                            listings: [], // Will be merged with existing data
+                                                            balance: currentBalance
                                                         });
                                                     } catch (cacheError) {
                                                         debugWarn("Failed to cache force refresh results:", cacheError);
