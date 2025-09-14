@@ -8,7 +8,7 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { convertToUSDCValue, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
-import { isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
+import { isVShareContract, getVShareMetadata, vShareLpSvgDataUrl } from '../utils/vShareUtils';
 import ListingCard from '../components/ListingCard';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
@@ -19,8 +19,181 @@ import { showToast } from '../components/ui/toast';
 import { cn } from '../lib/utils';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import './HomePage.css';
-// NEW: robust image loader used by Marketplace
-import NFTImage from '../components/NFTImage';
+
+/* =========================
+   EXACT SmartImage used by Marketplace (inlined here)
+   ========================= */
+const IPFS_GATEWAYS = [
+    'https://ipfs.io/ipfs/',
+    'https://dweb.link/ipfs/',
+    'https://gateway.pinata.cloud/ipfs/',
+    'https://w3s.link/ipfs/',
+    'https://nftstorage.link/ipfs/',
+    'https://4everland.io/ipfs/',
+];
+const IPNS_GATEWAYS = [
+    'https://ipfs.io/ipns/',
+    'https://dweb.link/ipns/',
+    'https://gateway.pinata.cloud/ipns/',
+    'https://w3s.link/ipns/',
+    'https://nftstorage.link/ipns/',
+    'https://4everland.io/ipns/',
+];
+const smartImageCache = new Map();
+const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
+
+function hashString(str) { let h = 0; for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; } return Math.abs(h); }
+function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '', contractAddress = '', tokenId = '' }) {
+    if (contractAddress && isVShareContract(contractAddress)) {
+        return vShareLpSvgDataUrl({
+            contract: contractAddress,
+            tokenId: tokenId?.toString?.() || '',
+            width,
+            height,
+            title: 'V-Share',
+            subtitle: 'Vmonsters Rev Share'
+        });
+    }
+    const h = hashString(seed);
+    const hue = h % 360;
+    const hue2 = (hue + 180) % 360;
+    const gradId = `g${(h % 1e9).toString(36)}`;
+    const blobs = (h % 7) + 3;
+    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  <defs>
+    <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="hsl(${hue},70%,18%)"/>
+      <stop offset="100%" stop-color="hsl(${hue2},70%,16%)"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#${gradId})"/>
+  ${Array.from({ length: blobs }).map((_, i) => {
+        const a = (h + i * 97) % 360;
+        const r = 14 + ((h >> i) % 40);
+        const cx = (width / (blobs + 1)) * (i + 1);
+        const cy = (height / (blobs + 1)) * ((i % 3) + 1);
+        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
+    }).join('')}
+  <text x="50%" y="${height - 14}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">
+    ${label}
+  </text>
+</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+function expandToCandidateUrls(raw) {
+    if (!raw || typeof raw !== 'string') return [];
+    const url = raw.trim();
+    if (!url) return [];
+    if (url.startsWith('data:')) return [url];
+
+    if (url.startsWith('ar://')) return [`https://arweave.net/${url.slice(5)}`];
+    if (/^https?:\/\/arweave\.net\//i.test(url)) return [url];
+
+    if (url.startsWith('ipfs://')) {
+        let rest = url.slice(7).replace(/^ipfs\//i, '');
+        return IPFS_GATEWAYS.map((g) => g + rest);
+    }
+    if (url.startsWith('ipns://')) {
+        let rest = url.slice(7).replace(/^ipns\//i, '');
+        return IPNS_GATEWAYS.map((g) => g + rest);
+    }
+
+    try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        const ipfsIdx = parts.indexOf('ipfs');
+        const ipnsIdx = parts.indexOf('ipns');
+        if (ipfsIdx !== -1 && parts[ipfsIdx + 1]) {
+            const rest = parts.slice(ipfsIdx + 1).join('/');
+            return IPFS_GATEWAYS.map((g) => g + rest);
+        }
+        if (ipnsIdx !== -1 && parts[ipnsIdx + 1]) {
+            const rest = parts.slice(ipnsIdx + 1).join('/');
+            return IPNS_GATEWAYS.map((g) => g + rest);
+        }
+        return [url];
+    } catch {
+        if (/^[a-z0-9]+$/i.test(url)) {
+            return IPFS_GATEWAYS.map((g) => g + url);
+        }
+        return [url];
+    }
+}
+function uniq(arr) { const s = new Set(); const out = []; for (const x of arr) if (!s.has(x)) { s.add(x); out.push(x); } return out; }
+function flatten(arrs) { const out = []; for (const a of arrs) out.push(...a); return out; }
+function findFirstWorkingImage(candidates, timeoutMs = 6000) {
+    return new Promise((resolve, reject) => {
+        if (!candidates?.length) return reject(new Error('No candidates'));
+        if (typeof window === 'undefined') return reject(new Error('SSR window unavailable'));
+        let idx = 0, settled = false;
+
+        const tryNext = () => {
+            if (settled) return;
+            if (idx >= candidates.length) return reject(new Error('No working image'));
+            const test = candidates[idx++];
+            const img = new Image();
+            const timer = setTimeout(() => { img.onload = img.onerror = null; tryNext(); }, timeoutMs);
+            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(test); };
+            img.onerror = () => { clearTimeout(timer); tryNext(); };
+            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+        };
+        tryNext();
+    });
+}
+function SmartImage({
+    src,
+    srcList = [],
+    alt = '',
+    className,
+    width = 300,
+    height = 200,
+    seed = 'nft',
+    title = '',
+    contractAddress = '',
+    tokenId = ''
+}) {
+    const [url, setUrl] = useState(null);
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        const raws = [];
+        if (src) raws.push(src);
+        if (Array.isArray(srcList)) raws.push(...srcList);
+
+        const key = raws.join('|');
+        if (smartImageCache.has(key)) { setUrl(smartImageCache.get(key)); setFailed(false); return; }
+
+        const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
+        if (!candidates.length) { setUrl(null); setFailed(true); return; }
+
+        findFirstWorkingImage(candidates)
+            .then((u) => { if (cancelled) return; smartImageCache.set(key, u); setUrl(u); setFailed(false); })
+            .catch(() => { if (cancelled) return; setUrl(null); setFailed(true); });
+
+        return () => { cancelled = true; };
+    }, [src, JSON.stringify(srcList)]);
+
+    const finalSrc = failed || !url
+        ? svgFallbackDataUrl({ seed, width, height, title, contractAddress, tokenId })
+        : url;
+
+    return (
+        <img
+            src={finalSrc}
+            alt={alt}
+            className={className}
+            width={width}
+            height={height}
+            loading="lazy"
+            crossOrigin="anonymous"
+            onError={() => { if (!failed) setFailed(true); }}
+            style={{ objectFit: 'cover', display: 'block', borderRadius: 8 }}
+        />
+    );
+}
 
 /* -------------------------------
    Utils
@@ -983,7 +1156,12 @@ function HomePage() {
                             const hasBid = ethers.getBigInt(auction.highestBid || 0) > 0n;
                             const price = hasBid ? auction.highestBid : auction.startPrice;
                             const title = auction.name || `#${auction.tokenId}`;
-                            const auctionImgSrc = auction.image || auction.imageUrl || auction.metadata?.image || auction.metadata?.image_url;
+                            const auctionImgSrcList = [
+                                auction.image,
+                                auction.imageUrl,
+                                auction.metadata?.image,
+                                auction.metadata?.image_url
+                            ].filter(Boolean);
 
                             return (
                                 <Link
@@ -1017,14 +1195,18 @@ function HomePage() {
                                     }}>
                                         AUCTION
                                     </div>
-                                    {/* Replaced CSS background with robust loader */}
+                                    {/* EXACT same loader behavior as Marketplace */}
                                     <div style={{ width: '100%', height: '200px', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
-                                        <NFTImage
-                                            src={auctionImgSrc}
+                                        <SmartImage
+                                            srcList={auctionImgSrcList}
                                             alt={title}
                                             className="hp-auction-image"
                                             width={600}
                                             height={200}
+                                            seed={`${auction.nftContract}-${auction.tokenId}`}
+                                            title={title}
+                                            contractAddress={auction.nftContract}
+                                            tokenId={auction.tokenId}
                                         />
                                     </div>
                                     <h4 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '600' }}>{title}</h4>
@@ -1164,13 +1346,17 @@ function HomePage() {
                             const floor = collectionFloors[t.address];
                             return (
                                 <Link to={`/collections/${t.address}`} className="hp-trend" key={t.address}>
-                                    {/* Replaced CSS background with robust loader */}
-                                    <NFTImage
-                                        src={img}
+                                    {/* EXACT same loader behavior as Marketplace */}
+                                    <SmartImage
+                                        srcList={[img]}
                                         alt={labelFor(t.address)}
                                         className="hp-trend__img"
                                         width={320}
                                         height={200}
+                                        seed={`trend-${t.address}`}
+                                        title={labelFor(t.address)}
+                                        contractAddress={t.address}
+                                        tokenId=""
                                     />
                                     <div className="hp-trend__info">
                                         <strong className="hp-trend__name">{labelFor(t.address)}</strong>
@@ -1225,13 +1411,17 @@ function HomePage() {
                         <div className="hp-ticker__track">
                             {[...activity, ...activity].map((a, i) => (
                                 <div className="hp-ticker__item" key={`${a.id}-${i}`}>
-                                    {/* Replaced CSS background with robust loader */}
-                                    <NFTImage
-                                        src={a.image || ''}
+                                    {/* EXACT same loader behavior as Marketplace */}
+                                    <SmartImage
+                                        srcList={[a.image || '']}
                                         alt={a.name}
                                         className="hp-ticker__img"
                                         width={44}
                                         height={44}
+                                        seed={`${a.nftContract}-${a.tokenId}`}
+                                        title={a.name}
+                                        contractAddress={a.nftContract}
+                                        tokenId={a.tokenId}
                                     />
                                     <div className="hp-ticker__text">
                                         <strong>{a.name}</strong>

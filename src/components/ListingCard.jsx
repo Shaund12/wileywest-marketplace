@@ -6,8 +6,182 @@ import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils
 import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
 import { isVShareContract, vShareLpSvgDataUrl, getVShareMetadata } from '../utils/vShareUtils';
 import { debugWarn } from '../utils/debugUtils';
-import NFTImage from './NFTImage';
 import './ListingCard.css';
+
+/* =========================
+   EXACT SmartImage used by Marketplace (embedded here)
+   ========================= */
+const IPFS_GATEWAYS = [
+    'https://ipfs.io/ipfs/',
+    'https://dweb.link/ipfs/',
+    'https://gateway.pinata.cloud/ipfs/',
+    'https://w3s.link/ipfs/',
+    'https://nftstorage.link/ipfs/',
+    'https://4everland.io/ipfs/',
+];
+const IPNS_GATEWAYS = [
+    'https://ipfs.io/ipns/',
+    'https://dweb.link/ipns/',
+    'https://gateway.pinata.cloud/ipns/',
+    'https://w3s.link/ipns/',
+    'https://nftstorage.link/ipns/',
+    'https://4everland.io/ipns/',
+];
+const smartImageCache = new Map();
+const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
+
+function hashString(str) { let h = 0; for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; } return Math.abs(h); }
+function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '', contractAddress = '', tokenId = '' }) {
+    if (contractAddress && isVShareContract(contractAddress)) {
+        return vShareLpSvgDataUrl({
+            contract: contractAddress,
+            tokenId: tokenId?.toString?.() || '',
+            width,
+            height,
+            title: 'V-Share',
+            subtitle: 'Vmonsters Rev Share'
+        });
+    }
+    const h = hashString(seed);
+    const hue = h % 360;
+    const hue2 = (hue + 180) % 360;
+    const gradId = `g${(h % 1e9).toString(36)}`;
+    const blobs = (h % 7) + 3;
+    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
+    const svg = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+  <defs>
+    <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="hsl(${hue},70%,18%)"/>
+      <stop offset="100%" stop-color="hsl(${hue2},70%,16%)"/>
+    </linearGradient>
+  </defs>
+  <rect width="100%" height="100%" fill="url(#${gradId})"/>
+  ${Array.from({ length: blobs }).map((_, i) => {
+        const a = (h + i * 97) % 360;
+        const r = 14 + ((h >> i) % 40);
+        const cx = (width / (blobs + 1)) * (i + 1);
+        const cy = (height / (blobs + 1)) * ((i % 3) + 1);
+        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
+    }).join('')}
+  <text x="50%" y="${height - 14}" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">
+    ${label}
+  </text>
+</svg>`;
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+function expandToCandidateUrls(raw) {
+    if (!raw || typeof raw !== 'string') return [];
+    const url = raw.trim();
+    if (!url) return [];
+    if (url.startsWith('data:')) return [url];
+
+    if (url.startsWith('ar://')) return [`https://arweave.net/${url.slice(5)}`];
+    if (/^https?:\/\/arweave\.net\//i.test(url)) return [url];
+
+    if (url.startsWith('ipfs://')) {
+        let rest = url.slice(7).replace(/^ipfs\//i, '');
+        return IPFS_GATEWAYS.map((g) => g + rest);
+    }
+    if (url.startsWith('ipns://')) {
+        let rest = url.slice(7).replace(/^ipns\//i, '');
+        return IPNS_GATEWAYS.map((g) => g + rest);
+    }
+
+    try {
+        const u = new URL(url);
+        const parts = u.pathname.split('/').filter(Boolean);
+        const ipfsIdx = parts.indexOf('ipfs');
+        const ipnsIdx = parts.indexOf('ipns');
+        if (ipfsIdx !== -1 && parts[ipfsIdx + 1]) {
+            const rest = parts.slice(ipfsIdx + 1).join('/');
+            return IPFS_GATEWAYS.map((g) => g + rest);
+        }
+        if (ipnsIdx !== -1 && parts[ipnsIdx + 1]) {
+            const rest = parts.slice(ipnsIdx + 1).join('/');
+            return IPNS_GATEWAYS.map((g) => g + rest);
+        }
+        return [url];
+    } catch {
+        if (/^[a-z0-9]+$/i.test(url)) {
+            return IPFS_GATEWAYS.map((g) => g + url);
+        }
+        return [url];
+    }
+}
+function uniq(arr) { const s = new Set(); const out = []; for (const x of arr) if (!s.has(x)) { s.add(x); out.push(x); } return out; }
+function flatten(arrs) { const out = []; for (const a of arrs) out.push(...a); return out; }
+function findFirstWorkingImage(candidates, timeoutMs = 6000) {
+    return new Promise((resolve, reject) => {
+        if (!candidates?.length) return reject(new Error('No candidates'));
+        if (typeof window === 'undefined') return reject(new Error('SSR window unavailable'));
+        let idx = 0, settled = false;
+
+        const tryNext = () => {
+            if (settled) return;
+            if (idx >= candidates.length) return reject(new Error('No working image'));
+            const test = candidates[idx++];
+            const img = new Image();
+            const timer = setTimeout(() => { img.onload = img.onerror = null; tryNext(); }, timeoutMs);
+            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(test); };
+            img.onerror = () => { clearTimeout(timer); tryNext(); };
+            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+        };
+        tryNext();
+    });
+}
+function SmartImage({
+    src,
+    srcList = [],
+    alt = '',
+    className,
+    width = 300,
+    height = 200,
+    seed = 'nft',
+    title = '',
+    contractAddress = '',
+    tokenId = ''
+}) {
+    const [url, setUrl] = useState(null);
+    const [failed, setFailed] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        const raws = [];
+        if (src) raws.push(src);
+        if (Array.isArray(srcList)) raws.push(...srcList);
+
+        const key = raws.join('|');
+        if (smartImageCache.has(key)) { setUrl(smartImageCache.get(key)); setFailed(false); return; }
+
+        const candidates = uniq(flatten(raws.map(expandToCandidateUrls)));
+        if (!candidates.length) { setUrl(null); setFailed(true); return; }
+
+        findFirstWorkingImage(candidates)
+            .then((u) => { if (cancelled) return; smartImageCache.set(key, u); setUrl(u); setFailed(false); })
+            .catch(() => { if (cancelled) return; setUrl(null); setFailed(true); });
+
+        return () => { cancelled = true; };
+    }, [src, JSON.stringify(srcList)]);
+
+    const finalSrc = failed || !url
+        ? svgFallbackDataUrl({ seed, width, height, title, contractAddress, tokenId })
+        : url;
+
+    return (
+        <img
+            src={finalSrc}
+            alt={alt}
+            className={className}
+            width={width}
+            height={height}
+            loading="lazy"
+            crossOrigin="anonymous"
+            onError={() => { if (!failed) setFailed(true); }}
+            style={{ objectFit: 'cover', display: 'block', borderRadius: 8 }}
+        />
+    );
+}
 
 /* =========================
    Error Boundary
@@ -26,49 +200,6 @@ class CardBoundary extends React.Component {
         }
         return this.props.children;
     }
-}
-
-/* =========================
-   Utilities (hash + svg fallback)
-   ========================= */
-const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
-const shortAddr = (a) => (a && a.length > 9 ? `${a.slice(0, 6)}…${a.slice(-4)}` : (a || '—'));
-const hashString = (str) => { let h = 0; for (let i = 0; i < str.length; i++) { h = (h << 5) - h + str.charCodeAt(i); h |= 0; } return Math.abs(h); };
-const imageUrlCache = Object.create(null);
-
-function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '', contractAddress = '', tokenId = '' }) {
-    // Special handling for V-Share contracts - generate SVG fallback
-    if (contractAddress && isVShareContract(contractAddress)) {
-        return vShareLpSvgDataUrl({ 
-            contract: contractAddress, 
-            tokenId: tokenId.toString(), 
-            width, 
-            height,
-            title: 'V-Share',
-            subtitle: 'Vmonsters Rev Share' 
-        });
-    }
-
-    const h = hashString(seed), hue = h % 360, hue2 = (hue + 180) % 360, gradId = `g${(h % 1e9).toString(36)}`, block = (h % 7) + 3;
-    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
-    const svg = `
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
-    <defs>
-      <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stop-color="hsl(${hue},70%,18%)"/>
-        <stop offset="100%" stop-color="hsl(${hue2},70%,16%)"/>
-      </linearGradient>
-    </defs>
-    <rect width="100%" height="100%" fill="url(#${gradId})"/>
-    ${Array.from({ length: block }).map((_, i) => {
-        const a = (h + i * 97) % 360, r = 14 + ((h >> i) % 40);
-        const cx = (width / (block + 1)) * (i + 1);
-        const cy = (height / (block + 1)) * ((i % 3) + 1);
-        return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="hsla(${a},70%,60%,0.25)"/>`;
-    }).join('')}
-    <text x="50%" y="${height - 14}" font-family="ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto" font-size="14" fill="rgba(255,255,255,0.9)" text-anchor="middle">${label}</text>
-  </svg>`;
-    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
 /* =========================
@@ -125,189 +256,6 @@ function useInView(ref, { rootMargin = '200px', once = true } = {}) {
 }
 
 /* =========================
-   Robust IPFS/Arweave resolver
-   ========================= */
-const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/', 'https://cf-ipfs.com/ipfs/', 'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/', 'https://infura-ipfs.io/ipfs/', 'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/', 'https://ipfs.io/ipfs/'
-];
-const IPNS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipns/', 'https://cf-ipfs.com/ipns/', 'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/', 'https://infura-ipfs.io/ipns/', 'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/', 'https://ipfs.io/ipns/'
-];
-
-function expandToCandidateUrls(raw) {
-    if (!raw || typeof raw !== 'string') return [];
-    const url = raw.trim();
-    if (url.startsWith('data:')) return [url];
-    if (url.startsWith('ar://')) return [`https://arweave.net/${url.slice(5)}`];
-    if (/^https?:\/\/arweave\.net\//i.test(url)) return [url];
-
-    if (url.startsWith('ipfs://')) {
-        let rest = url.slice(7).replace(/^ipfs\//i, '');
-        return IPFS_GATEWAYS.map(g => g + rest);
-    }
-    if (url.startsWith('ipns://')) {
-        let rest = url.slice(7).replace(/^ipns\//i, '');
-        return IPNS_GATEWAYS.map(g => g + rest);
-    }
-    try {
-        const u = new URL(url);
-        const parts = u.pathname.split('/').filter(Boolean);
-        const ipfsIdx = parts.indexOf('ipfs');
-        const ipnsIdx = parts.indexOf('ipns');
-        if (ipfsIdx !== -1 && parts[ipfsIdx + 1]) return IPFS_GATEWAYS.map(g => g + parts.slice(ipfsIdx + 1).join('/'));
-        if (ipnsIdx !== -1 && parts[ipnsIdx + 1]) return IPNS_GATEWAYS.map(g => g + parts.slice(ipnsIdx + 1).join('/'));
-        return [url];
-    } catch {
-        if (/^[a-z0-9]+$/i.test(url)) return IPFS_GATEWAYS.map(g => g + url);
-        return [url];
-    }
-}
-
-function findFirstWorkingImage(candidates, timeoutMs = 7000) {
-    return new Promise((resolve, reject) => {
-        if (!candidates?.length) return reject(new Error('No candidates'));
-        if (typeof window === 'undefined') return reject(new Error('SSR'));
-        let settled = false, idx = 0;
-        const tryNext = () => {
-            if (settled) return;
-            if (idx >= candidates.length) return reject(new Error('No gateway worked'));
-            const url = candidates[idx++], img = new Image();
-            const timer = setTimeout(() => { img.onload = null; img.onerror = null; tryNext(); }, timeoutMs);
-            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(url); };
-            img.onerror = () => { clearTimeout(timer); tryNext(); };
-            img.src = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now();
-        };
-        tryNext();
-    });
-}
-
-function collectImageSources(listing) {
-    const nftContract = safeStr(listing?.nftContract);
-    const tokenId = safeStr(listing?.tokenId);
-    
-    // Special handling for V-Share contracts - prioritize V-Share SVG
-    if (nftContract && isVShareContract(nftContract)) {
-        const vShareMetadata = getVShareMetadata(nftContract, tokenId);
-        if (vShareMetadata?.image) {
-            // Return V-Share SVG as first priority, then any other images as fallback
-            const m = listing?.metadata || {};
-            const otherSources = [
-                m.image, listing?.image, listing?.imageUrl, m.image_url, m.imageUrl
-            ].filter(Boolean).map(x => String(x).trim());
-            
-            return [vShareMetadata.image, ...otherSources];
-        }
-    }
-    
-    // Standard image collection for non-V-Share NFTs
-    const m = listing?.metadata || {};
-    const s = [
-        m.image, listing?.image, listing?.imageUrl, m.image_url, m.imageUrl
-    ];
-    const seen = new Set();
-    return s.filter(Boolean).map(x => String(x).trim()).filter(x => seen.has(x) ? false : (seen.add(x), true));
-}
-function collectAnimationSources(listing) {
-    const m = listing?.metadata || {};
-    const s = [m.animation_url, m.animationUrl];
-    const seen = new Set();
-    return s.filter(Boolean).map(x => String(x).trim()).filter(x => seen.has(x) ? false : (seen.add(x), true));
-}
-
-async function resolveWorkingMediaUrl(listing, { preferAnimation = false } = {}) {
-    const cacheKey = `${safeStr(listing?.nftContract)}-${safeStr(listing?.tokenId)}-${preferAnimation ? 'anim' : 'img'}`;
-    if (imageUrlCache[cacheKey]) return imageUrlCache[cacheKey];
-
-    const base = preferAnimation ? [...collectAnimationSources(listing), ...collectImageSources(listing)]
-        : [...collectImageSources(listing), ...collectAnimationSources(listing)];
-    if (!base.length) return null;
-
-    // Special handling for V-Share contracts - return V-Share image immediately
-    const nftContract = safeStr(listing?.nftContract);
-    const tokenId = safeStr(listing?.tokenId);
-    if (nftContract && isVShareContract(nftContract)) {
-        const vShareMetadata = getVShareMetadata(nftContract, tokenId);
-        if (vShareMetadata?.image) {
-            imageUrlCache[cacheKey] = vShareMetadata.image;
-            return vShareMetadata.image;
-        }
-    }
-
-    const candidates = [];
-    const seen = new Set();
-    for (const src of base) {
-        for (const c of expandToCandidateUrls(src)) {
-            if (!seen.has(c)) { seen.add(c); candidates.push(c); }
-        }
-    }
-    try {
-        const working = await findFirstWorkingImage(candidates);
-        imageUrlCache[cacheKey] = working;
-        return working;
-    } catch (err) {
-        debugWarn?.('No working gateway for media', err);
-        return null;
-    }
-}
-
-/* =========================
-   Media component (img or video)
-   ========================= */
-function isVideoUrl(u) {
-    return typeof u === 'string' && /\.(mp4|webm|ogg|gif)$/i.test(u); // play gif as <img>, mp4/webm/ogg as <video>
-}
-
-function AssetMedia({
-    url,
-    alt,
-    seed,
-    width = 300,
-    height = 200,
-    className,
-    posterUrl,
-    autoPlay = false,
-    contractAddress = '',
-    tokenId = ''
-}) {
-    const fallback = svgFallbackDataUrl({ seed, width, height, title: alt || '', contractAddress, tokenId });
-    if (!url) {
-        return <img src={fallback} alt={alt || ''} width={width} height={height} className={`${className || ''} lc-img`} loading="lazy" />;
-    }
-    if (isVideoUrl(url) && !/\.gif$/i.test(url)) {
-        return (
-            <video
-                className={`${className || ''} lc-video`}
-                width={width}
-                height={height}
-                playsInline
-                muted
-                loop
-                autoPlay={autoPlay}
-                preload="metadata"
-                poster={posterUrl || undefined}
-            >
-                <source src={url} />
-            </video>
-        );
-    }
-    return (
-        <img
-            src={url}
-            alt={alt || ''}
-            width={width}
-            height={height}
-            className={`${className || ''} lc-img`}
-            loading="lazy"
-            onError={(e) => { e.currentTarget.src = fallback; }}
-        />
-    );
-}
-
-/* =========================
    Favorite (localStorage)
    ========================= */
 function useFavorite(key) {
@@ -328,6 +276,8 @@ function useFavorite(key) {
 /* =========================
    Listing Card
    ========================= */
+const shortAddr = (a) => (a && a.length > 9 ? `${a.slice(0, 6)}…${a.slice(-4)}` : (a || '—'));
+
 function ListingCardInner({
     listing,
     featured = false,
@@ -373,7 +323,6 @@ function ListingCardInner({
             if (!listing?.pricePerUnit || !listing?.paymentToken || !provider) return;
             try {
                 const priceInfo = await formatPriceWithUSDC(listing.pricePerUnit, listing.paymentToken, provider, false);
-                // Present base unit price; totals shown below if qty>1
                 setPriceDisplay(priceInfo);
                 setTokenSymbol(priceInfo?.tokenSymbol || 'TOKEN');
             } catch (error) {
@@ -466,16 +415,22 @@ function ListingCardInner({
             {/* Media */}
             <Link to={`/nft/${nftContract}/${tokenId}`} className="listing-image-link">
                 <div className={`${scopedClass?.('listing-image', 'ListingCard') || 'listing-image'}`}>
-                    <NFTImage
-                        listing={listing}
-                        contractAddress={nftContract}
-                        tokenId={tokenId}
+                    <SmartImage
+                        srcList={[
+                            listing?.metadata?.image,
+                            listing?.image,
+                            listing?.imageUrl,
+                            listing?.metadata?.image_url,
+                            listing?.metadata?.animation_url
+                        ].filter(Boolean)}
                         alt={`${nftName} - NFT artwork`}
                         className={scopedClass?.('nft-image', 'ListingCard') || 'nft-image'}
                         width={300}
                         height={200}
-                        placeholder="🖼️"
-                        showRetry={true}
+                        seed={`${nftContract}-${tokenId}`}
+                        title={listing?.metadata?.name || listing?.name || nftName}
+                        contractAddress={nftContract}
+                        tokenId={tokenId}
                     />
                 </div>
             </Link>
