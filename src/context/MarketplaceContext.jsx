@@ -1664,7 +1664,7 @@ const buyListing = async (id, _uiPricePerUnit, _uiPaymentToken, quantity = 1) =>
         } else if (callError.message?.includes('user rejected')) {
           setStatus('Transaction was rejected in your wallet');
         } else {
-          setStatus(`Transaction failed: ${callError.message || 'Unknown error'}`);
+          setStatus(`Transaction failed: ${callError.message}`);
         }
         return;
       }
@@ -2251,7 +2251,8 @@ const refreshBlockchainData = useCallback(
             calculateMarketplaceStats,
             triggerManualSync,
             resetTokenAllowance, // <-- added
-            ensureAllowanceWithBuffer // <-- added for auction bidding
+            ensureAllowanceWithBuffer, // <-- added for auction bidding
+            refreshBlockchainData,
         }}>
             {children}
         </MarketplaceContext.Provider>

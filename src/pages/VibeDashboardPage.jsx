@@ -4,62 +4,35 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { ethers } from 'ethers';
 import MarketplaceAbi from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
-import { getTokenDecimals, formatTokenAmount } from '../utils/tokenUtils';
+import { getTokenDecimals } from '../utils/tokenUtils';
 import MarketplaceStats from '../components/MarketplaceStats';
 import { motion } from 'framer-motion';
-import './AuctionStyles.css';
 
 function VibeDashboardPage() {
     const { provider } = useWallet();
     const { marketplaceStats = {}, refreshBlockchainData, salesHistory = [], status = '' } = useMarketplace();
     const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS;
     const [stats, setStats] = useState({
-        // VIBE (VTRU) payouts computed from blockchain events directly
         totalVTRUSent: '0',
         vtruSent24h: '0',
         vtruSent7d: '0',
-        // Added stats from blockchain events
         totalTransactions: 0,
         totalPlatformFees: '0',
         totalRoyalties: '0',
         avgPayout: '0'
     });
     const [chartData, setChartData] = useState([]);
-    const [leaderboards, setLeaderboards] = useState({
-        collections: [],
-        royalties: []
-    });
+    const [leaderboards, setLeaderboards] = useState({ collections: [], royalties: [] });
     const [recentEvents, setRecentEvents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [timeframe, setTimeframe] = useState('7d');
     const [error, setError] = useState(null);
-
-    // Helper function to get vibe amount from breakdown events - returns only native VTRU sent to VIBE
-    const getVibeAmount = useMemo(() => (event) => {
-        const args = event.args;
-        
-        // Only count the native VTRU that was actually sent to the VIBE contract
-        // When wVTRU is used for payment, it gets burned/unwrapped to native VTRU before being sent to VIBE
-        // So we should only count the final native VTRU amount that reaches the VIBE contract
-        const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0')); // VTRU from burned wVTRU
-        const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0')); // Direct native VTRU
-        
-        // Both vibeOutWVTRU and vibeOutNative represent native VTRU sent to VIBE
-        // vibeOutWVTRU is the native VTRU obtained from burning wVTRU
-        // vibeOutNative is direct native VTRU payment
-        // Since burning wVTRU produces native VTRU, we should only count the total once
-        return vibeOutWVTRU + vibeOutNative;
-    }, []);
 
     const loadDashboardData = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
 
-            // Define the marketplace address that should be ignored for wVTRU transfers
-            const MARKETPLACE_ADDRESS = '0x53c852dA8A801Ca41E533A2159528f867c660b6F';
-
-            // Check for marketplace address configuration
             if (!marketplaceAddress || marketplaceAddress === '0x0000000000000000000000000000000000000000') {
                 setError('Marketplace contract address not configured. Please check environment configuration.');
                 debugWarn('Marketplace address not configured:', marketplaceAddress);
@@ -75,7 +48,7 @@ function VibeDashboardPage() {
                 setChartData([]);
                 setLeaderboards({ collections: [], royalties: [] });
                 setRecentEvents([]);
-                setLoading(false); // Fix: Set loading to false before returning
+                setLoading(false);
                 return;
             }
 
@@ -94,150 +67,39 @@ function VibeDashboardPage() {
                 setChartData([]);
                 setLeaderboards({ collections: [], royalties: [] });
                 setRecentEvents([]);
-                setLoading(false); // Fix: Set loading to false before returning
+                setLoading(false);
                 return;
             }
 
             debugLog('🚀 Fetching vibe fee data directly from blockchain events...');
-            
-            // Create marketplace contract instance
             const marketplace = new ethers.Contract(marketplaceAddress, MarketplaceAbi.abi, provider);
-            
-            // Get current block and determine scan range
+
             const currentBlock = await provider.getBlockNumber();
-            const SCAN_BLOCKS = 50000; // Last 50k blocks for performance
+            const SCAN_BLOCKS = 50000;
             const fromBlock = Math.max(currentBlock - SCAN_BLOCKS, 0);
-            
+
             debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events (${SCAN_BLOCKS} blocks)`);
-            
-            // Fetch SaleBreakdown events (when NFTs are purchased)
+
             const saleBreakdownEvents = await marketplace.queryFilter(
                 marketplace.filters.SaleBreakdown(),
                 fromBlock,
                 currentBlock
             );
-            
-            // Fetch AuctionBreakdown events (when auctions are settled)  
+
             const auctionBreakdownEvents = await marketplace.queryFilter(
                 marketplace.filters.AuctionBreakdown(),
-                fromBlock,  
+                fromBlock,
                 currentBlock
             );
-            
+
             const allBreakdownEvents = [...saleBreakdownEvents, ...auctionBreakdownEvents];
             debugLog(`📈 Found ${saleBreakdownEvents.length} sale breakdowns and ${auctionBreakdownEvents.length} auction breakdowns`);
-            
+
             if (allBreakdownEvents.length === 0) {
                 debugWarn('No breakdown events found in recent blocks');
-                
-                // For development/testing: Add mock data when no events are found
-                if (import.meta.env.DEV) {
-                    debugLog('🧪 Development mode: Adding mock VIBE events showing ONLY wVTRU burn/unwrap amounts');
-                    const mockEvents = [
-                        {
-                            // Mock wVTRU transaction that demonstrates the doubling issue
-                            // User pays with wVTRU, marketplace burns it to native VTRU, sends to VIBE
-                            calculatedVibeAmount: 0.079130855721624292, // Only count the actual VTRU sent to VIBE
-                            amountSource: 'vtru',
-                            type: 'sale',
-                            transactionHash: '0xabc123...burn1',
-                            timestamp: Date.now() - (60 * 60 * 1000), // 1 hour ago
-                            paymentToken: '0x3ccc3F22462cAe34766820894D04a40381201ef9', // wVTRU
-                            vibeOutWVTRU: 0.079130855721624292, // wVTRU burned amount (NOT to be counted)
-                            vibeOutNative: 0.079130855721624292, // Native VTRU sent to VIBE (this is what counts)
-                            vibePortionInPayment: 0.079130855721624292, // The original wVTRU amount that was burned
-                            platformFeeTotal: 0.005,
-                            royaltyAmount: 0.002,
-                            totalPrice: 5.0
-                        },
-                        {
-                            // Mock native VTRU transaction
-                            calculatedVibeAmount: 1.5,
-                            amountSource: 'vtru', 
-                            type: 'auction',
-                            transactionHash: '0x456def...native1',
-                            timestamp: Date.now() - (2 * 60 * 60 * 1000), // 2 hours ago
-                            paymentToken: '0x0000000000000000000000000000000000000000', // Native VTRU
-                            vibeOutWVTRU: 0,
-                            vibeOutNative: 1.5, // Direct native VTRU to VIBE
-                            vibePortionInPayment: 1.5,
-                            platformFeeTotal: 0.075,
-                            royaltyAmount: 0.0375,
-                            totalPrice: 7.5
-                        }
-                    ];
-                    
-                    // Set mock data with default values
-                    const processedEvents = mockEvents.map(mock => ({
-                        ...mock,
-                        blockNumber: 1000000,
-                        paymentTokenDecimals: 18,
-                        vibeShareBps: 500, // 5%
-                        royaltyReceiver: '0x1234567890123456789012345678901234567890',
-                        nftContract: '0x2d732b0bb33566a13e586ae83fb21d2fee34e906',
-                        tokenId: '1',
-                        quantity: 1
-                    }));
-                    
-                    debugLog(`🧪 Mock data: ${processedEvents.length} events with corrected VIBE amounts (no double-counting)`);
-                    
-                    // Calculate stats from mock data (should show ~1.579 total, not doubled amounts)
-                    const now = Date.now();
-                    const oneDayAgo = now - (24 * 60 * 60 * 1000);
-                    const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
-                    
-                    const totalVTRUSentNum = processedEvents.reduce((sum, event) => sum + event.calculatedVibeAmount, 0);
-                    const vtruSent24hNum = processedEvents.filter(event => event.timestamp >= oneDayAgo).reduce((sum, event) => sum + event.calculatedVibeAmount, 0);
-                    const vtruSent7dNum = processedEvents.filter(event => event.timestamp >= sevenDaysAgo).reduce((sum, event) => sum + event.calculatedVibeAmount, 0);
-                    const totalTransactions = processedEvents.length;
-                    const totalPlatformFeesNum = processedEvents.reduce((sum, event) => sum + (event.platformFeeTotal || 0), 0);
-                    const totalRoyaltiesNum = processedEvents.reduce((sum, event) => sum + (event.royaltyAmount || 0), 0);
-                    const avgPayoutNum = totalTransactions > 0 ? totalVTRUSentNum / totalTransactions : 0;
-                    
-                    debugLog(`🧪 Fixed totals after removing doubling: totalVTRU=${totalVTRUSentNum}, 24h=${vtruSent24hNum}, 7d=${vtruSent7dNum} (should now show single amounts, not doubled)`);
-                    
-                    setStats({
-                        totalVTRUSent: totalVTRUSentNum.toFixed(6),
-                        vtruSent24h: vtruSent24hNum.toFixed(6),
-                        vtruSent7d: vtruSent7dNum.toFixed(6),
-                        totalTransactions,
-                        totalPlatformFees: totalPlatformFeesNum.toFixed(4),
-                        totalRoyalties: totalRoyaltiesNum.toFixed(4),
-                        avgPayout: avgPayoutNum.toFixed(4)
-                    });
-                    
-                    // Generate mock chart data showing corrected amounts (no doubling)
-                    const chartDataArray = [
-                        { date: '2025-01-12', vtruSent: 1.579131, transactions: 2 } // Corrected total without doubling
-                    ];
-                    setChartData(chartDataArray);
-                    
-                    // Generate mock recent events (should show individual burn amounts, not doubled)
-                    const recentEventsMock = [
-                        {
-                            time: '1 hour ago',
-                            description: 'VIBE payout 0.079131 VTRU from wVTRU burn/unwrap',
-                            hash: '0xabc123...burn1',
-                            type: 'vibe_payout'
-                        },
-                        {
-                            time: '2 hours ago', 
-                            description: 'VIBE payout 1.5000 VTRU from native VTRU transaction',
-                            hash: '0x456def...native1',
-                            type: 'vibe_payout'
-                        }
-                    ];
-                    setRecentEvents(recentEventsMock);
-                    
-                    setLeaderboards({ collections: [], royalties: [] });
-                    setLoading(false);
-                    return;
-                }
-                
-                // Production: Show empty state
                 setStats({
                     totalVTRUSent: '0',
-                    vtruSent24h: '0', 
+                    vtruSent24h: '0',
                     vtruSent7d: '0',
                     totalTransactions: 0,
                     totalPlatformFees: '0',
@@ -251,59 +113,42 @@ function VibeDashboardPage() {
                 return;
             }
 
-            // Debug: Log raw event data before processing
             debugLog(`🔍 Raw breakdown events found: ${allBreakdownEvents.length}`);
             for (let i = 0; i < Math.min(3, allBreakdownEvents.length); i++) {
                 const event = allBreakdownEvents[i];
                 debugLog(`Raw event ${i}: tx=${event.transactionHash}, vibeOutWVTRU=${event.args.vibeOutWVTRU?.toString()}, vibeOutNative=${event.args.vibeOutNative?.toString()}, vibePortionInPayment=${event.args.vibePortionInPayment?.toString()}`);
             }
 
-            // ULTRA-STRICT APPROACH: Only count wVTRU BURN/UNWRAP operations (not transfers)
             debugLog(`🔄 Processing ${allBreakdownEvents.length} events - ONLY counting wVTRU burns/unwraps...`);
-            
-            // Step 1: Filter to only events with actual wVTRU burns (vibeOutWVTRU > 0) or native VTRU payouts
             const vibePayoutEvents = [];
-            
+
             for (const event of allBreakdownEvents) {
                 try {
                     const args = event.args;
-                    
-                    // Extract the actual VTRU amounts sent to VIBE contract
+
                     const vibeOutWVTRU = parseFloat(ethers.formatEther(args.vibeOutWVTRU || '0'));
                     const vibeOutNative = parseFloat(ethers.formatEther(args.vibeOutNative || '0'));
-                    
-                    // CORRECTED FIX: Only count native VTRU actually sent to VIBE (not wVTRU burn amount)
-                    // Per user feedback: "It only SENDS native (VTRU) it just unwraps wVTRU never sends wvtru to vibe"
-                    // vibeOutWVTRU = amount of wVTRU that was burned (input)
-                    // vibeOutNative = amount of native VTRU sent to VIBE (output)
-                    // We should only count the native VTRU output, not add both
+
                     const totalVibeOut = vibeOutNative || vibeOutWVTRU;
-                    
-                    // Get payment token and VIBE portion for debugging
+
                     const paymentToken = args.paymentToken;
                     const decimals = getTokenDecimals(paymentToken);
                     const vibePortionInPayment = parseFloat(ethers.formatUnits(args.vibePortionInPayment || '0', decimals));
-                    
-                    // Log details for debugging
-                    debugLog(`🔍 Event ${event.transactionHash}: paymentToken=${paymentToken?.slice(0,8)}..., vibeOutWVTRU=${vibeOutWVTRU}, vibeOutNative=${vibeOutNative}, vibePortionInPayment=${vibePortionInPayment}`);
-                    
-                    // ULTRA-STRICT: Only count events where VTRU was actually unwrapped/burned and sent to VIBE
-                    // This means we ONLY count vibeOutWVTRU > 0 (actual wVTRU burn/unwrap) or vibeOutNative > 0 (direct VTRU payment)
+
                     if (totalVibeOut > 0) {
-                        // Additional validation: For wVTRU payments, we must have vibeOutWVTRU > 0 (actual burn/unwrap)
-                        if (paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9') { // wVTRU token
+                        if (paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9') {
                             if (vibeOutWVTRU > 0) {
                                 debugLog(`✅ wVTRU BURN/UNWRAP found: tx=${event.transactionHash}, burned=${vibeOutWVTRU} VTRU to VIBE`);
                             } else {
-                                debugLog(`🚫 Ignoring wVTRU event with no burn: tx=${event.transactionHash}, vibeOutWVTRU=0 (transfer only, not burn)`);
-                                continue; // Skip wVTRU events that didn't result in actual burn/unwrap
+                                debugLog(`🚫 Ignoring wVTRU event with no burn: tx=${event.transactionHash}, vibeOutWVTRU=0`);
+                                continue;
                             }
                         } else {
                             debugLog(`✅ Non-wVTRU VIBE payout: tx=${event.transactionHash}, vibeOut=${totalVibeOut} VTRU`);
                         }
-                        
+
                         const block = await event.getBlock();
-                        
+
                         vibePayoutEvents.push({
                             event,
                             block,
@@ -315,7 +160,6 @@ function VibeDashboardPage() {
                             decimals,
                             vibePortionInPayment
                         });
-                        
                     } else {
                         debugLog(`⏭️ Skipping event with no VIBE payout: tx=${event.transactionHash}, totalVibeOut=0`);
                     }
@@ -323,131 +167,76 @@ function VibeDashboardPage() {
                     debugWarn('Error filtering event:', event.transactionHash, err);
                 }
             }
-            
+
             debugLog(`📊 Filtered to ${vibePayoutEvents.length} actual VIBE payout events (from ${allBreakdownEvents.length} total)`);
-            
-            // Step 2: Group the VIBE payout events by transaction to eliminate duplicates
+
             const eventGroups = new Map();
-            
             for (const eventData of vibePayoutEvents) {
                 const txHash = eventData.event.transactionHash;
-                
-                // For transactions with multiple VIBE events, take the one with highest VTRU amount
                 if (!eventGroups.has(txHash) || eventData.totalVibeOut > eventGroups.get(txHash).totalVibeOut) {
                     eventGroups.set(txHash, eventData);
                     debugLog(`🔄 Best VIBE event for tx ${txHash}: ${eventData.totalVibeOut} VTRU`);
                 }
             }
-            
-            debugLog(`📊 Grouped ${vibePayoutEvents.length} VIBE events into ${eventGroups.size} unique transactions`);
-            
-            // Step 3: Process only the actual VIBE payout events (no fallback to payment amounts)
+
             const processedEvents = [];
-            
             for (const [txHash, eventData] of eventGroups) {
                 try {
                     const { event, block, args, vibeOutWVTRU, vibeOutNative, totalVibeOut, paymentToken, decimals, vibePortionInPayment } = eventData;
-                    
-                    // Use only the actual VTRU amount sent to VIBE contract
+
                     const finalVibeAmount = totalVibeOut;
-                    const amountSource = 'vtru';
-                    
                     const processedEvent = {
-                        // Event metadata
                         type: event.eventName || (saleBreakdownEvents.includes(event) ? 'sale' : 'auction'),
                         blockNumber: event.blockNumber,
                         transactionHash: event.transactionHash,
                         timestamp: block.timestamp * 1000,
-                        
-                        // Payment token info
-                        paymentToken: paymentToken,
+                        paymentToken,
                         paymentTokenDecimals: decimals,
-                        
-                        // Vibe data - only actual VTRU amounts sent to VIBE
-                        vibePortionInPayment: vibePortionInPayment,
-                        vibeOutWVTRU: vibeOutWVTRU,
-                        vibeOutNative: vibeOutNative,
+                        vibePortionInPayment,
+                        vibeOutWVTRU,
+                        vibeOutNative,
                         vibeShareBps: parseInt(args.vibeShareBps?.toString() || '0'),
-                        
-                        // Platform and royalty data
                         platformFeeTotal: parseFloat(ethers.formatUnits(args.platformFeeTotal || '0', decimals)),
                         royaltyAmount: parseFloat(ethers.formatUnits(args.royaltyAmount || '0', decimals)),
                         royaltyReceiver: args.royaltyReceiver,
-                        
-                        // Transaction details
                         nftContract: args.nftContract,
                         tokenId: args.tokenId?.toString(),
                         totalPrice: parseFloat(ethers.formatUnits(args.totalPrice || args.finalPrice || '0', decimals)),
                         quantity: parseInt(args.quantity?.toString() || '1'),
-                        
-                        // Final calculated amount - always VTRU sent to VIBE
                         calculatedVibeAmount: finalVibeAmount,
-                        amountSource: amountSource
+                        amountSource: 'vtru'
                     };
-                    
+
                     processedEvents.push(processedEvent);
                     debugLog(`✅ Processed tx ${txHash}: ${finalVibeAmount} VTRU sent to VIBE`);
                 } catch (err) {
                     debugWarn('Error processing VIBE transaction:', txHash, err);
                 }
             }
-            
-            debugLog(`✅ Processed ${processedEvents.length} unique VIBE transactions with actual VTRU payouts`);
-            
-            // Debug: Log comprehensive breakdown for troubleshooting
+
             if (processedEvents.length > 0) {
                 const sourceBreakdown = processedEvents.reduce((acc, event) => {
-                    const tokenName = event.paymentToken === '0x0000000000000000000000000000000000000000' ? 'Native VTRU' : 
-                                     event.paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9' ? 'wVTRU' :
-                                     event.paymentToken === '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA' ? 'VUSD' : 'Other';
-                    
-                    if (!acc[tokenName]) {
-                        acc[tokenName] = { count: 0, totalAmount: 0, token: event.paymentToken };
-                    }
+                    const tokenName = event.paymentToken === '0x0000000000000000000000000000000000000000' ? 'Native VTRU'
+                        : event.paymentToken === '0x3ccc3F22462cAe34766820894D04a40381201ef9' ? 'wVTRU'
+                            : event.paymentToken === '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA' ? 'VUSD' : 'Other';
+                    if (!acc[tokenName]) acc[tokenName] = { count: 0, totalAmount: 0, token: event.paymentToken };
                     acc[tokenName].count++;
                     acc[tokenName].totalAmount += event.calculatedVibeAmount;
                     return acc;
                 }, {});
-                
                 debugLog('🔍 VIBE payouts breakdown by payment token:', sourceBreakdown);
-                
-                // Log individual transactions for verification
-                processedEvents.forEach(event => {
-                    debugLog(`📝 Tx ${event.transactionHash}: ${event.calculatedVibeAmount} VTRU to VIBE (from ${event.paymentToken === '0x0000000000000000000000000000000000000000' ? 'Native' : event.paymentToken?.slice(0,8)}...)`);
-                });
             }
 
-            // Time windows for calculations
             const now = Date.now();
             const oneDayAgo = now - (24 * 60 * 60 * 1000);
             const sevenDaysAgo = now - (7 * 24 * 60 * 60 * 1000);
 
-            // Calculate aggregated stats using the calculated amounts
-            debugLog(`🔢 Calculating totals from ${processedEvents.length} unique transactions...`);
-            
-            let totalVTRUSentNum = processedEvents.reduce((sum, event) => {
-                const eventAmount = event.calculatedVibeAmount;
-                debugLog(`Tx ${event.transactionHash}: ${eventAmount} VTRU`);
-                return sum + eventAmount;
-            }, 0);
-            
-            debugLog(`🔢 Final total VTRU sent to VIBE: ${totalVTRUSentNum} from ${processedEvents.length} unique transactions`);
-
-            const vtruSent24hNum = processedEvents
-                .filter(event => event.timestamp >= oneDayAgo)
-                .reduce((sum, event) => {
-                    return sum + event.calculatedVibeAmount;
-                }, 0);
-
-            const vtruSent7dNum = processedEvents
-                .filter(event => event.timestamp >= sevenDaysAgo)
-                .reduce((sum, event) => {
-                    return sum + event.calculatedVibeAmount;
-                }, 0);
-
+            const totalVTRUSentNum = processedEvents.reduce((sum, e) => sum + e.calculatedVibeAmount, 0);
+            const vtruSent24hNum = processedEvents.filter(e => e.timestamp >= oneDayAgo).reduce((sum, e) => sum + e.calculatedVibeAmount, 0);
+            const vtruSent7dNum = processedEvents.filter(e => e.timestamp >= sevenDaysAgo).reduce((sum, e) => sum + e.calculatedVibeAmount, 0);
             const totalTransactions = processedEvents.length;
-            const totalPlatformFeesNum = processedEvents.reduce((sum, event) => sum + event.platformFeeTotal, 0);
-            const totalRoyaltiesNum = processedEvents.reduce((sum, event) => sum + event.royaltyAmount, 0);
+            const totalPlatformFeesNum = processedEvents.reduce((sum, e) => sum + e.platformFeeTotal, 0);
+            const totalRoyaltiesNum = processedEvents.reduce((sum, e) => sum + e.royaltyAmount, 0);
             const avgPayoutNum = totalTransactions > 0 ? totalVTRUSentNum / totalTransactions : 0;
 
             setStats({
@@ -460,19 +249,15 @@ function VibeDashboardPage() {
                 avgPayout: avgPayoutNum.toFixed(4)
             });
 
-            // Generate chart data (daily aggregation)
             const chartDataMap = new Map();
-            const timeframeBoundary = sevenDaysAgo; // Default to 7 days
-            
+            const timeframeBoundary = sevenDaysAgo;
             processedEvents
-                .filter(event => event.timestamp >= timeframeBoundary)
-                .forEach(event => {
-                    const date = new Date(event.timestamp).toISOString().split('T')[0];
-                    if (!chartDataMap.has(date)) {
-                        chartDataMap.set(date, { vtruSent: 0, transactions: 0 });
-                    }
+                .filter(e => e.timestamp >= timeframeBoundary)
+                .forEach(e => {
+                    const date = new Date(e.timestamp).toISOString().split('T')[0];
+                    if (!chartDataMap.has(date)) chartDataMap.set(date, { vtruSent: 0, transactions: 0 });
                     const entry = chartDataMap.get(date);
-                    entry.vtruSent += event.calculatedVibeAmount;
+                    entry.vtruSent += e.calculatedVibeAmount;
                     entry.transactions += 1;
                 });
 
@@ -481,23 +266,19 @@ function VibeDashboardPage() {
                 .sort((a, b) => a.date.localeCompare(b.date));
             setChartData(chartDataArray);
 
-            // Generate leaderboards
             const platformFeeMap = new Map();
             const royaltyMap = new Map();
             const royaltyRecipientMap = new Map();
 
-            processedEvents.forEach(event => {
-                // Collections by platform fees
-                const nftContract = event.nftContract || 'Unknown';
+            processedEvents.forEach(e => {
+                const nftContract = e.nftContract || 'Unknown';
                 if (nftContract && nftContract !== 'Unknown') {
-                    platformFeeMap.set(nftContract, (platformFeeMap.get(nftContract) || 0) + event.platformFeeTotal);
-                    royaltyMap.set(nftContract, (royaltyMap.get(nftContract) || 0) + event.royaltyAmount);
+                    platformFeeMap.set(nftContract, (platformFeeMap.get(nftContract) || 0) + e.platformFeeTotal);
+                    royaltyMap.set(nftContract, (royaltyMap.get(nftContract) || 0) + e.royaltyAmount);
                 }
-
-                // Royalty recipients
-                const recipient = event.royaltyReceiver;
-                if (recipient && recipient !== ethers.ZeroAddress && event.royaltyAmount > 0) {
-                    royaltyRecipientMap.set(recipient, (royaltyRecipientMap.get(recipient) || 0) + event.royaltyAmount);
+                const recipient = e.royaltyReceiver;
+                if (recipient && recipient !== ethers.ZeroAddress && e.royaltyAmount > 0) {
+                    royaltyRecipientMap.set(recipient, (royaltyRecipientMap.get(recipient) || 0) + e.royaltyAmount);
                 }
             });
 
@@ -522,7 +303,6 @@ function VibeDashboardPage() {
 
             setLeaderboards({ collections: topCollections, royalties: topRoyalties });
 
-            // Generate recent events feed
             const recentEvents = processedEvents
                 .sort((a, b) => b.timestamp - a.timestamp)
                 .slice(0, 10)
@@ -537,77 +317,21 @@ function VibeDashboardPage() {
                 });
 
             setRecentEvents(recentEvents);
-            
         } catch (error) {
             criticalError('Error loading vibe dashboard data from blockchain:', error);
-            
-            // Provide more specific error messages based on error type
             let errorMessage = 'Failed to load vibe fee data from blockchain.';
-            let troubleshootingTip = '';
-            
-            if (error.message && error.message.includes('Failed to fetch')) {
-                errorMessage = 'Network connection failed. Please check your internet connection and try again. The blockchain RPC endpoint may be temporarily unavailable.';
-                troubleshootingTip = 'If this persists, the marketplace may have recent transactions that cannot be displayed due to network connectivity issues.';
-                
-                // In development, show mock data as fallback
-                if (import.meta.env.DEV) {
-                    debugLog('🧪 Network error in dev mode - showing mock data as fallback');
-                    errorMessage += ' Showing mock data for development testing.';
-                    
-                    // Set mock stats to demonstrate the dashboard functionality with corrected amounts
-                    setStats({
-                        totalVTRUSent: '1.579131', // Corrected: no double-counting
-                        vtruSent24h: '1.579131',   // Both events within 24h
-                        vtruSent7d: '1.579131',    // All events within 7d
-                        totalTransactions: 2,       // Only 2 actual burn/payout events
-                        totalPlatformFees: '0.0800',
-                        totalRoyalties: '0.0395',
-                        avgPayout: '0.7896'        // Average per transaction
-                    });
-                    
-                    setChartData([
-                        { date: '2025-01-12', vtruSent: 1.579131, transactions: 2 } // Corrected total
-                    ]);
-                    
-                    setRecentEvents([
-                        {
-                            time: '1 hour ago',
-                            description: 'VIBE payout 0.079131 VTRU from wVTRU burn/unwrap',
-                            hash: '0xabc123...burn1',
-                            type: 'vibe_payout'
-                        },
-                        {
-                            time: '2 hours ago', 
-                            description: 'VIBE payout 1.500000 VTRU from native VTRU transaction',
-                            hash: '0x456def...native1',
-                            type: 'vibe_payout'
-                        }
-                    ]);
-                    
-                    setLeaderboards({ collections: [], royalties: [] });
-                    setError(errorMessage); // Show error but with data
-                    setLoading(false);
-                    return;
-                }
-            } else if (error.message && error.message.includes('network')) {
-                errorMessage = 'Blockchain network error. Please check if you are connected to the correct network (Vitruveo) and try again.';
-                troubleshootingTip = 'Make sure your wallet is connected to the Vitruveo network (Chain ID: 1490).';
-            } else if (error.message && error.message.includes('UNPREDICTABLE_GAS_LIMIT')) {
-                errorMessage = 'Smart contract interaction failed. The marketplace contract may be experiencing issues.';
-                troubleshootingTip = 'This could indicate the contract address is incorrect or the contract is not responding.';
+            if (error.message?.includes('Failed to fetch')) {
+                errorMessage = 'Network connection failed. Please check your internet connection and try again.';
+            } else if (error.message?.includes('network')) {
+                errorMessage = 'Blockchain network error. Check if you are on the correct network (Vitruveo).';
+            } else if (error.message?.includes('UNPREDICTABLE_GAS_LIMIT')) {
+                errorMessage = 'Smart contract interaction failed.';
             } else if (error.code === 'NETWORK_ERROR') {
-                errorMessage = 'Blockchain network is unreachable. Please try again later or check your network connection.';
-                troubleshootingTip = 'Recent sales and VIBE payouts may exist but cannot be retrieved at this time.';
+                errorMessage = 'Blockchain network is unreachable. Please try again later.';
             } else {
-                errorMessage = `Failed to load vibe fee data: ${error.message || 'Unknown error'}. Please try again later.`;
-                troubleshootingTip = 'If this error persists, please report it with the error details above.';
+                errorMessage = `Failed to load vibe fee data: ${error.message || 'Unknown error'}.`;
             }
-            
-            // Log troubleshooting information
-            if (troubleshootingTip) {
-                debugLog('Troubleshooting tip:', troubleshootingTip);
-            }
-            
+
             setError(errorMessage);
             setStats({
                 totalVTRUSent: '0',
@@ -624,28 +348,21 @@ function VibeDashboardPage() {
         } finally {
             setLoading(false);
         }
-    }, [provider, marketplaceAddress, timeframe]); // Removed getVibeAmount as it's not used
+    }, [provider, marketplaceAddress, timeframe]);
 
-    // Add useEffect with proper dependencies and error boundaries
     useEffect(() => {
         let cancelled = false;
-        
         const loadData = async () => {
             if (!cancelled && provider && marketplaceAddress) {
                 await loadDashboardData();
             }
         };
-        
         loadData();
-        
-        return () => {
-            cancelled = true;
-        };
-    }, [provider, marketplaceAddress, timeframe]); // Depend on primitive values instead of memoized function
+        return () => { cancelled = true; };
+    }, [provider, marketplaceAddress, timeframe, loadDashboardData]);
 
     const formatTimeAgo = useCallback((timestamp) => {
         if (!timestamp || isNaN(timestamp)) return 'Unknown';
-
         const now = Date.now();
         const diffMs = now - timestamp;
         const diffMins = Math.floor(diffMs / (1000 * 60));
@@ -659,316 +376,257 @@ function VibeDashboardPage() {
 
     const formatVTRU = useCallback((amount) => `${amount} VTRU`, []);
 
+    const tfBtn = (key, label) => (
+        <button
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${timeframe === key
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                }`}
+            onClick={() => setTimeframe(key)}
+        >
+            {label}
+        </button>
+    );
+
     return (
-        <div className="hp" style={{ maxWidth: 1400, margin: '3rem auto', padding: '0 1.25rem' }}>
-            <div className="hp-section__head">
-                <h2>VIBE Dashboard</h2>
-                <p>Real-time analytics from blockchain events (direct from smart contract)</p>
-                {marketplaceAddress && marketplaceAddress !== '0x0000000000000000000000000000000000000000' && (
-                    <p style={{ fontSize: '0.9em', opacity: 0.7, marginTop: '0.5rem' }}>
-                        Contract: {marketplaceAddress.slice(0, 8)}...{marketplaceAddress.slice(-6)}
-                    </p>
-                )}
-                <div style={{ marginTop: '1rem' }}>
-                    <button 
-                        onClick={loadDashboardData} 
-                        disabled={loading}
-                        style={{
-                            padding: '0.5rem 1rem',
-                            background: loading ? '#666' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            cursor: loading ? 'not-allowed' : 'pointer',
-                            fontSize: '0.9rem'
-                        }}
-                    >
-                        {loading ? '🔄 Loading...' : '🔄 Refresh Data'}
-                    </button>
+        <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+            {/* Header */}
+            <div className="flex flex-col gap-3 mb-6">
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                    <div>
+                        <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+                            VIBE Dashboard
+                        </h2>
+                        <p className="text-sm text-gray-400">
+                            Real-time analytics from blockchain events (direct from smart contract)
+                        </p>
+                        {marketplaceAddress && marketplaceAddress !== '0x0000000000000000000000000000000000000000' && (
+                            <p className="text-xs text-gray-500 mt-1">
+                                Contract: {marketplaceAddress.slice(0, 8)}...{marketplaceAddress.slice(-6)}
+                            </p>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={loadDashboardData}
+                            disabled={loading}
+                            className={`px-4 py-2 rounded-md text-sm font-semibold transition
+                                ${loading ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-indigo-500 to-purple-600 hover:opacity-95'}
+                                text-white shadow`}
+                        >
+                            {loading ? '🔄 Loading...' : '🔄 Refresh Data'}
+                        </button>
+                        {typeof refreshBlockchainData === 'function' && (
+                            <button
+                                onClick={() => refreshBlockchainData({ fullScan: true }).catch(() => { })}
+                                className="px-4 py-2 rounded-md text-sm font-semibold bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 transition"
+                            >
+                                Full Chain Scan
+                            </button>
+                        )}
+                    </div>
                 </div>
             </div>
 
+            {/* Error */}
             {error && (
-                <div className="error-message" style={{ 
-                    padding: '1rem', 
-                    margin: '1rem 0', 
-                    background: 'rgba(255, 51, 102, 0.1)', 
-                    border: '1px solid rgba(255, 51, 102, 0.3)', 
-                    borderRadius: '8px',
-                    color: '#ff3366'
-                }}>
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-300 px-4 py-3 mb-6">
                     <p>{error}</p>
                 </div>
             )}
 
+            {/* Loading */}
             {loading ? (
-                <div className="loading-message">
-                    <p>Loading dashboard data...</p>
+                <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-10 text-center text-gray-300">
+                    Loading dashboard data...
                 </div>
             ) : (
                 <>
                     {/* Primary KPIs */}
-                    <section className="kpi-section">
-                        <div className="kpi-grid">
-                            <div className="kpi-card">
-                                <div className="kpi-label">Total VTRU → VIBE</div>
-                                <div className="kpi-value">{formatVTRU(stats.totalVTRUSent)}</div>
-                                <div className="kpi-subtitle">All time</div>
-                            </div>
-                            <div className="kpi-card">
-                                <div className="kpi-label">Last 24 Hours</div>
-                                <div className="kpi-value">{formatVTRU(stats.vtruSent24h)}</div>
-                                <div className="kpi-subtitle">vs prior day</div>
-                            </div>
-                            <div className="kpi-card">
-                                <div className="kpi-label">Last 7 Days</div>
-                                <div className="kpi-value">{formatVTRU(stats.vtruSent7d)}</div>
-                                <div className="kpi-subtitle">vs prior week</div>
-                            </div>
-                            <div className="kpi-card">
-                                <div className="kpi-label">Payout Transactions</div>
-                                <div className="kpi-value">{stats.totalTransactions}</div>
-                                <div className="kpi-subtitle">sales + auctions</div>
-                            </div>
+                    <section className="mb-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {[
+                                { label: 'Total VTRU → VIBE', value: formatVTRU(stats.totalVTRUSent), sub: 'All time', color: 'from-emerald-500/20 to-cyan-500/20' },
+                                { label: 'Last 24 Hours', value: formatVTRU(stats.vtruSent24h), sub: 'vs prior day', color: 'from-indigo-500/20 to-purple-500/20' },
+                                { label: 'Last 7 Days', value: formatVTRU(stats.vtruSent7d), sub: 'vs prior week', color: 'from-amber-500/20 to-pink-500/20' },
+                                { label: 'Payout Transactions', value: stats.totalTransactions, sub: 'sales + auctions', color: 'from-fuchsia-500/20 to-blue-500/20' }
+                            ].map((kpi, i) => (
+                                <div key={i} className="rounded-xl border border-white/10 bg-gradient-to-br p-4 backdrop-blur-sm text-white"
+                                    style={{ backgroundImage: undefined }}
+                                >
+                                    <div className={`rounded-lg bg-gradient-to-br ${kpi.color} p-3 mb-3 border border-white/10`} />
+                                    <div className="text-sm text-gray-400">{kpi.label}</div>
+                                    <div className="text-2xl font-extrabold mt-1">{kpi.value}</div>
+                                    <div className="text-xs text-gray-500 mt-1">{kpi.sub}</div>
+                                </div>
+                            ))}
                         </div>
                     </section>
 
                     {/* Secondary KPIs */}
-                    <section className="kpi-section" style={{ marginTop: '1rem' }}>
-                        <div className="kpi-grid">
-                            <div className="kpi-card">
-                                <div className="kpi-label">Platform Fees Paid</div>
-                                <div className="kpi-value">{formatVTRU(stats.totalPlatformFees)}</div>
-                                <div className="kpi-subtitle">sum of platform_fee</div>
-                            </div>
-                            <div className="kpi-card">
-                                <div className="kpi-label">Royalties Paid</div>
-                                <div className="kpi-value">{formatVTRU(stats.totalRoyalties)}</div>
-                                <div className="kpi-subtitle">sum of royalty</div>
-                            </div>
-                            <div className="kpi-card">
-                                <div className="kpi-label">Avg VIBE Payout</div>
-                                <div className="kpi-value">{formatVTRU(stats.avgPayout)}</div>
-                                <div className="kpi-subtitle">per transaction</div>
-                            </div>
+                    <section className="mb-8">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            {[
+                                { label: 'Platform Fees Paid', value: formatVTRU(stats.totalPlatformFees), sub: 'sum of platform_fee' },
+                                { label: 'Royalties Paid', value: formatVTRU(stats.totalRoyalties), sub: 'sum of royalty' },
+                                { label: 'Avg VIBE Payout', value: formatVTRU(stats.avgPayout), sub: 'per transaction' }
+                            ].map((kpi, i) => (
+                                <div key={i} className="rounded-xl border border-white/10 bg-white/5 p-4 text-white">
+                                    <div className="text-sm text-gray-400">{kpi.label}</div>
+                                    <div className="text-2xl font-extrabold mt-1">{kpi.value}</div>
+                                    <div className="text-xs text-gray-500 mt-1">{kpi.sub}</div>
+                                </div>
+                            ))}
                         </div>
                     </section>
 
                     {/* Charts */}
-                    <section className="charts-section">
-                        <div className="chart-container">
-                            <div className="chart-header">
-                                <h3>VTRU → VIBE Over Time</h3>
-                                <div className="timeframe-selector">
-                                    <button className={timeframe === '7d' ? 'active' : ''} onClick={() => setTimeframe('7d')}>7 Days</button>
-                                    <button className={timeframe === '30d' ? 'active' : ''} onClick={() => setTimeframe('30d')}>30 Days</button>
-                                    <button className={timeframe === '90d' ? 'active' : ''} onClick={() => setTimeframe('90d')}>90 Days</button>
+                    <section className="mb-8">
+                        <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white">
+                            <div className="flex items-center justify-between gap-3 mb-4">
+                                <h3 className="text-lg font-bold">VTRU → VIBE Over Time</h3>
+                                <div className="flex items-center gap-2">
+                                    {tfBtn('7d', '7 Days')}
+                                    {tfBtn('30d', '30 Days')}
+                                    {tfBtn('90d', '90 Days')}
                                 </div>
                             </div>
-                            <div className="simple-chart">
-                                <div className="chart-data">
-                                    {chartData.length > 0 ? (
-                                        chartData.slice(-Math.max(7, chartData.length)).map((point, index) => (
-                                            <div key={index} className="chart-point">
-                                                <span className="date">{point.date}</span>
-                                                <span className="value">{point.vtruSent.toFixed(2)} VTRU</span>
-                                                <span className="transactions">{point.transactions} tx</span>
+                            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                                {chartData.length > 0 ? (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                                        {chartData.slice(-Math.max(7, chartData.length)).map((point, idx) => (
+                                            <div key={idx} className="rounded-md bg-white/5 border border-white/10 p-3 flex items-center justify-between">
+                                                <span className="text-sm text-gray-400">{point.date}</span>
+                                                <div className="flex items-center gap-4">
+                                                    <span className="text-emerald-400 font-semibold">{point.vtruSent.toFixed(2)} VTRU</span>
+                                                    <span className="text-xs text-gray-400">{point.transactions} tx</span>
+                                                </div>
                                             </div>
-                                        ))
-                                    ) : (
-                                        <div className="no-data-message">
-                                            <p>No payout data available for selected timeframe</p>
-                                        </div>
-                                    )}
-                                </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center text-gray-400 py-10">No payout data available for selected timeframe</div>
+                                )}
                             </div>
                         </div>
                     </section>
 
                     {/* Leaderboards */}
-                    <section className="leaderboards-section">
-                        <div className="leaderboard-container">
-                            <h3>Top Collections by Platform Fees</h3>
-                            <div className="leaderboard">
+                    <section className="mb-10 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white">
+                            <h3 className="text-lg font-bold mb-3">Top Collections by Platform Fees</h3>
+                            <div className="space-y-2">
                                 {leaderboards.collections.length > 0 ? (
-                                    leaderboards.collections.map((collection, index) => (
-                                        <div key={index} className="leaderboard-item">
-                                            <span className="rank">#{index + 1}</span>
-                                            <span className="name">{collection.name}</span>
-                                            <span className="value">{formatVTRU(collection.platformFees)}</span>
+                                    leaderboards.collections.map((c, i) => (
+                                        <div key={i} className="flex items-center justify-between rounded-md bg-white/5 border border-white/10 p-3">
+                                            <div className="flex items-center gap-3">
+                                                <span className="w-8 h-8 rounded-full bg-indigo-500/20 text-indigo-300 font-bold grid place-items-center">#{i + 1}</span>
+                                                <span className="font-semibold">{c.name}</span>
+                                            </div>
+                                            <span className="text-emerald-400 font-bold">{formatVTRU(c.platformFees)}</span>
                                         </div>
                                     ))
                                 ) : (
-                                    <div className="no-data-message">
-                                        <p>No collection fee data available</p>
-                                    </div>
+                                    <div className="text-gray-400">No collection fee data available</div>
                                 )}
                             </div>
                         </div>
 
-                        <div className="leaderboard-container">
-                            <h3>Top Royalty Recipients</h3>
-                            <div className="leaderboard">
+                        <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white">
+                            <h3 className="text-lg font-bold mb-3">Top Royalty Recipients</h3>
+                            <div className="space-y-2">
                                 {leaderboards.royalties.length > 0 ? (
-                                    leaderboards.royalties.map((royalty, index) => (
-                                        <div key={index} className="leaderboard-item">
-                                            <span className="rank">#{index + 1}</span>
-                                            <span className="name">{royalty.collection}</span>
-                                            <span className="value">{formatVTRU(royalty.amount)}</span>
+                                    leaderboards.royalties.map((r, i) => (
+                                        <div key={i} className="flex items-center justify-between rounded-md bg-white/5 border border-white/10 p-3">
+                                            <div className="flex items-center gap-3">
+                                                <span className="w-8 h-8 rounded-full bg-amber-500/20 text-amber-300 font-bold grid place-items-center">#{i + 1}</span>
+                                                <span className="font-semibold">{r.collection}</span>
+                                            </div>
+                                            <span className="text-emerald-400 font-bold">{formatVTRU(r.amount)}</span>
                                         </div>
                                     ))
                                 ) : (
-                                    <div className="no-data-message">
-                                        <p>No royalty payment data available</p>
-                                    </div>
+                                    <div className="text-gray-400">No royalty payment data available</div>
                                 )}
                             </div>
                         </div>
                     </section>
 
-                    {/* Marketplace Overview Stats */}
-                    <motion.section 
-                        className="marketplace-overview-section"
+                    {/* Marketplace Overview + Embedded MarketplaceStats */}
+                    <motion.section
+                        className="mb-10"
                         initial={{ opacity: 0, y: 20 }}
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.6, delay: 0.2 }}
-                        style={{ marginTop: '2rem' }}
                     >
-                        <div className="section-header" style={{ marginBottom: '1.5rem' }}>
-                            <h3 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📊 Marketplace Overview</h3>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Current marketplace statistics and activity</p>
+                        <div className="mb-4">
+                            <h3 className="text-xl font-bold text-white mb-1">📊 Marketplace Overview</h3>
+                            <p className="text-sm text-gray-400">Current marketplace statistics and activity</p>
                         </div>
-                        
-                        <div className="marketplace-stats-grid" style={{
-                            display: 'grid',
-                            gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-                            gap: '1rem',
-                            marginBottom: '2rem'
-                        }}>
-                            <motion.div 
-                                className="stat-card enhanced"
-                                whileHover={{ scale: 1.02, y: -5 }}
-                                transition={{ duration: 0.2 }}
-                                style={{
-                                    background: 'linear-gradient(135deg, rgba(85, 51, 255, 0.1) 0%, rgba(255, 51, 102, 0.1) 100%)',
-                                    border: '1px solid rgba(85, 51, 255, 0.2)',
-                                    borderRadius: '12px',
-                                    padding: '1.5rem',
-                                    textAlign: 'center'
-                                }}
-                            >
-                                <h3 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', color: '#5533ff' }}>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                            <div className="rounded-xl border border-white/10 bg-gradient-to-br from-indigo-500/15 to-pink-500/15 p-5 text-center">
+                                <h3 className="text-3xl font-extrabold text-indigo-400">
                                     {marketplaceStats.totalListings || 0}
                                 </h3>
-                                <p style={{ margin: '0 0 0.25rem 0', fontWeight: '600' }}>Active Listings</p>
-                                <small style={{ color: 'var(--text-secondary)' }}>(Excluding canceled)</small>
-                            </motion.div>
-                            
-                            <motion.div 
-                                className="stat-card enhanced"
-                                whileHover={{ scale: 1.02, y: -5 }}
-                                transition={{ duration: 0.2 }}
-                                style={{
-                                    background: 'linear-gradient(135deg, rgba(34, 204, 136, 0.1) 0%, rgba(85, 51, 255, 0.1) 100%)',
-                                    border: '1px solid rgba(34, 204, 136, 0.2)',
-                                    borderRadius: '12px',
-                                    padding: '1.5rem',
-                                    textAlign: 'center'
-                                }}
-                            >
-                                <h3 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', color: '#22cc88' }}>
+                                <p className="font-semibold text-white mt-1">Active Listings</p>
+                                <small className="text-gray-400">(Excluding canceled)</small>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/15 to-cyan-500/15 p-5 text-center">
+                                <h3 className="text-3xl font-extrabold text-emerald-400">
                                     {marketplaceStats.hasUSDCRates ? `$${marketplaceStats.currentListingVolume || '0.00'}` : (marketplaceStats.currentListingVolume || '0')}
                                 </h3>
-                                <p style={{ margin: '0 0 0.25rem 0', fontWeight: '600' }}>Current Listing Volume</p>
-                                <small style={{ color: 'var(--text-secondary)' }}>{marketplaceStats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
-                            </motion.div>
-                            
-                            <motion.div 
-                                className="stat-card enhanced"
-                                whileHover={{ scale: 1.02, y: -5 }}
-                                transition={{ duration: 0.2 }}
-                                style={{
-                                    background: 'linear-gradient(135deg, rgba(255, 170, 51, 0.1) 0%, rgba(255, 51, 102, 0.1) 100%)',
-                                    border: '1px solid rgba(255, 170, 51, 0.2)',
-                                    borderRadius: '12px',
-                                    padding: '1.5rem',
-                                    textAlign: 'center'
-                                }}
-                            >
-                                <h3 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', color: '#ffaa33' }}>
+                                <p className="font-semibold text-white mt-1">Current Listing Volume</p>
+                                <small className="text-gray-400">{marketplaceStats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-gradient-to-br from-amber-500/15 to-rose-500/15 p-5 text-center">
+                                <h3 className="text-3xl font-extrabold text-amber-300">
                                     {marketplaceStats.hasUSDCRates ? `$${marketplaceStats.actualSoldVolume || '0.00'}` : (marketplaceStats.actualSoldVolume || '0')}
                                 </h3>
-                                <p style={{ margin: '0 0 0.25rem 0', fontWeight: '600' }}>Actual Sold Volume</p>
-                                <small style={{ color: 'var(--text-secondary)' }}>{marketplaceStats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
-                            </motion.div>
-                            
-                            <motion.div 
-                                className="stat-card enhanced"
-                                whileHover={{ scale: 1.02, y: -5 }}
-                                transition={{ duration: 0.2 }}
-                                style={{
-                                    background: 'linear-gradient(135deg, rgba(255, 51, 102, 0.1) 0%, rgba(85, 51, 255, 0.1) 100%)',
-                                    border: '1px solid rgba(255, 51, 102, 0.2)',
-                                    borderRadius: '12px',
-                                    padding: '1.5rem',
-                                    textAlign: 'center'
-                                }}
-                            >
-                                <h3 style={{ fontSize: '2rem', margin: '0 0 0.5rem 0', color: '#ff3366' }}>
+                                <p className="font-semibold text-white mt-1">Actual Sold Volume</p>
+                                <small className="text-gray-400">{marketplaceStats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
+                            </div>
+                            <div className="rounded-xl border border-white/10 bg-gradient-to-br from-fuchsia-500/15 to-blue-500/15 p-5 text-center">
+                                <h3 className="text-3xl font-extrabold text-fuchsia-300">
                                     {marketplaceStats.hasUSDCRates ? `$${marketplaceStats.floorPrice || '0.00'}` : (marketplaceStats.floorPrice || '0')}
                                 </h3>
-                                <p style={{ margin: '0 0 0.25rem 0', fontWeight: '600' }}>Floor Price</p>
-                                <small style={{ color: 'var(--text-secondary)' }}>{marketplaceStats.hasUSDCRates ? 'USDC' : 'Estimated'}</small>
-                            </motion.div>
+                                <p className="font-semibold text-white mt-1">Floor Price</p>
+                                <small className="text-gray-400">{marketplaceStats.hasUSDCRates ? 'USDC' : 'Estimated'}</small>
+                            </div>
                         </div>
-                    </motion.section>
 
-                    {/* Full Marketplace Analytics */}
-                    <motion.section 
-                        className="full-marketplace-analytics"
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.6, delay: 0.4 }}
-                        style={{ marginTop: '2rem' }}
-                    >
-                        <div className="section-header" style={{ marginBottom: '1.5rem' }}>
-                            <h3 style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>📈 Advanced Marketplace Analytics</h3>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.95rem' }}>Comprehensive marketplace metrics and insights</p>
-                        </div>
-                        
                         <MarketplaceStats />
                     </motion.section>
 
                     {/* Events Feed */}
-                    <section className="events-section">
-                        <h3>Recent Marketplace Payouts</h3>
-                        <div className="events-feed">
+                    <section>
+                        <h3 className="text-lg font-bold text-white mb-3">Recent Marketplace Payouts</h3>
+                        <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                             {recentEvents.length > 0 ? (
-                                recentEvents.map((event, index) => (
-                                    <div key={index} className="event-item">
-                                        <span className="event-time">{event.time}</span>
-                                        <span className="event-description">{event.description}</span>
-                                        <span className="event-tx">
-                                            {event.hash ? (
-                                                <a
-                                                    href={`https://explorer.vitruveo.xyz/tx/${event.hash}`}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
-                                                >
-                                                    {`${event.hash.slice(0, 6)}...${event.hash.slice(-4)}`}
-                                                </a>
-                                            ) : 'N/A'}
-                                        </span>
-                                    </div>
-                                ))
+                                <div className="divide-y divide-white/10">
+                                    {recentEvents.map((event, idx) => (
+                                        <div key={idx} className="py-3 flex items-center justify-between text-sm">
+                                            <span className="text-gray-400">{event.time}</span>
+                                            <span className="text-white">{event.description}</span>
+                                            <span className="text-indigo-300">
+                                                {event.hash ? (
+                                                    <a
+                                                        href={`https://explorer.vitruveo.xyz/tx/${event.hash}`}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="hover:underline"
+                                                    >
+                                                        {`${event.hash.slice(0, 6)}...${event.hash.slice(-4)}`}
+                                                    </a>
+                                                ) : 'N/A'}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
                             ) : (
-                                <div className="no-data-message">
+                                <div className="text-gray-400 text-center py-8">
                                     <p>No recent payout events available</p>
-                                    {!provider && (
-                                        <p style={{ fontSize: '0.9em', opacity: 0.7 }}>
-                                            Connect wallet to see real-time event data from blockchain
-                                        </p>
-                                    )}
+                                    {!provider && <p className="text-xs mt-1">Connect wallet to see real-time blockchain data</p>}
                                 </div>
                             )}
                         </div>
