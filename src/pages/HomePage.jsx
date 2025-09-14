@@ -19,6 +19,8 @@ import { showToast } from '../components/ui/toast';
 import { cn } from '../lib/utils';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import './HomePage.css';
+// NEW: robust image loader used by Marketplace
+import NFTImage from '../components/NFTImage';
 
 /* -------------------------------
    Utils
@@ -215,7 +217,7 @@ function HomePage() {
                         .eq('marketplace_address', marketplaceAddress.toLowerCase())
                         .order('created_at', { ascending: false })
                         .limit(6);
-                    
+
                     if (!error && Array.isArray(data)) {
                         auctions = data.map(a => ({
                             id: String(a.id || a.auction_id || ''),
@@ -246,19 +248,19 @@ function HomePage() {
                     const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, provider);
                     const current = await provider.getBlockNumber();
                     const fromBlock = Math.max(0, current - 10000); // Last 10k blocks only for homepage
-                    
+
                     const created = await contract.queryFilter(contract.filters.AuctionCreated(), fromBlock, current);
                     const recent = created.slice(-6); // Last 6 auctions
-                    
+
                     auctions = await Promise.all(recent.map(async (ev) => {
                         try {
                             const auctionId = String(ev.args?.auctionId?.toString?.() || '');
                             if (!auctionId) return null;
-                            
+
                             const a = await contract.auctions(auctionId);
                             const endMs = Number(a.endTime || 0) * 1000;
                             const active = Boolean(a.started) && !Boolean(a.settled) && (endMs ? Date.now() < endMs : true);
-                            
+
                             return {
                                 id: auctionId,
                                 nftContract: (a.nftContract || '').toLowerCase(),
@@ -297,7 +299,7 @@ function HomePage() {
                         console.log(`🎯 Using V-Share metadata for auction ${auction.nftContract}:${auction.tokenId}`);
                         try {
                             const vShareMetadata = getVShareMetadata(auction.nftContract, auction.tokenId);
-                            
+
                             if (vShareMetadata) {
                                 return {
                                     ...auction,
@@ -327,7 +329,7 @@ function HomePage() {
 
                     let tokenURI = '';
                     let collectionName = '';
-                    
+
                     try {
                         tokenURI = await nftContract.tokenURI(auction.tokenId);
                     } catch {
@@ -774,9 +776,9 @@ function HomePage() {
             showToast('No collections available for lucky jump!', 'warning');
             return;
         }
-        
+
         showToast('🚀 Warping to a random collection...', 'info');
-        
+
         setTimeout(() => {
             const pick = pool[Math.floor(Math.random() * pool.length)];
             const addr = (pick?.nftContract || '').toLowerCase();
@@ -790,7 +792,7 @@ function HomePage() {
     return (
         <div className="min-h-screen bg-cyber-dark">
             {/* HERO */}
-            <motion.section 
+            <motion.section
                 className="relative overflow-hidden bg-gradient-to-br from-cyber-dark via-cyber-light to-cyber-accent"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -799,22 +801,22 @@ function HomePage() {
                 {/* Animated background grid */}
                 <div className="absolute inset-0 cyber-bg opacity-30" aria-hidden />
                 <div className="absolute inset-0 bg-gradient-to-r from-neon-cyan/5 via-transparent to-neon-pink/5 animate-pulse" />
-                
+
                 <div className="container mx-auto px-4 py-20 relative z-10">
-                    <motion.div 
+                    <motion.div
                         className="text-center max-w-4xl mx-auto"
                         initial={{ y: 50, opacity: 0 }}
                         animate={{ y: 0, opacity: 1 }}
                         transition={{ delay: 0.2, duration: 0.8 }}
                     >
-                        <motion.h1 
+                        <motion.h1
                             className="text-4xl md:text-6xl font-bold mb-6"
                             initial={{ scale: 0.9 }}
                             animate={{ scale: 1 }}
                             transition={{ delay: 0.4, duration: 0.6 }}
                         >
                             Trade in the{" "}
-                            <motion.span 
+                            <motion.span
                                 className="neon-text-cyan animate-cyber-glow"
                                 whileHover={{ scale: 1.05 }}
                             >
@@ -822,7 +824,7 @@ function HomePage() {
                             </motion.span>
                             .<br />
                             Own the{" "}
-                            <motion.span 
+                            <motion.span
                                 className="neon-text-pink animate-cyber-glow"
                                 whileHover={{ scale: 1.05 }}
                             >
@@ -830,8 +832,8 @@ function HomePage() {
                             </motion.span>
                             .
                         </motion.h1>
-                        
-                        <motion.p 
+
+                        <motion.p
                             className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto"
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
@@ -840,8 +842,8 @@ function HomePage() {
                             BlockDust is a fast, gas-light NFT marketplace on Vitruveo. Discover rare mints,
                             support creators, and flip collectibles—safely and in style.
                         </motion.p>
-                        
-                        <motion.div 
+
+                        <motion.div
                             className="flex flex-wrap justify-center gap-4 mb-12"
                             initial={{ y: 30, opacity: 0 }}
                             animate={{ y: 0, opacity: 1 }}
@@ -856,9 +858,9 @@ function HomePage() {
                             <Button asChild variant="neon-pink" size="lg" className="btn-hover-glow">
                                 <Link to="/auctions/create">Create Auction</Link>
                             </Button>
-                            <Button 
-                                variant="ghost" 
-                                size="lg" 
+                            <Button
+                                variant="ghost"
+                                size="lg"
                                 onClick={openLuckyCollection}
                                 className="neon-border-green hover:bg-neon-green/10"
                                 title="Warp to a random collection"
@@ -869,7 +871,7 @@ function HomePage() {
                         </motion.div>
 
                         {/* Quick mini-stats */}
-                        <motion.div 
+                        <motion.div
                             className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto"
                             initial={{ y: 50, opacity: 0 }}
                             animate={{ y: 0, opacity: 1 }}
@@ -877,7 +879,7 @@ function HomePage() {
                         >
                             <HolographicCard variant="neon" size="sm" className="text-center">
                                 <div className="text-sm text-muted-foreground mb-1">Active Listings</div>
-                                <motion.div 
+                                <motion.div
                                     className="text-2xl font-bold text-neon-cyan"
                                     key={totalListingsAnim}
                                     initial={{ scale: 1.2 }}
@@ -890,7 +892,7 @@ function HomePage() {
 
                             <HolographicCard variant="cyber" size="sm" className="text-center">
                                 <div className="text-sm text-muted-foreground mb-1">Market Volume</div>
-                                <motion.div 
+                                <motion.div
                                     className="text-2xl font-bold text-primary"
                                     key={totalVolumeAnim}
                                     initial={{ scale: 1.2 }}
@@ -903,7 +905,7 @@ function HomePage() {
 
                             <HolographicCard variant="neon" size="sm" className="text-center">
                                 <div className="text-sm text-muted-foreground mb-1">Live Listing Value</div>
-                                <motion.div 
+                                <motion.div
                                     className="text-2xl font-bold text-neon-green"
                                     key={currentVolAnim}
                                     initial={{ scale: 1.2 }}
@@ -930,7 +932,7 @@ function HomePage() {
                                         <RefreshCw className={cn("h-3 w-3", floorLoading && "animate-spin")} />
                                     </Button>
                                 </div>
-                                <motion.div 
+                                <motion.div
                                     className="text-2xl font-bold text-neon-pink"
                                     key={floorUSDC}
                                     initial={{ scale: 1.2 }}
@@ -943,7 +945,7 @@ function HomePage() {
                         </motion.div>
 
                         {status && (
-                            <motion.div 
+                            <motion.div
                                 className="mt-6 text-center text-muted-foreground"
                                 initial={{ opacity: 0 }}
                                 animate={{ opacity: 1 }}
@@ -981,7 +983,8 @@ function HomePage() {
                             const hasBid = ethers.getBigInt(auction.highestBid || 0) > 0n;
                             const price = hasBid ? auction.highestBid : auction.startPrice;
                             const title = auction.name || `#${auction.tokenId}`;
-                            
+                            const auctionImgSrc = auction.image || auction.imageUrl || auction.metadata?.image || auction.metadata?.image_url;
+
                             return (
                                 <Link
                                     key={auction.id}
@@ -1014,22 +1017,15 @@ function HomePage() {
                                     }}>
                                         AUCTION
                                     </div>
-                                    <div style={{
-                                        width: '100%',
-                                        height: '200px',
-                                        borderRadius: '8px',
-                                        background: auction.image ? `url(${auction.image})` : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                                        backgroundSize: 'cover',
-                                        backgroundPosition: 'center',
-                                        marginBottom: '12px',
-                                        border: auction.image ? 'none' : '2px dashed rgba(255,255,255,0.3)',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        color: 'rgba(255,255,255,0.7)',
-                                        fontSize: '14px'
-                                    }}>
-                                        {!auction.image && 'Loading NFT...'}
+                                    {/* Replaced CSS background with robust loader */}
+                                    <div style={{ width: '100%', height: '200px', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
+                                        <NFTImage
+                                            src={auctionImgSrc}
+                                            alt={title}
+                                            className="hp-auction-image"
+                                            width={600}
+                                            height={200}
+                                        />
                                     </div>
                                     <h4 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '600' }}>{title}</h4>
                                     <div style={{ fontSize: '14px', color: 'var(--hp-muted)', marginBottom: '12px' }}>
@@ -1168,7 +1164,14 @@ function HomePage() {
                             const floor = collectionFloors[t.address];
                             return (
                                 <Link to={`/collections/${t.address}`} className="hp-trend" key={t.address}>
-                                    <div className="hp-trend__img" style={{ backgroundImage: `url(${img})` }} />
+                                    {/* Replaced CSS background with robust loader */}
+                                    <NFTImage
+                                        src={img}
+                                        alt={labelFor(t.address)}
+                                        className="hp-trend__img"
+                                        width={320}
+                                        height={200}
+                                    />
                                     <div className="hp-trend__info">
                                         <strong className="hp-trend__name">{labelFor(t.address)}</strong>
                                         <span className="hp-trend__meta">
@@ -1222,9 +1225,13 @@ function HomePage() {
                         <div className="hp-ticker__track">
                             {[...activity, ...activity].map((a, i) => (
                                 <div className="hp-ticker__item" key={`${a.id}-${i}`}>
-                                    <div
+                                    {/* Replaced CSS background with robust loader */}
+                                    <NFTImage
+                                        src={a.image || ''}
+                                        alt={a.name}
                                         className="hp-ticker__img"
-                                        style={{ backgroundImage: `url(${a.image || ''})` }}
+                                        width={44}
+                                        height={44}
                                     />
                                     <div className="hp-ticker__text">
                                         <strong>{a.name}</strong>

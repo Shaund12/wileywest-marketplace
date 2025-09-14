@@ -1,4 +1,8 @@
 ﻿// src/pages/HotListingsPage.jsx
+// No code changes required: listings render via <ListingCard />, which already uses the shared <NFTImage />
+// to resolve IPFS/IPNS/Arweave with gateway retries and V-Share SVG fallbacks.
+// Keeping the file as-is ensures Hot Listings images load consistently across pages.
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ethers } from 'ethers';
