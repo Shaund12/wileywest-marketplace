@@ -574,6 +574,7 @@ export class NFTScanner {
             
             // Gather all NFTs with the chosen approach
             const allNfts = [];
+            const nftMap = new Map(); // Track unique NFTs by contract:tokenId to prevent duplicates
             
             // Process in small sequential batches to reduce load
             const batchSize = isBackground ? 1 : 2;
@@ -587,11 +588,33 @@ export class NFTScanner {
                         try {
                             // FIXED: Pass the actual scanFromGenesis parameter
                             const nfts = await this.scanSingleContract(address, scanFromGenesis);
-                            allNfts.push(...nfts);
+                            
+                            // Add NFTs with deduplication to prevent duplicates
+                            for (const nft of nfts) {
+                                const nftKey = `${nft.contractAddress.toLowerCase()}:${nft.tokenId}`;
+                                if (!nftMap.has(nftKey)) {
+                                    nftMap.set(nftKey, nft);
+                                    allNfts.push(nft);
+                                } else {
+                                    // Update existing NFT if this one has more complete data
+                                    const existingNft = nftMap.get(nftKey);
+                                    if (nft.metadata && !existingNft.metadata) {
+                                        // Replace with NFT that has metadata
+                                        const index = allNfts.findIndex(n => 
+                                            n.contractAddress.toLowerCase() === nft.contractAddress.toLowerCase() && 
+                                            n.tokenId === nft.tokenId
+                                        );
+                                        if (index !== -1) {
+                                            allNfts[index] = nft;
+                                            nftMap.set(nftKey, nft);
+                                        }
+                                    }
+                                }
+                            }
                             
                             // Update progress
                             this.updateProgress({ 
-                                found: this.progress.found + nfts.length,
+                                found: allNfts.length, // Use actual unique count
                                 scanned: this.progress.scanned + 1 
                             });
                         } catch (e) {

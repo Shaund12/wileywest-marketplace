@@ -1644,18 +1644,35 @@ function ProfilePage() {
                             setStatus(`🔍 Verifying ownership of ${cachedProfile.nfts.length} cached NFTs...`);
                             const ownedCachedNfts = await filterOwnedNFTs(cachedProfile.nfts, wallet, provider, setStatus);
                             
-                            const removedCount = cachedProfile.nfts.length - ownedCachedNfts.length;
+                            // DEDUPLICATION: Remove duplicate NFTs that have same contract:tokenId
+                            const nftMap = new Map();
+                            const deduplicatedNfts = [];
+                            
+                            ownedCachedNfts.forEach(nft => {
+                                const nftKey = `${nft.contractAddress.toLowerCase()}:${nft.tokenId}`;
+                                if (!nftMap.has(nftKey)) {
+                                    nftMap.set(nftKey, nft);
+                                    deduplicatedNfts.push(nft);
+                                }
+                            });
+                            
+                            const removedCount = cachedProfile.nfts.length - deduplicatedNfts.length;
+                            const duplicateCount = ownedCachedNfts.length - deduplicatedNfts.length;
+                            
                             if (removedCount > 0) {
                                 debugLog(`🧹 Removed ${removedCount} sold NFTs from cached profile`);
                             }
+                            if (duplicateCount > 0) {
+                                debugLog(`🔄 Removed ${duplicateCount} duplicate NFTs from cached profile`);
+                            }
                             
-                            setUserNfts(ownedCachedNfts);
+                            setUserNfts(deduplicatedNfts);
                             
                             // OPTIMIZED: Build metadata from owned cached NFTs efficiently
                             const metadata = {};
                             let metadataLoaded = 0;
                             
-                            ownedCachedNfts.forEach(nft => {
+                            deduplicatedNfts.forEach(nft => {
                                 const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
                                 
                                 // Create metadata entry efficiently
@@ -1682,14 +1699,19 @@ function ProfilePage() {
                             
                             setNftMetadata(metadata);
                             
-                            const totalNfts = ownedCachedNfts.length;
+                            const totalNfts = deduplicatedNfts.length;
                             const successRate = totalNfts > 0 ? Math.round((metadataLoaded / totalNfts) * 100) : 0;
                             
-                            setStatus(`✅ Loaded ${totalNfts} owned NFTs from cache${removedCount > 0 ? ` (${removedCount} removed)` : ''} (${successRate}% with metadata)`);
-                            await fetchContractInfoForNfts(ownedCachedNfts);
+                            const statusMessage = `✅ Loaded ${totalNfts} owned NFTs from cache${
+                                removedCount > 0 ? ` (${removedCount} removed${duplicateCount > 0 ? `, ${duplicateCount} duplicates` : ''})` : 
+                                duplicateCount > 0 ? ` (${duplicateCount} duplicates removed)` : ''
+                            } (${successRate}% with metadata)`;
+                            
+                            setStatus(statusMessage);
+                            await fetchContractInfoForNfts(deduplicatedNfts);
                             
                             // OPTIMIZED: Start metadata fetching in background for missing metadata
-                            const nftsNeedingMetadata = ownedCachedNfts.filter(nft => {
+                            const nftsNeedingMetadata = deduplicatedNfts.filter(nft => {
                                 const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
                                 const meta = metadata[key];
                                 return !meta?.hasMetadata || !meta?.hasImage || !meta?.loaded;
