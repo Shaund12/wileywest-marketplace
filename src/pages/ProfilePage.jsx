@@ -1857,10 +1857,33 @@ function ProfilePage() {
                 throw new Error("Provider or wallet not available for scanning");
             }
             
-            // Initialize NFT scanner with proper status updates
+            // Enhanced initial messaging for genesis scans
+            if (scanFromGenesis) {
+                setStatus("⏳ Starting comprehensive blockchain scan from genesis (block 0) - This will take a while, please be patient...");
+                setTimeout(() => {
+                    if (!abortSignal?.aborted) {
+                        setStatus("🔍 Scanning the entire blockchain history for your NFTs - Progress updates coming...");
+                    }
+                }, 2000);
+                setTimeout(() => {
+                    if (!abortSignal?.aborted) {
+                        setStatus("⚡ Discovering NFT contracts across all blocks - Nearly ready to show detailed progress...");
+                    }
+                }, 4000);
+            }
+            
+            // Initialize NFT scanner with enhanced progress updates
             const scanner = new NFTScanner(provider, wallet, (statusMsg) => {
                 if (!abortSignal?.aborted) {
-                    setStatus(statusMsg);
+                    // Enhance status messages with context for genesis scans
+                    if (scanFromGenesis && statusMsg && !statusMsg.includes('✅') && !statusMsg.includes('❌')) {
+                        // Add helpful context to ongoing status messages during genesis scans
+                        const enhancedMsg = statusMsg.includes('Scanning') || statusMsg.includes('Found') ? 
+                            `${statusMsg} (Genesis scan - comprehensive blockchain analysis in progress)` : statusMsg;
+                        setStatus(enhancedMsg);
+                    } else {
+                        setStatus(statusMsg);
+                    }
                 }
             });
             

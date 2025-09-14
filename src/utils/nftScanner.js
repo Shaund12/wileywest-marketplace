@@ -249,7 +249,16 @@ export class NFTScanner {
             ((this.progress.total - this.progress.scanned) / rate) : 0;
         const etaText = remaining > 0 && remaining < 3600 ? ` (ETA: ${Math.ceil(remaining)}s)` : '';
         
-        this.updateStatus(`🔍 Found ${this.progress.found} NFTs | Scanned ${this.progress.scanned}/${this.progress.total || '?'} | ${rate}/s${etaText}`);
+        // Enhanced progress message with more context for genesis scans
+        const progressPercent = this.progress.total > 0 ? 
+            Math.round((this.progress.scanned / this.progress.total) * 100) : 0;
+        
+        const baseMessage = `🔍 Found ${this.progress.found} NFTs | Scanned ${this.progress.scanned}/${this.progress.total || '?'} contracts`;
+        const detailedMessage = this.progress.total > 0 ? 
+            `${baseMessage} (${progressPercent}%) | ${rate}/s${etaText}` : 
+            `${baseMessage} | ${rate}/s${etaText}`;
+        
+        this.updateStatus(detailedMessage);
     }
 
     // Get all NFTs with caching support
@@ -507,7 +516,7 @@ export class NFTScanner {
             // FIXED: Smart scanning approach based on actual parameter
             if (scanFromGenesis) {
                 debugLog(`🔍 DEBUG: scanAllNFTs called with COMPREHENSIVE scanning (genesis)`);
-                this.updateStatus("🔍 Comprehensive NFT scanning from blockchain genesis (block 0)");
+                this.updateStatus("🔍 Starting comprehensive NFT scan from blockchain genesis (block 0) - This may take several minutes...");
                 debugLog("🌐 Comprehensive NFT discovery from all blockchain history");
                 debugLog("💡 Scanning known contracts + complete blockchain history for maximum coverage");
             } else {
@@ -518,9 +527,10 @@ export class NFTScanner {
             }
             
             // Add contracts from transfer discovery (respecting scanFromGenesis)
-            this.updateStatus(scanFromGenesis ? 
-                "🔍 Discovering NFT contracts from complete blockchain history..." :
-                "🔍 Discovering NFT contracts from recent blockchain activity...");
+            const discoveryMessage = scanFromGenesis ? 
+                "🔍 Step 1/3: Discovering NFT contracts from complete blockchain history (this takes time but ensures complete coverage)..." :
+                "🔍 Step 1/3: Discovering NFT contracts from recent blockchain activity...";
+            this.updateStatus(discoveryMessage);
             
             let recentContracts = [];
             try {
@@ -542,7 +552,10 @@ export class NFTScanner {
             // NEW: Add Vitruveo blockchain contract discovery for enhanced coverage
             let vitruveoContracts = [];
             try {
-                this.updateStatus("🎯 Discovering NFT contracts on Vitruveo blockchain...");
+                const vitruveoMessage = scanFromGenesis ?
+                    "🎯 Step 2/3: Deep scanning Vitruveo blockchain contracts (comprehensive analysis)..." :
+                    "🎯 Step 2/3: Discovering NFT contracts on Vitruveo blockchain...";
+                this.updateStatus(vitruveoMessage);
                 vitruveoContracts = await this.discoverNFTContractsForVitruveoBlockchain(scanFromGenesis);
                 contractsToScan.push(...vitruveoContracts);
                 debugLog(`🎯 Added ${vitruveoContracts.length} contracts from Vitruveo discovery`);
@@ -564,7 +577,10 @@ export class NFTScanner {
             this.updateProgress({ total: contractsToScan.length });
             
             const scanType = scanFromGenesis ? 'comprehensive genesis' : 'smart recent';
-            this.updateStatus(`🎯 Found ${contractsToScan.length} contracts to scan - ${scanType} approach`);
+            const progressMessage = scanFromGenesis ?
+                `🎯 Step 3/3: Found ${contractsToScan.length} contracts to scan - Starting comprehensive genesis analysis (this is the longest step)...` :
+                `🎯 Step 3/3: Found ${contractsToScan.length} contracts to scan - ${scanType} approach`;
+            this.updateStatus(progressMessage);
             
             // Save contract cache and known ERC20s periodically
             const saveInterval = setInterval(() => {
@@ -642,6 +658,15 @@ export class NFTScanner {
                         });
                     }
                     
+                    // Provide additional context during genesis scans for encouragement
+                    if (scanFromGenesis && i + batchSize < contractsToScan.length) {
+                        const remainingContracts = contractsToScan.length - (i + batchSize);
+                        const progressPercent = Math.round(((i + batchSize) / contractsToScan.length) * 100);
+                        if (progressPercent % 25 === 0) { // Every 25% completion
+                            this.updateStatus(`🚀 Genesis scan ${progressPercent}% complete - Still analyzing blockchain history for your NFTs...`);
+                        }
+                    }
+                    
                     // OPTIMIZED: Reduced delays for faster scanning while still being respectful to RPC
                     if (i + batchSize < contractsToScan.length) {
                         // Much shorter delay between parallel batches (was 400-1000ms, now 150-250ms)
@@ -655,14 +680,23 @@ export class NFTScanner {
             }
             
             const scanDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
-            this.updateStatus(`✅ ${scanType} scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s`);
+            const completionMessage = scanFromGenesis ? 
+                `✅ Comprehensive genesis scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s - Full blockchain history analyzed` :
+                `✅ Smart scan complete! Found ${allNfts.length} NFTs in ${scanDuration}s`;
+            this.updateStatus(completionMessage);
             
             // NEW: Final ownership verification to ensure accuracy
             if (allNfts.length > 0) {
-                this.updateStatus(`🔒 Performing final ownership verification...`);
+                const verificationMessage = scanFromGenesis ?
+                    `🔒 Performing final ownership verification on ${allNfts.length} NFTs from genesis scan...` :
+                    `🔒 Performing final ownership verification...`;
+                this.updateStatus(verificationMessage);
                 const verifiedNfts = await this.verifyNFTOwnership(allNfts);
                 const finalDuration = ((Date.now() - this.scanStartTime) / 1000).toFixed(1);
-                this.updateStatus(`✅ Scan complete! ${verifiedNfts.length} verified NFTs in ${finalDuration}s`);
+                const finalMessage = scanFromGenesis ?
+                    `✅ Genesis scan complete! ${verifiedNfts.length} verified NFTs found in ${finalDuration}s (comprehensive blockchain analysis)` :
+                    `✅ Scan complete! ${verifiedNfts.length} verified NFTs in ${finalDuration}s`;
+                this.updateStatus(finalMessage);
                 return verifiedNfts;
             }
             
