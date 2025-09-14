@@ -2207,6 +2207,25 @@ const updateListingPrice = async (listingId, newPricePerUnit) => {
     }
 };
 
+const refreshBlockchainData = useCallback(
+  async (options = { fullScan: false }) => {
+    try {
+      if (!marketplace || !provider) return false;
+      if (options.fullScan) {
+        setProcessedBlocksCache(new Set());
+        setLastScannedBlock(0);
+      }
+      await fetchPastSalesEvents(marketplace);
+      await calculateMarketplaceStats();
+      return true;
+    } catch (e) {
+      criticalError('refreshBlockchainData failed:', e);
+      return false;
+    }
+  },
+  [marketplace, provider, calculateMarketplaceStats]
+);
+
     return (
         <MarketplaceContext.Provider value={{
             marketplace,
