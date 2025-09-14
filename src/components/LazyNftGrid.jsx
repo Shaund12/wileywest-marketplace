@@ -14,7 +14,11 @@ function LazyNftGrid({
     contractInfo = {},
     batchSize = 24,
     preloadBatches = 2,
-    enableInfiniteScroll = true 
+    enableInfiniteScroll = true,
+    // Bulk selection props
+    bulkMode = false,
+    selectedNfts = new Set(),
+    toggleNftSelection = null
 }) {
     const navigate = useNavigate();
     const [visibleNfts, setVisibleNfts] = useState([]);
@@ -263,11 +267,22 @@ function LazyNftGrid({
         const imageUrl = metadata.imageUrl || fallbackImg;
         const name = metadata.name || `NFT #${nft.tokenId}`;
         const collectionInfo = contractInfo[nft.contractAddress] || {};
+        const isSelected = selectedNfts.has(key);
 
         if (currentView === 'grid') {
             return (
-                <div key={key} className="nft-card" onClick={() => onNftClick && onNftClick(nft)}>
-                    <div className="nft-card-inner">
+                <div key={key} className={`nft-card ${isSelected ? 'selected' : ''}`}>
+                    {bulkMode && (
+                        <div className="nft-card-selection">
+                            <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleNftSelection && toggleNftSelection(nft)}
+                                className="nft-checkbox"
+                            />
+                        </div>
+                    )}
+                    <div className="nft-card-inner" onClick={() => bulkMode ? (toggleNftSelection && toggleNftSelection(nft)) : (onNftClick && onNftClick(nft))}>
                         <div className="nft-image">
                             {isLoading ? (
                                 <div className="loading-image">
@@ -311,35 +326,47 @@ function LazyNftGrid({
                                 )}
                             </div>
                         </div>
-                        <div className="nft-actions">
-                            <button
-                                className="primary-button full-width"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    window.location.href = `/sell?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`;
-                                }}
-                            >
-                                List for Sale
-                            </button>
-                            <button
-                                className="secondary-button full-width"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`);
-                                }}
-                                style={{ marginTop: '0.5rem' }}
-                            >
-                                Create Auction
-                            </button>
-                        </div>
+                        {!bulkMode && (
+                            <div className="nft-actions">
+                                <button
+                                    className="primary-button full-width"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        window.location.href = `/sell?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`;
+                                    }}
+                                >
+                                    List for Sale
+                                </button>
+                                <button
+                                    className="secondary-button full-width"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`);
+                                    }}
+                                    style={{ marginTop: '0.5rem' }}
+                                >
+                                    Create Auction
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             );
         } else {
             // List view
             return (
-                <div key={key} className="nft-list-item">
-                    <div className="nft-list-image" onClick={() => onNftClick && onNftClick(nft)}>
+                <div key={key} className={`nft-list-item ${isSelected ? 'selected' : ''}`}>
+                    {bulkMode && (
+                        <div className="nft-list-selection">
+                            <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleNftSelection && toggleNftSelection(nft)}
+                                className="nft-checkbox"
+                            />
+                        </div>
+                    )}
+                    <div className="nft-list-image" onClick={() => bulkMode ? (toggleNftSelection && toggleNftSelection(nft)) : (onNftClick && onNftClick(nft))}>
                         {isLoading ? (
                             <div className="loading-image">
                                 <div className="loading-spinner small"></div>
@@ -363,7 +390,7 @@ function LazyNftGrid({
                             />
                         )}
                     </div>
-                    <div className="nft-list-details" onClick={() => onNftClick && onNftClick(nft)}>
+                    <div className="nft-list-details" onClick={() => bulkMode ? (toggleNftSelection && toggleNftSelection(nft)) : (onNftClick && onNftClick(nft))}>
                         <h3>{name}</h3>
                         <p className="collection-name">
                             {collectionInfo.name || 'Unknown Collection'}
@@ -377,33 +404,35 @@ function LazyNftGrid({
                             <span className="token-id">ID: {nft.tokenId}</span>
                         </div>
                     </div>
-                    <div className="nft-list-actions">
-                        <button
-                            className="primary-button"
-                            onClick={() => window.location.href = `/sell?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`}
-                        >
-                            List for Sale
-                        </button>
-                        <button
-                            className="secondary-button"
-                            onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
-                        >
-                            Create Auction
-                        </button>
-                        <button
-                            className="secondary-button"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                onNftClick && onNftClick(nft);
-                            }}
-                        >
-                            View Details
-                        </button>
-                    </div>
+                    {!bulkMode && (
+                        <div className="nft-list-actions">
+                            <button
+                                className="primary-button"
+                                onClick={() => window.location.href = `/sell?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`}
+                            >
+                                List for Sale
+                            </button>
+                            <button
+                                className="secondary-button"
+                                onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
+                            >
+                                Create Auction
+                            </button>
+                            <button
+                                className="secondary-button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onNftClick && onNftClick(nft);
+                                }}
+                            >
+                                View Details
+                            </button>
+                        </div>
+                    )}
                 </div>
             );
         }
-    }, [loadedMetadata, currentView, contractInfo, onNftClick, navigate, generateFallbackImage]);
+    }, [loadedMetadata, currentView, contractInfo, onNftClick, navigate, generateFallbackImage, bulkMode, selectedNfts, toggleNftSelection]);
 
     return (
         <div className="lazy-nft-grid">

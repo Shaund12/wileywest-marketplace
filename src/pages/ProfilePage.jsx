@@ -3203,6 +3203,9 @@ function ProfilePage() {
                                                         batchSize={24}
                                                         preloadBatches={1}
                                                         enableInfiniteScroll={true}
+                                                        bulkMode={bulkMode}
+                                                        selectedNfts={selectedNfts}
+                                                        toggleNftSelection={toggleNftSelection}
                                                     />
                                                 )}
                                             </div>
@@ -3252,6 +3255,9 @@ function ProfilePage() {
                                             batchSize={24}
                                             preloadBatches={2}
                                             enableInfiniteScroll={true}
+                                            bulkMode={bulkMode}
+                                            selectedNfts={selectedNfts}
+                                            toggleNftSelection={toggleNftSelection}
                                         />
                                     </>
                                 ) : (
