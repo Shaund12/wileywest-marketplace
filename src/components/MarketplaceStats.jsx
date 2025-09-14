@@ -327,7 +327,18 @@ function MarketplaceStats() {
             {showNoDataNotice && (
                 <div className="data-status-notice">
                     <p>📊 No transaction data found yet. Scan the full chain to backfill marketplace history.</p>
-                    <button className="refresh-data-button" onClick={doRefresh} disabled={isRefreshing}>
+                    // replace the onClick handler in the 'Scan All Blockchain History' button
+                    <button
+                        className="refresh-data-button"
+                        onClick={() => {
+                            if (!refreshBlockchainData) return;
+                            setIsRefreshing(true);
+                            refreshBlockchainData({ fullScan: true })
+                                .catch(() => { })
+                                .finally(() => setIsRefreshing(false));
+                        }}
+                        disabled={isRefreshing}
+                    >
                         {isRefreshing ? 'Scanning Blockchain...' : '🔍 Scan All Blockchain History'}
                     </button>
                 </div>
