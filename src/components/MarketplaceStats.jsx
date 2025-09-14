@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useMarketplace } from '../context/MarketplaceContext';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 import { scopedClass } from '../utils/nftUtils';
-import './marketplace.css';
+import './MarketplaceStats.css'
 
 /**
  * Tiny utilities
@@ -327,7 +327,18 @@ function MarketplaceStats() {
             {showNoDataNotice && (
                 <div className="data-status-notice">
                     <p>📊 No transaction data found yet. Scan the full chain to backfill marketplace history.</p>
-                    <button className="refresh-data-button" onClick={doRefresh} disabled={isRefreshing}>
+                    {/* Full-chain scan writes to Supabase, then stats recalc */}
+                    <button
+                        className="refresh-data-button"
+                        onClick={() => {
+                            if (!refreshBlockchainData) return;
+                            setIsRefreshing(true);
+                            refreshBlockchainData({ fullScan: true })
+                                .catch(() => {})
+                                .finally(() => setIsRefreshing(false));
+                        }}
+                        disabled={isRefreshing}
+                    >
                         {isRefreshing ? 'Scanning Blockchain...' : '🔍 Scan All Blockchain History'}
                     </button>
                 </div>

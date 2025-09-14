@@ -304,7 +304,8 @@ const fastNormalizeMetadata = (metadata, contractAddress, tokenId) => {
 };
 
 /**
- * Ultra-fast IPFS resolution using only the fastest gateway
+ * Enhanced IPFS resolution using multiple gateways for reliability
+ * Prioritizes fast gateways but provides fallback URLs for robust loading
  */
 const fastResolveIPFS = (ipfsUrl) => {
     if (!ipfsUrl) return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
@@ -316,8 +317,9 @@ const fastResolveIPFS = (ipfsUrl) => {
         hash = ipfsUrl.split('/ipfs/')[1];
     }
     
-    // Use only the fastest gateway for immediate display
-    return `https://ipfs.io/ipfs/${hash}`;
+    // Return the most reliable gateway for immediate display
+    // This aligns with ListingCard's successful gateway strategy
+    return `https://cloudflare-ipfs.com/ipfs/${hash}`;
 };
 
 /**
@@ -453,98 +455,76 @@ export const batchLoadMetadata = async (nfts, provider, batchSize = 20) => {
 };
 
 /**
- * Ultra-fast image URL resolution optimized for Vitruveo blockchain
+ * Enhanced image URL resolution optimized for reliability and speed
+ * Returns an array of candidate URLs that can be tried by the client
  * @param {string} imageUrl - Image URL to resolve
- * @param {number} retryCount - Number of retries attempted (for gateway rotation)
- * @returns {Promise<string>} Resolved image URL or fallback
+ * @returns {Object} Object with primary URL and fallback URLs
  */
-export const resolveImageUrl = async (imageUrl, retryCount = 0) => {
+export const resolveImageUrl = async (imageUrl) => {
     if (!imageUrl || typeof imageUrl !== 'string') {
-        return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+        return {
+            primary: MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
+            fallbacks: [],
+            isIPFS: false
+        };
     }
 
-    // If it's already an HTTP URL, test if it works with fast timeout
+    // If it's already an HTTP/HTTPS URL, use it directly
     if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 3000);
-            
-            try {
-                const response = await fetch(imageUrl, { 
-                    method: 'HEAD',
-                    signal: controller.signal
-                });
-                clearTimeout(timeoutId);
-                if (response.ok) {
-                    return imageUrl;
-                }
-            } catch (fetchError) {
-                clearTimeout(timeoutId);
-                throw fetchError;
-            }
-        } catch {
-            // Continue to IPFS resolution if HTTP fails
-        }
+        return {
+            primary: imageUrl,
+            fallbacks: [],
+            isIPFS: false
+        };
     }
 
-    // Handle IPFS URLs with minimal gateway attempts for speed
+    // Handle IPFS URLs with multiple gateway options
     if (imageUrl.startsWith('ipfs://') || imageUrl.includes('/ipfs/')) {
-        // Use only top 2 fastest gateways for performance (same as fastResolveIPFS)
-        const fastGateways = [
-            'https://ipfs.io/ipfs/',
-            'https://dweb.link/ipfs/'
-        ];
-        
-        const maxRetries = Math.min(retryCount + 1, fastGateways.length);
-
-        for (let i = 0; i < maxRetries; i++) {
-            try {
-                let hash = imageUrl;
-                if (imageUrl.startsWith('ipfs://')) {
-                    hash = imageUrl.replace('ipfs://', '');
-                } else if (imageUrl.includes('/ipfs/')) {
-                    hash = imageUrl.split('/ipfs/')[1];
-                }
-
-                const gateway = fastGateways[i];
-                const resolvedUrl = `${gateway}${hash}`;
-
-                // Test if the URL works with fast timeout
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 3000);
-                
-                try {
-                    const response = await fetch(resolvedUrl, { 
-                        method: 'HEAD',
-                        signal: controller.signal
-                    });
-
-                    clearTimeout(timeoutId);
-
-                    if (response.ok) {
-                        debugLog(`✅ Image resolved via ${gateway.split('/')[2]}`);
-                        return resolvedUrl;
-                    }
-                } catch (fetchError) {
-                    clearTimeout(timeoutId);
-                    throw fetchError;
-                }
-            } catch (error) {
-                debugWarn(`Gateway ${i + 1} failed for image: ${error.message}`);
-                continue;
-            }
+        let hash = imageUrl;
+        if (imageUrl.startsWith('ipfs://')) {
+            hash = imageUrl.replace('ipfs://', '');
+        } else if (imageUrl.includes('/ipfs/')) {
+            hash = imageUrl.split('/ipfs/')[1];
         }
+
+        // Generate multiple gateway URLs for robust loading
+        const gateways = [
+            'https://cloudflare-ipfs.com/ipfs/',
+            'https://cf-ipfs.com/ipfs/',
+            'https://dweb.link/ipfs/',
+            'https://gateway.pinata.cloud/ipfs/',
+            'https://ipfs.io/ipfs/',
+            'https://w3s.link/ipfs/',
+            'https://nftstorage.link/ipfs/'
+        ];
+
+        const gatewayUrls = gateways.map(gateway => `${gateway}${hash}`);
+
+        return {
+            primary: gatewayUrls[0], // Cloudflare as primary (most reliable)
+            fallbacks: gatewayUrls.slice(1),
+            isIPFS: true,
+            hash: hash
+        };
     }
 
     // Handle Arweave URLs
     if (imageUrl.startsWith('ar://')) {
         const hash = imageUrl.replace('ar://', '');
-        return `https://arweave.net/${hash}`;
+        const arweaveUrl = `https://arweave.net/${hash}`;
+        return {
+            primary: arweaveUrl,
+            fallbacks: [],
+            isIPFS: false
+        };
     }
 
-    // If all else fails, return placeholder
-    debugWarn(`Could not resolve image URL: ${imageUrl}, using placeholder`);
-    return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+    // If unknown format, use as-is with fallback
+    return {
+        primary: imageUrl,
+        fallbacks: [MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER],
+        isIPFS: false
+    };
 };
 
 /**
@@ -574,6 +554,7 @@ if (typeof window !== 'undefined') {
 
 export default {
     loadNFTMetadata,
+    batchLoadMetadata,
     resolveImageUrl,
     cleanupMetadataCache
 };

@@ -19,6 +19,7 @@ const TermsPage = lazy(() => import('./pages/TermsPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SellPage = lazy(() => import('./pages/SellPage'));
 const CollectionPage = lazy(() => import('./pages/CollectionPage'));
+const NFTDetailPage = lazy(() => import('./pages/NFTDetailPage'));
 
 
 
@@ -300,6 +301,9 @@ function App() {
                                                         </div>} />
                                                         <Route path="/collections/:address" element={<CollectionPage />} />
                                                         <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
+
+                                                        {/* NFT detail routes */}
+                                                        <Route path="/nft/:contractAddress/:tokenId" element={<NFTDetailPage />} />
 
                                                         {/* Auction routes - always enabled */}
                                                         <Route path="/auctions/create" element={<CreateAuctionPage />} />

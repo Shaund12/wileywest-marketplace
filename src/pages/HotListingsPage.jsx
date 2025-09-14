@@ -1,4 +1,7 @@
 ﻿// src/pages/HotListingsPage.jsx
+// Enhanced with Tailwind classes while preserving existing CSS and behavior.
+// Uses <ListingCard /> for items (which now uses the same SmartImage loader as Marketplace).
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ethers } from 'ethers';
@@ -333,7 +336,6 @@ export default function HotListingsPage() {
             const rank = (t) => (t === 'ERC721' ? 0 : t === 'ERC1155' ? 1 : 2);
             ord.sort((a, b) => rank(grouped[a].type) - rank(grouped[b].type));
         } else if (sort === 'floor_low' || sort === 'floor_high' || sort === 'avg_high') {
-            // rely on cached stats if present; fall back to item count
             const getFloor = (k) => stats[k]?.floorUSDC ?? Number.POSITIVE_INFINITY;
             const getAvg = (k) => stats[k]?.avgUSDC ?? 0;
             const byFloorAsc = (a, b) => getFloor(a) - getFloor(b);
@@ -403,11 +405,9 @@ export default function HotListingsPage() {
         (k) => {
             setExpanded((prev) => {
                 const next = { ...prev, [k]: !prev[k] };
-                // if opening now, kick off stats
                 if (!prev[k]) loadStats(k);
                 return next;
             });
-            // scroll into view when expanding
             const el = document.getElementById(`section-${k}`);
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         },
@@ -436,73 +436,84 @@ export default function HotListingsPage() {
             const st = stats[k];
 
             return (
-                <section key={k} className="collection-section reveal" data-open={open ? 'true' : 'false'}>
-                    <header className="collection-header">
-                        <div className="collection-header-left">
-                            <h2 title={col.name} className="glow-text">
-                                {col.name}
-                            </h2>
-                            {col.symbol && <span className="collection-symbol">{col.symbol}</span>}
-                            {col.type !== 'Unknown' && <span className="collection-type">{col.type}</span>}
-
-                            <button
-                                className="copy-addr"
-                                onClick={() => {
-                                    navigator.clipboard?.writeText(col.address);
-                                    announceCopy(short(col.address));
-                                }}
-                                title="Copy contract address"
-                                type="button"
-                            >
-                                {short(col.address)}
-                            </button>
-
-                            <div className="header-links">
-                                <Link className="tiny-link" to={`/collection/${col.address}`} title="View collection">
-                                    View Collection →
-                                </Link>
-                                {explorerBase && (
-                                    <a
-                                        className="tiny-link"
-                                        href={`${explorerBase.replace(/\/$/, '')}/address/${col.address}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        title="View on block explorer"
+                <section
+                    key={k}
+                    className="collection-section reveal rounded-2xl border border-white/10 bg-black/30 backdrop-blur-sm shadow-lg shadow-cyan-500/10 hover:shadow-cyan-500/20 transition"
+                    data-open={open ? 'true' : 'false'}
+                >
+                    <header className="collection-header flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 md:p-5">
+                        <div className="collection-header-left flex items-center gap-4">
+                            <div>
+                                <h2 title={col.name} className="glow-text text-xl md:text-2xl font-semibold bg-gradient-to-r from-cyan-400 via-fuchsia-400 to-pink-500 bg-clip-text text-transparent">
+                                    {col.name}
+                                </h2>
+                                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-white/70">
+                                    {col.symbol && <span className="collection-symbol px-2 py-0.5 rounded bg-white/5 border border-white/10">{col.symbol}</span>}
+                                    {col.type !== 'Unknown' && <span className="collection-type px-2 py-0.5 rounded bg-white/5 border border-white/10">{col.type}</span>}
+                                    <button
+                                        className="copy-addr ml-1 px-2 py-0.5 rounded border border-white/10 hover:border-cyan-400/40 hover:bg-cyan-400/5 transition"
+                                        onClick={() => {
+                                            navigator.clipboard?.writeText(col.address);
+                                            announceCopy(short(col.address));
+                                        }}
+                                        title="Copy contract address"
+                                        type="button"
                                     >
-                                        Explorer ↗
-                                    </a>
-                                )}
+                                        {short(col.address)}
+                                    </button>
+                                </div>
+
+                                <div className="header-links mt-2 flex gap-3">
+                                    <Link
+                                        className="tiny-link text-cyan-300 hover:text-cyan-200 underline-offset-4 hover:underline"
+                                        to={`/collections/${col.address}`}
+                                        title="View collection"
+                                    >
+                                        View Collection →
+                                    </Link>
+                                    {explorerBase && (
+                                        <a
+                                            className="tiny-link text-fuchsia-300 hover:text-fuchsia-200 underline-offset-4 hover:underline"
+                                            href={`${explorerBase.replace(/\/$/, '')}/address/${col.address}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            title="View on block explorer"
+                                        >
+                                            Explorer ↗
+                                        </a>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
-                        <div className="collection-right">
-                            <div className="collection-metrics">
+                        <div className="collection-right flex items-center gap-4">
+                            <div className="collection-metrics grid grid-cols-3 gap-3">
                                 {st?.loading ? (
                                     <>
-                                        <div className="metric shimmer" />
-                                        <div className="metric shimmer" />
-                                        <div className="metric shimmer" />
+                                        <div className="metric shimmer h-10 w-28 rounded-md bg-white/10" />
+                                        <div className="metric shimmer h-10 w-28 rounded-md bg-white/10" />
+                                        <div className="metric shimmer h-10 w-28 rounded-md bg-white/10" />
                                     </>
                                 ) : (
                                     <>
-                                        <div className="metric">
-                                            <span className="metric-label">Floor</span>
-                                            <span className="metric-value">${(st?.floorUSDC ?? 0).toFixed(2)}</span>
+                                        <div className="metric rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                                            <span className="metric-label block text-white/60">Floor</span>
+                                            <span className="metric-value font-semibold text-cyan-300">${(st?.floorUSDC ?? 0).toFixed(2)}</span>
                                         </div>
-                                        <div className="metric">
-                                            <span className="metric-label">Avg</span>
-                                            <span className="metric-value">${(st?.avgUSDC ?? 0).toFixed(2)}</span>
+                                        <div className="metric rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                                            <span className="metric-label block text-white/60">Avg</span>
+                                            <span className="metric-value font-semibold text-pink-300">${(st?.avgUSDC ?? 0).toFixed(2)}</span>
                                         </div>
-                                        <div className="metric">
-                                            <span className="metric-label">Items</span>
-                                            <span className="metric-value">{st?.count ?? col.items.length}</span>
+                                        <div className="metric rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm">
+                                            <span className="metric-label block text-white/60">Items</span>
+                                            <span className="metric-value font-semibold text-emerald-300">{st?.count ?? col.items.length}</span>
                                         </div>
                                     </>
                                 )}
                             </div>
 
                             <button
-                                className={`toggle-btn ${open ? 'open' : ''}`}
+                                className={`toggle-btn ${open ? 'open' : ''} px-4 py-2 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 hover:border-cyan-400/40 text-sm font-medium transition`}
                                 onClick={() => toggleExpand(k)}
                                 aria-expanded={open}
                                 aria-controls={`section-${k}`}
@@ -513,10 +524,14 @@ export default function HotListingsPage() {
                         </div>
                     </header>
 
-                    <div id={`section-${k}`} className="listings-grid featured">
+                    <div id={`section-${k}`} className="listings-grid featured px-3 pb-4 md:px-5">
                         {items.map((listing, i) => (
-                            <div className="listing-wrapper" style={{ '--item-index': i }} key={listing?.id ?? `${k}-${listing?.tokenId}-${i}`}>
-                                <div className="hot-badge">
+                            <div
+                                className="listing-wrapper relative rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition shadow-sm"
+                                style={{ '--item-index': i }}
+                                key={listing?.id ?? `${k}-${listing?.tokenId}-${i}`}
+                            >
+                                <div className="hot-badge absolute left-2 top-2 z-10 inline-flex items-center gap-1 rounded-md bg-gradient-to-r from-orange-500 to-amber-500 px-2 py-1 text-xs font-semibold text-white shadow">
                                     <span className="fire-emoji">🔥</span> {col.symbol || 'Featured'}
                                 </div>
                                 <ListingCard listing={listing} featured />
@@ -525,8 +540,12 @@ export default function HotListingsPage() {
                     </div>
 
                     {!open && col.items.length > 6 && (
-                        <div className="collection-footer">
-                            <button className="hp-btn hp-btn--primary" onClick={() => toggleExpand(k)} type="button">
+                        <div className="collection-footer px-4 pb-5">
+                            <button
+                                className="hp-btn hp-btn--primary px-4 py-2 rounded-lg bg-gradient-to-r from-cyan-500 to-fuchsia-500 text-white font-semibold shadow hover:shadow-lg hover:opacity-95 transition"
+                                onClick={() => toggleExpand(k)}
+                                type="button"
+                            >
                                 Show more
                             </button>
                         </div>
@@ -539,22 +558,27 @@ export default function HotListingsPage() {
 
     /* ---------- JSX ---------- */
     return (
-        <div className="hot-listings-container organized" ref={revealRef}>
-            <canvas ref={canvasRef} className="particles-bg" aria-hidden />
+        <div className="hot-listings-container organized relative min-h-screen" ref={revealRef}>
+            <canvas ref={canvasRef} className="particles-bg absolute inset-0 -z-10" aria-hidden />
 
             {/* Copy live region for screen readers */}
             <div className="sr-only" role="status" aria-live="polite">
                 {copiedMsg}
             </div>
 
-            <div className="page-header tilt-3d">
-                <h1>
-                    <span className="fire-emoji">🔥</span> Premium Listings
+            <div className="page-header tilt-3d mx-auto max-w-7xl px-4 pt-10 pb-4 md:pt-14 md:pb-6">
+                <h1 className="mb-2 text-center text-3xl md:text-4xl font-extrabold tracking-tight">
+                    <span className="fire-emoji mr-2">🔥</span>
+                    <span className="bg-gradient-to-r from-cyan-400 via-fuchsia-400 to-pink-500 bg-clip-text text-transparent">
+                        Premium Listings
+                    </span>
                 </h1>
-                <p>Curated collections of exclusive digital assets from verified creators.</p>
+                <p className="text-center text-sm md:text-base text-white/70">
+                    Curated collections of exclusive digital assets from verified creators.
+                </p>
 
-                <div className="toolbar">
-                    <div className="toolbar-left">
+                <div className="toolbar mt-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div className="toolbar-left w-full md:max-w-md">
                         <input
                             type="search"
                             placeholder="Search collections or contract addresses…"
@@ -563,16 +587,16 @@ export default function HotListingsPage() {
                                 setSearch(e.target.value);
                                 setPage(1);
                             }}
-                            className="toolbar-search"
+                            className="toolbar-search w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/40 outline-none focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-500/30 transition"
                             aria-label="Search collections"
                         />
                     </div>
-                    <div className="toolbar-right">
-                        <div className="toolbar-filters">
-                            <label className="filter-label">
-                                Type
+                    <div className="toolbar-right flex flex-wrap items-center gap-3">
+                        <div className="toolbar-filters flex flex-wrap items-end gap-3 rounded-xl border border-white/10 bg-black/30 p-3">
+                            <label className="filter-label flex flex-col text-xs text-white/70">
+                                <span className="mb-1">Type</span>
                                 <select
-                                    className="toolbar-sort"
+                                    className="toolbar-sort rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm focus:border-fuchsia-400/50 focus:ring-2 focus:ring-fuchsia-500/30 outline-none transition"
                                     value={filterType}
                                     onChange={(e) => {
                                         setFilterType(e.target.value);
@@ -585,8 +609,8 @@ export default function HotListingsPage() {
                                 </select>
                             </label>
 
-                            <label className="filter-label">
-                                Min Items
+                            <label className="filter-label flex flex-col text-xs text-white/70">
+                                <span className="mb-1">Min Items</span>
                                 <input
                                     type="number"
                                     min="0"
@@ -597,15 +621,15 @@ export default function HotListingsPage() {
                                         setMinItems(v);
                                         setPage(1);
                                     }}
-                                    className="toolbar-number"
+                                    className="toolbar-number w-28 rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm focus:border-cyan-400/50 focus:ring-2 focus:ring-cyan-500/30 outline-none transition"
                                 />
                             </label>
 
-                            <label className="filter-label">
-                                Sort
+                            <label className="filter-label flex flex-col text-xs text-white/70">
+                                <span className="mb-1">Sort</span>
                                 <select
                                     id="sortSel"
-                                    className="toolbar-sort"
+                                    className="toolbar-sort rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm focus:border-pink-400/50 focus:ring-2 focus:ring-pink-500/30 outline-none transition"
                                     value={sort}
                                     onChange={(e) => {
                                         setSort(e.target.value);
@@ -622,25 +646,39 @@ export default function HotListingsPage() {
                             </label>
                         </div>
 
-                        <button className="hp-btn" onClick={() => navigate('/marketplace')} type="button">
+                        <button
+                            className="hp-btn rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white hover:bg-white/10 hover:border-cyan-400/40 transition"
+                            onClick={() => navigate('/marketplace')}
+                            type="button"
+                        >
                             Explore Marketplace
                         </button>
-                        <button className="hp-btn hp-btn--primary" onClick={() => navigate('/sell')} type="button">
+                        <button
+                            className="hp-btn hp-btn--primary rounded-lg bg-gradient-to-r from-cyan-500 to-fuchsia-500 px-4 py-2 text-sm font-semibold text-white shadow hover:shadow-lg hover:opacity-95 transition"
+                            onClick={() => navigate('/sell')}
+                            type="button"
+                        >
                             List Your NFT
                         </button>
                     </div>
                 </div>
             </div>
 
-            <div className="collections-container">
+            <div className="collections-container mx-auto max-w-7xl px-4 pb-10">
                 {pageLoading || collectionsLoading ? (
                     <LoadingSkeleton type="card" count={6} className="grid" />
                 ) : visibleOrder.length ? (
                     <>
-                        {visibleOrder.map(renderCollection)}
+                        <div className="grid grid-cols-1 gap-6">
+                            {visibleOrder.map(renderCollection)}
+                        </div>
                         {page < totalPages && (
-                            <div className="load-more">
-                                <button className="hp-btn hp-btn--primary" onClick={() => setPage((p) => p + 1)} type="button">
+                            <div className="load-more mt-8 flex justify-center">
+                                <button
+                                    className="hp-btn hp-btn--primary rounded-lg bg-gradient-to-r from-cyan-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white shadow hover:shadow-lg hover:opacity-95 transition"
+                                    onClick={() => setPage((p) => p + 1)}
+                                    type="button"
+                                >
                                     Load more collections
                                 </button>
                             </div>
