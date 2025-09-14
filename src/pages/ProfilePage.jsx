@@ -2457,7 +2457,6 @@ function ProfilePage() {
 
             let successCount = 0;
             let failCount = 0;
-            let unsupportedCount = 0;
 
             // Group by contract for batch operations where possible
             const nftsByContract = {};
@@ -2473,7 +2472,19 @@ function ProfilePage() {
                 const burnSupported = await checkBurnSupport(contractAddress, firstNft.type);
                 
                 if (!burnSupported) {
-                    unsupportedCount += nfts.length;
+                    // Fallback to dead address transfer for contracts that don't support burn
+                    debugWarn(`Burn not supported for ${contractAddress}, using dead address fallback for ${nfts.length} NFTs`);
+                    setStatus(`⚠️ Burn not supported for ${contractAddress.slice(0, 6)}..., transferring to dead address...`);
+                    
+                    const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
+                    for (const nft of nfts) {
+                        const transferSuccess = await transferNft(nft, DEAD_ADDRESS);
+                        if (transferSuccess) {
+                            successCount++;
+                        } else {
+                            failCount++;
+                        }
+                    }
                     continue;
                 }
                 
@@ -2492,7 +2503,7 @@ function ProfilePage() {
                     } catch (batchError) {
                         debugWarn('Batch burn failed, falling back to individual burns:', batchError);
                         
-                        // Fallback to individual burns
+                        // Fallback to individual burns (which include dead address fallback)
                         for (const nft of nfts) {
                             const success = await burnNft(nft);
                             if (success) successCount++;
@@ -2500,7 +2511,7 @@ function ProfilePage() {
                         }
                     }
                 } else {
-                    // Individual burns for ERC721 or single ERC1155
+                    // Individual burns for ERC721 or single ERC1155 (includes dead address fallback)
                     for (const nft of nfts) {
                         const success = await burnNft(nft);
                         if (success) successCount++;
@@ -2511,7 +2522,6 @@ function ProfilePage() {
 
             let statusMsg = `🔥 Bulk burn completed: ${successCount} burned`;
             if (failCount > 0) statusMsg += `, ${failCount} failed`;
-            if (unsupportedCount > 0) statusMsg += `, ${unsupportedCount} not supported`;
             
             setStatus(statusMsg);
             clearAllSelections();
