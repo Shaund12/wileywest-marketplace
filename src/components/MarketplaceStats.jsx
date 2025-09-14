@@ -327,14 +327,14 @@ function MarketplaceStats() {
             {showNoDataNotice && (
                 <div className="data-status-notice">
                     <p>📊 No transaction data found yet. Scan the full chain to backfill marketplace history.</p>
-                    // replace the onClick handler in the 'Scan All Blockchain History' button
+                    {/* Full-chain scan writes to Supabase, then stats recalc */}
                     <button
                         className="refresh-data-button"
                         onClick={() => {
                             if (!refreshBlockchainData) return;
                             setIsRefreshing(true);
                             refreshBlockchainData({ fullScan: true })
-                                .catch(() => { })
+                                .catch(() => {})
                                 .finally(() => setIsRefreshing(false));
                         }}
                         disabled={isRefreshing}

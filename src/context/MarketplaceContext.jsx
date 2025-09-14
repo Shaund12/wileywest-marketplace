@@ -948,395 +948,222 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
     // Enhanced comprehensive marketplace statistics with detailed analytics
     // Memoized to prevent unnecessary recalculations
     const calculateMarketplaceStats = useCallback(async () => {
-        if (!provider) return;
+  try {
+    // Decide whether we can use USDC-converted metrics (requires live provider.getNetwork())
+    let canUseUSDC = false;
+    if (provider) {
+      try { await provider.getNetwork(); canUseUSDC = true; } catch { canUseUSDC = false; }
+    }
 
+    // Common pre-calculation
+    const now = Date.now();
+    const hour = 60 * 60 * 1000;
+    const day = 24 * hour;
+    const week = 7 * day;
+    const month = 30 * day;
+
+    // Active listings and counts
+    const activeListings = (listings || []).filter(l => l.active && !canceledListings.has(l.id?.toString?.()));
+    const totalListings = activeListings.length;
+
+    if (!canUseUSDC) {
+      // Fallback: native token stats (works without wallet/provider)
+      let totalNativeVolume = 0;
+      let volume1h = 0, volume6h = 0, volume12h = 0, volume24h = 0, volume7d = 0, volume30d = 0;
+      let sales1h = 0, sales6h = 0, sales12h = 0, sales24h = 0, sales7d = 0, sales30d = 0;
+      let priceSum = 0, priceCount = 0, highestPrice = 0, lowestPrice = Infinity;
+      const priceHistory = [];
+      const uniqueBuyers = new Set();
+      const hourlyVolume = new Array(24).fill(0);
+      const dailyVolume = new Array(30).fill(0);
+
+      for (const sale of salesHistory || []) {
         try {
-            // Debug current state before calculation
-            debugLog("Calculating marketplace stats with data:", {
-                salesHistoryLength: salesHistory.length,
-                listingsLength: listings.length,
-                canceledListingsSize: canceledListings.size,
-                hasProvider: !!provider
-            });
-            
-            // Test network connectivity
-            try {
-                await provider.getNetwork();
-            } catch (networkError) {
-                debugWarn("Network issue - calculating stats with fallback values");
-                debugLog("Using fallback calculation for", salesHistory.length, "sales");
-                
-                // Enhanced fallback calculations with more timeframes and analytics
-                const now = Date.now();
-                const hour = 60 * 60 * 1000;
-                const day = 24 * hour;
-                const week = 7 * day;
-                const month = 30 * day;
-                
-                let totalNativeVolume = 0;
-                // Enhanced timeframes
-                let volume1h = 0, volume6h = 0, volume12h = 0;
-                let volume24h = 0, volume7d = 0, volume30d = 0;
-                let sales1h = 0, sales6h = 0, sales12h = 0;
-                let sales24h = 0, sales7d = 0, sales30d = 0;
-                
-                // Price tracking for trends
-                let priceSum = 0, priceCount = 0;
-                let highestPrice = 0, lowestPrice = Infinity;
-                const priceHistory = [];
-                
-                // Buyer and activity tracking
-                const uniqueBuyers = new Set();
-                const hourlyVolume = new Array(24).fill(0);
-                const dailyVolume = new Array(30).fill(0);
-                
-                for (const sale of salesHistory) {
-                    try {
-                        const nativeValue = parseFloat(ethers.formatEther(sale.totalPrice));
-                        totalNativeVolume += nativeValue;
-                        priceSum += nativeValue;
-                        priceCount++;
-                        
-                        // Track price extremes
-                        if (nativeValue > highestPrice) highestPrice = nativeValue;
-                        if (nativeValue < lowestPrice) lowestPrice = nativeValue;
-                        
-                        // Add to price history for trend analysis
-                        priceHistory.push({
-                            price: nativeValue,
-                            timestamp: sale.timestamp
-                        });
-                        
-                        // Track unique buyers
-                        uniqueBuyers.add(sale.buyer);
-                        
-                        // Enhanced time-based calculations
-                        const saleAge = now - sale.timestamp;
-                        const saleHour = Math.floor(saleAge / hour);
-                        const saleDay = Math.floor(saleAge / day);
-                        
-                        // Hourly distribution for last 24 hours
-                        if (saleHour < 24) {
-                            hourlyVolume[saleHour] += nativeValue;
-                        }
-                        
-                        // Daily distribution for last 30 days
-                        if (saleDay < 30) {
-                            dailyVolume[saleDay] += nativeValue;
-                        }
-                        
-                        // Multiple timeframe tracking
-                        if (saleAge <= hour) {
-                            volume1h += nativeValue;
-                            sales1h++;
-                        }
-                        if (saleAge <= 6 * hour) {
-                            volume6h += nativeValue;
-                            sales6h++;
-                        }
-                        if (saleAge <= 12 * hour) {
-                            volume12h += nativeValue;
-                            sales12h++;
-                        }
-                        if (saleAge <= day) {
-                            volume24h += nativeValue;
-                            sales24h++;
-                        }
-                        if (saleAge <= week) {
-                            volume7d += nativeValue;
-                            sales7d++;
-                        }
-                        if (saleAge <= month) {
-                            volume30d += nativeValue;
-                            sales30d++;
-                        }
-                    } catch (error) {
-                        debugWarn("Error parsing sale price:", error);
-                    }
-                }
-                
-                // Calculate listing volume in native tokens first
-                let currentListingVolumeNative = 0;
-                const activeListings = listings.filter(listing => 
-                    listing.active && !canceledListings.has(listing.id.toString())
-                );
-                
-                for (const listing of activeListings) {
-                    try {
-                        const nativeValue = parseFloat(ethers.formatEther(listing.pricePerUnit));
-                        currentListingVolumeNative += nativeValue;
-                    } catch (error) {
-                        debugWarn("Error parsing listing price:", error);
-                    }
-                }
+          const v = parseFloat(ethers.formatEther(sale.totalPrice));
+          totalNativeVolume += v;
+          priceSum += v; priceCount++;
+          if (v > highestPrice) highestPrice = v;
+          if (v < lowestPrice) lowestPrice = v;
+          priceHistory.push({ price: v, timestamp: sale.timestamp });
+          uniqueBuyers.add(sale.buyer);
 
-                // Advanced analytics calculations
-                const avgPrice = priceCount > 0 ? priceSum / priceCount : 0;
-                const marketCap = totalNativeVolume;
-                const liquidityRatio = currentListingVolumeNative / (totalNativeVolume || 1);
-                // Market velocity calculations
-                const marketVelocity24h = volume7d > 0 ? (volume24h / (volume7d / 7)) : 0;
-                const marketVelocity7d = volume30d > 0 ? (volume7d / (volume30d / 30)) : 0;
-                
-                // Growth rate calculations (comparing recent vs historical)
-                const growthRate24h = volume7d > volume24h ? ((volume24h - (volume7d - volume24h) / 6) / ((volume7d - volume24h) / 6 || 1)) * 100 : 0;
-                const growthRate7d = volume30d > volume7d ? ((volume7d - (volume30d - volume7d) / 3) / ((volume30d - volume7d) / 3 || 1)) * 100 : 0;
-                
-                // Market health score (0-100)
-                const volumeScore = Math.min((volume24h / Math.max(volume7d / 7, 0.01)) * 25, 25);
-                const activityScore = Math.min((sales24h / Math.max(sales7d / 7, 0.01)) * 25, 25);
-                const liquidityScore = Math.min(liquidityRatio * 25, 25);
-                const diversityScore = Math.min(uniqueBuyers.size * 5, 25);
-                const marketHealthScore = volumeScore + activityScore + liquidityScore + diversityScore;
-                
-                const transactionHistory = salesHistory.map(sale => ({
-                    ...sale,
-                    formattedTimestamp: new Date(sale.timestamp).toLocaleString()
-                })).sort((a, b) => b.timestamp - a.timestamp).slice(0, 50);
+          const age = now - sale.timestamp;
+          const h = Math.floor(age / hour);
+          const d = Math.floor(age / day);
+          if (h < 24) hourlyVolume[h] += v;
+          if (d < 30) dailyVolume[d] += v;
+          if (age <= hour) { volume1h += v; sales1h++; }
+          if (age <= 6 * hour) { volume6h += v; sales6h++; }
+          if (age <= 12 * hour) { volume12h += v; sales12h++; }
+          if (age <= day) { volume24h += v; sales24h++; }
+          if (age <= week) { volume7d += v; sales7d++; }
+          if (age <= month) { volume30d += v; sales30d++; }
+        } catch {}
+      }
 
-                debugLog("Fallback stats calculation complete:", {
-                    totalSales: salesHistory.length,
-                    totalNativeVolume,
-                    transactionHistoryLength: transactionHistory.length,
-                    volume24h,
-                    sales24h
-                });
+      // Listing volume (native)
+      let currentListingVolumeNative = 0;
+      for (const l of activeListings) {
+        try { currentListingVolumeNative += parseFloat(ethers.formatEther(l.pricePerUnit)); } catch {}
+      }
 
-                setMarketplaceStats({
-                    totalSales: salesHistory.length,
-                    actualSoldVolume: totalNativeVolume,
-                    currentListingVolume: currentListingVolumeNative,
-                    // Enhanced time-based metrics
-                    volume1h, volume6h, volume12h,
-                    volume24h, volume7d, volume30d,
-                    volumeAllTime: totalNativeVolume,
-                    sales1h, sales6h, sales12h,
-                    sales24h, sales7d, sales30d,
-                    // Advanced analytics
-                    avgPrice, highestPrice, lowestPrice: lowestPrice === Infinity ? 0 : lowestPrice,
-                    marketCap, liquidityRatio, marketVelocity24h, marketVelocity7d,
-                    growthRate24h, growthRate7d, marketHealthScore,
-                    uniqueBuyers: uniqueBuyers.size,
-                    hourlyVolume, dailyVolume, priceHistory,
-                    transactionHistory,
-                    topTokens: [{ token: ethers.ZeroAddress, volume: totalNativeVolume, sales: salesHistory.length }],
-                    mostActiveSellers: []
-                });
-                return;
-            }
-            
-            // Enhanced USDC calculation with comprehensive analytics
-            const now = Date.now();
-            const hour = 60 * 60 * 1000;
-            const day = 24 * hour;
-            const week = 7 * day;
-            const month = 30 * day;
-            
-            let actualSoldVolumeUSDC = 0;
-            // Enhanced timeframes
-            let volume1hUSDC = 0, volume6hUSDC = 0, volume12hUSDC = 0;
-            let volume24hUSDC = 0, volume7dUSDC = 0, volume30dUSDC = 0;
-            let sales1h = 0, sales6h = 0, sales12h = 0;
-            let sales24h = 0, sales7d = 0, sales30h = 0;
-            
-            // Advanced analytics tracking
-            let priceSum = 0, priceCount = 0;
-            let highestPrice = 0, lowestPrice = Infinity;
-            const priceHistory = [];
-            const uniqueBuyers = new Set();
-            const hourlyVolume = new Array(24).fill(0);
-            const dailyVolume = new Array(30).fill(0);
-            
-            const topTokensMap = {};
-            const sellerStatsMap = {};
-            
-            for (const sale of salesHistory) {
-                try {
-                    const usdcValue = await convertToUSDCValue(sale.totalPrice, sale.paymentToken, provider);
-                    actualSoldVolumeUSDC += usdcValue;
-                    priceSum += usdcValue;
-                    priceCount++;
-                    
-                    // Track price extremes
-                    if (usdcValue > highestPrice) highestPrice = usdcValue;
-                    if (usdcValue < lowestPrice) lowestPrice = usdcValue;
-                    
-                    // Add to price history for trend analysis
-                    priceHistory.push({
-                        price: usdcValue,
-                        timestamp: sale.timestamp
-                    });
-                    
-                    // Track unique buyers
-                    uniqueBuyers.add(sale.buyer);
-                    
-                    // Enhanced time-based volume calculations
-                    const saleAge = now - sale.timestamp;
-                    const saleHour = Math.floor(saleAge / hour);
-                    const saleDay = Math.floor(saleAge / day);
-                    
-                    // Hourly distribution for last 24 hours
-                    if (saleHour < 24) {
-                        hourlyVolume[saleHour] += usdcValue;
-                    }
-                    
-                    // Daily distribution for last 30 days
-                    if (saleDay < 30) {
-                        dailyVolume[saleDay] += usdcValue;
-                    }
-                    
-                    // Multiple timeframe tracking
-                    if (saleAge <= hour) {
-                        volume1hUSDC += usdcValue;
-                        sales1h++;
-                    }
-                    if (saleAge <= 6 * hour) {
-                        volume6hUSDC += usdcValue;
-                        sales6h++;
-                    }
-                    if (saleAge <= 12 * hour) {
-                        volume12hUSDC += usdcValue;
-                        sales12h++;
-                    }
-                    if (saleAge <= day) {
-                        volume24hUSDC += usdcValue;
-                        sales24h++;
-                    }
-                    if (saleAge <= week) {
-                        volume7dUSDC += usdcValue;
-                        sales7d++;
-                    }
-                    if (saleAge <= month) {
-                        volume30dUSDC += usdcValue;
-                        sales30d++;
-                    }
-                    
-                    // Track top tokens
-                    const tokenKey = sale.paymentToken || 'VTRU';
-                    if (!topTokensMap[tokenKey]) {
-                        topTokensMap[tokenKey] = { volume: 0, sales: 0, token: tokenKey };
-                    }
-                    topTokensMap[tokenKey].volume += usdcValue;
-                    topTokensMap[tokenKey].sales += 1;
-                } catch (error) {
-                    debugWarn("Error calculating sale value:", error);
-                }
-            }
+      const avgPrice = priceCount ? priceSum / priceCount : 0;
+      const marketCap = totalNativeVolume;
+      const liquidityRatio = currentListingVolumeNative / (totalNativeVolume || 1);
+      const marketVelocity24h = volume7d > 0 ? (volume24h / (volume7d / 7)) : 0;
+      const marketVelocity7d = volume30d > 0 ? (volume7d / (volume30d / 30)) : 0;
+      const growthRate24h = volume7d > volume24h ? ((volume24h - (volume7d - volume24h) / 6) / ((volume7d - volume24h) / 6 || 1)) * 100 : 0;
+      const growthRate7d = volume30d > volume7d ? ((volume7d - (volume30d - volume7d) / 3) / ((volume30d - volume7d) / 3 || 1)) * 100 : 0;
+      const volumeScore = Math.min((volume24h / Math.max(volume7d / 7, 0.01)) * 25, 25);
+      const activityScore = Math.min((sales24h / Math.max(sales7d / 7, 0.01)) * 25, 25);
+      const liquidityScore = Math.min(liquidityRatio * 25, 25);
+      const diversityScore = Math.min(uniqueBuyers.size * 5, 25);
+      const marketHealthScore = volumeScore + activityScore + liquidityScore + diversityScore;
 
-            // Calculate current listing volume (excluding canceled listings)
-            let currentListingVolumeUSDC = 0;
-            const activeListings = listings.filter(listing => 
-                listing.active && !canceledListings.has(listing.id.toString())
-            );
-            
-            for (const listing of activeListings) {
-                try {
-                    const usdcValue = await convertToUSDCValue(listing.pricePerUnit, listing.paymentToken, provider);
-                    currentListingVolumeUSDC += usdcValue;
-                    
-                    // Track seller stats
-                    if (!sellerStatsMap[listing.seller]) {
-                        sellerStatsMap[listing.seller] = { address: listing.seller, listingsCount: 0, totalVolume: 0 };
-                    }
-                    sellerStatsMap[listing.seller].listingsCount += 1;
-                    sellerStatsMap[listing.seller].totalVolume += usdcValue;
-                } catch (error) {
-                    debugWarn("Error calculating listing value:", error);
-                }
-            }
+      const transactionHistory = (salesHistory || [])
+        .map(s => ({ ...s, formattedTimestamp: new Date(s.timestamp).toLocaleString() }))
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 50);
 
-            // Process transaction history
-            const transactionHistory = salesHistory.map(sale => ({
-                ...sale,
-                formattedTimestamp: new Date(sale.timestamp).toLocaleString()
-            })).sort((a, b) => b.timestamp - a.timestamp).slice(0, 50); // Last 50 transactions
+      setMarketplaceStats({
+        // flags
+        hasUSDCRates: false,
+        totalListings,
+        // counts and volumes
+        totalSales: (salesHistory || []).length,
+        actualSoldVolume: totalNativeVolume,
+        currentListingVolume: currentListingVolumeNative,
+        volume1h, volume6h, volume12h, volume24h, volume7d, volume30d, volumeAllTime: totalNativeVolume,
+        sales1h, sales6h, sales12h, sales24h, sales7d, sales30d,
+        // analytics
+        avgPrice,
+        highestPrice,
+        lowestPrice: lowestPrice === Infinity ? 0 : lowestPrice,
+        marketCap,
+        liquidityRatio,
+        marketVelocity24h,
+        marketVelocity7d,
+        growthRate24h,
+        growthRate7d,
+        marketHealthScore,
+        turnoverRate: volume30d / Math.max(totalNativeVolume, 1) * 100,
+        uniqueBuyers: uniqueBuyers.size,
+        hourlyVolume,
+        dailyVolume,
+        priceHistory,
+        transactionHistory,
+        topTokens: [{ token: ethers.ZeroAddress, volume: totalNativeVolume, sales: (salesHistory || []).length }],
+        mostActiveSellers: []
+      });
+      return;
+    }
 
-            debugLog("USDC stats calculation complete:", {
-                totalSales: salesHistory.length,
-                actualSoldVolumeUSDC,
-                currentListingVolumeUSDC,
-                transactionHistoryLength: transactionHistory.length,
-                volume24hUSDC,
-                sales24h
-            });
+    // USDC metrics (provider online)
+    let actualSoldVolumeUSDC = 0;
+    let volume1hUSDC = 0, volume6hUSDC = 0, volume12hUSDC = 0, volume24hUSDC = 0, volume7dUSDC = 0, volume30dUSDC = 0;
+    let sales1h = 0, sales6h = 0, sales12h = 0, sales24h = 0, sales7d = 0, sales30d = 0;
+    let priceSum = 0, priceCount = 0, highestPrice = 0, lowestPrice = Infinity;
+    const priceHistory = [];
+    const uniqueBuyers = new Set();
+    const hourlyVolume = new Array(24).fill(0);
+    const dailyVolume = new Array(30).fill(0);
+    const topTokensMap = {};
+    const sellerStatsMap = {};
 
-            // Get top tokens sorted by volume
-            const topTokens = Object.values(topTokensMap)
-                .sort((a, b) => b.volume - a.volume)
-                .slice(0, 10);
+    for (const sale of salesHistory || []) {
+      try {
+        const usdc = await convertToUSDCValue(sale.totalPrice, sale.paymentToken, provider);
+        actualSoldVolumeUSDC += usdc;
+        priceSum += usdc; priceCount++;
+        if (usdc > highestPrice) highestPrice = usdc;
+        if (usdc < lowestPrice) lowestPrice = usdc;
+        priceHistory.push({ price: usdc, timestamp: sale.timestamp });
+        uniqueBuyers.add(sale.buyer);
 
-            // Get most active sellers
-            const mostActiveSellers = Object.values(sellerStatsMap)
-                .sort((a, b) => b.listingsCount - a.listingsCount)
-                .slice(0, 10);
+        const age = now - sale.timestamp;
+        const h = Math.floor(age / hour);
+        const d = Math.floor(age / day);
+        if (h < 24) hourlyVolume[h] += usdc;
+        if (d < 30) dailyVolume[d] += usdc;
 
-            // Advanced analytics calculations
-            const avgPrice = priceCount > 0 ? priceSum / priceCount : 0;
-            const marketCap = actualSoldVolumeUSDC;
-            const liquidityRatio = currentListingVolumeUSDC / (actualSoldVolumeUSDC || 1);
-            
-            // Market velocity calculations (how much faster current activity is vs average)
-            const marketVelocity24h = volume7dUSDC > 0 ? (volume24hUSDC / (volume7dUSDC / 7)) : 0;
-            const marketVelocity7d = volume30dUSDC > 0 ? (volume7dUSDC / (volume30dUSDC / 30)) : 0;
-            
-            // Growth rate calculations
-            const growthRate24h = volume7dUSDC > volume24hUSDC ? ((volume24hUSDC - (volume7dUSDC - volume24hUSDC) / 6) / ((volume7dUSDC - volume24hUSDC) / 6 || 1)) * 100 : 0;
-            const growthRate7d = volume30dUSDC > volume7dUSDC ? ((volume7dUSDC - (volume30dUSDC - volume7dUSDC) / 3) / ((volume30dUSDC - volume7dUSDC) / 3 || 1)) * 100 : 0;
-            
-            // Market health score (0-100 composite score)
-            const volumeScore = Math.min((volume24hUSDC / Math.max(volume7dUSDC / 7, 0.01)) * 25, 25);
-            const activityScore = Math.min((sales24h / Math.max(sales7d / 7, 0.01)) * 25, 25);
-            const liquidityScore = Math.min(liquidityRatio * 25, 25);
-            const diversityScore = Math.min(uniqueBuyers.size * 5, 25);
-            const marketHealthScore = volumeScore + activityScore + liquidityScore + diversityScore;
-            
-            // Turnover rate (how quickly inventory moves)
-            const turnoverRate = actualSoldVolumeUSDC > 0 ? (volume30dUSDC / actualSoldVolumeUSDC) * 100 : 0;
+        if (age <= hour) { volume1hUSDC += usdc; sales1h++; }
+        if (age <= 6 * hour) { volume6hUSDC += usdc; sales6h++; }
+        if (age <= 12 * hour) { volume12hUSDC += usdc; sales12h++; }
+        if (age <= day) { volume24hUSDC += usdc; sales24h++; }
+        if (age <= week) { volume7dUSDC += usdc; sales7d++; }
+        if (age <= month) { volume30dUSDC += usdc; sales30d++; }
 
-            setMarketplaceStats({
-                totalSales: salesHistory.length,
-                actualSoldVolume: actualSoldVolumeUSDC,
-                currentListingVolume: currentListingVolumeUSDC,
-                // Enhanced time-based volume metrics
-                volume1h: volume1hUSDC,
-                volume6h: volume6hUSDC,
-                volume12h: volume12hUSDC,
-                volume24h: volume24hUSDC,
-                volume7d: volume7dUSDC,
-                volume30d: volume30dUSDC,
-                volumeAllTime: actualSoldVolumeUSDC,
-                // Enhanced sales count metrics
-                sales1h,
-                sales6h,
-                sales12h,
-                sales24h,
-                sales7d,
-                sales30d,
-                // Advanced analytics
-                avgPrice,
-                highestPrice,
-                lowestPrice: lowestPrice === Infinity ? 0 : lowestPrice,
-                marketCap,
-                liquidityRatio,
-                marketVelocity24h,
-                marketVelocity7d,
-                growthRate24h,
-                growthRate7d,
-                marketHealthScore,
-                turnoverRate,
-                uniqueBuyers: uniqueBuyers.size,
-                hourlyVolume,
-                dailyVolume,
-                priceHistory,
-                transactionHistory,
-                topTokens,
-                mostActiveSellers
-            });
+        const tokenKey = sale.paymentToken || 'VTRU';
+        if (!topTokensMap[tokenKey]) topTokensMap[tokenKey] = { volume: 0, sales: 0, token: tokenKey };
+        topTokensMap[tokenKey].volume += usdc;
+        topTokensMap[tokenKey].sales += 1;
+      } catch {}
+    }
 
-        } catch (error) {
-            criticalError("Error calculating marketplace stats:", error);
-        }
-    }, [salesHistory, listings, canceledListings, provider]); // Dependencies for useCallback
+    // Listing volume in USDC
+    let currentListingVolumeUSDC = 0;
+    for (const l of activeListings) {
+      try {
+        const usdc = await convertToUSDCValue(l.pricePerUnit, l.paymentToken, provider);
+        currentListingVolumeUSDC += usdc;
+        if (!sellerStatsMap[l.seller]) sellerStatsMap[l.seller] = { address: l.seller, listingsCount: 0, totalVolume: 0 };
+        sellerStatsMap[l.seller].listingsCount += 1;
+        sellerStatsMap[l.seller].totalVolume += usdc;
+      } catch {}
+    }
+
+    const transactionHistory = (salesHistory || [])
+      .map(s => ({ ...s, formattedTimestamp: new Date(s.timestamp).toLocaleString() }))
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 50);
+
+    const topTokens = Object.values(topTokensMap).sort((a, b) => b.volume - a.volume).slice(0, 10);
+    const mostActiveSellers = Object.values(sellerStatsMap).sort((a, b) => b.listingsCount - a.listingsCount).slice(0, 10);
+    const avgPrice = priceCount ? priceSum / priceCount : 0;
+    const marketCap = actualSoldVolumeUSDC;
+    const liquidityRatio = currentListingVolumeUSDC / (actualSoldVolumeUSDC || 1);
+    const marketVelocity24h = volume7dUSDC > 0 ? (volume24hUSDC / (volume7dUSDC / 7)) : 0;
+    const marketVelocity7d = volume30dUSDC > 0 ? (volume7dUSDC / (volume30dUSDC / 30)) : 0;
+    const growthRate24h = volume7dUSDC > volume24hUSDC ? ((volume24hUSDC - (volume7dUSDC - volume24hUSDC) / 6) / ((volume7dUSDC - volume24hUSDC) / 6 || 1)) * 100 : 0;
+    const growthRate7d = volume30dUSDC > volume7dUSDC ? ((volume7dUSDC - (volume30dUSDC - volume7dUSDC) / 3) / ((volume30dUSDC - volume7dUSDC) / 3 || 1)) * 100 : 0;
+    const marketHealthScore = Math.min((volume24hUSDC / Math.max(volume7dUSDC / 7, 0.01)) * 25, 25)
+                            + Math.min((sales24h / Math.max(sales7d / 7, 0.01)) * 25, 25)
+                            + Math.min(liquidityRatio * 25, 25)
+                            + Math.min(uniqueBuyers.size * 5, 25);
+
+    setMarketplaceStats({
+      hasUSDCRates: true,
+      totalListings,
+      totalSales: (salesHistory || []).length,
+      actualSoldVolume: actualSoldVolumeUSDC,
+      currentListingVolume: currentListingVolumeUSDC,
+      volume1h: volume1hUSDC, volume6h: volume6hUSDC, volume12h: volume12hUSDC,
+      volume24h: volume24hUSDC, volume7d: volume7dUSDC, volume30d: volume30dUSDC,
+      volumeAllTime: actualSoldVolumeUSDC,
+      sales1h, sales6h, sales12h, sales24h, sales7d, sales30d,
+      avgPrice,
+      highestPrice,
+      lowestPrice: lowestPrice === Infinity ? 0 : lowestPrice,
+      marketCap,
+      liquidityRatio,
+      marketVelocity24h,
+      marketVelocity7d,
+      growthRate24h,
+      growthRate7d,
+      marketHealthScore,
+      turnoverRate: volume30dUSDC / Math.max(actualSoldVolumeUSDC, 1) * 100,
+      uniqueBuyers: uniqueBuyers.size,
+      hourlyVolume,
+      dailyVolume,
+      priceHistory,
+      transactionHistory,
+      topTokens,
+      mostActiveSellers
+    });
+  } catch (error) {
+    criticalError('Error calculating marketplace stats:', error);
+  }
+}, [salesHistory, listings, canceledListings, provider]); // Dependencies for useCallback
 
     // Recalculate stats when data changes - audit dependencies to ensure all inputs are covered
     useEffect(() => {
