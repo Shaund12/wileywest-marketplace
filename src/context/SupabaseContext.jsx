@@ -471,9 +471,9 @@ export function SupabaseProvider({ children }) {
         async (address, profileData) => {
             if (!supabase || !address) return;
             try {
-                debugLog(`💾 Intelligently caching profile data for ${address}...`);
+                debugLog(`💾 PRODUCTION: Caching profile data for ${address}...`);
                 
-                // FIXED: Get existing profile first to merge data intelligently
+                // PRODUCTION FIX: Get existing profile first to merge data intelligently
                 let existingProfile = null;
                 try {
                     const { data } = await supabase
@@ -482,42 +482,44 @@ export function SupabaseProvider({ children }) {
                         .eq('wallet_address', String(address).toLowerCase())
                         .maybeSingle();
                     existingProfile = data;
+                    debugLog(`🔍 PRODUCTION: ${existingProfile ? 'Found existing profile' : 'No existing profile'} for ${address}`);
                 } catch (error) {
                     debugWarn('Error fetching existing profile for merge:', error);
                 }
                 
-                // Merge new data with existing data intelligently
-                const mergedProfile = {
+                // CRITICAL FIX: Only include fields that exist in the database schema
+                const profileToSave = {
                     wallet_address: String(address).toLowerCase(),
                     nfts: profileData.nfts || existingProfile?.nfts || [],
                     listings: profileData.listings || existingProfile?.listings || [],
                     balance: profileData.balance || existingProfile?.balance || '0',
-                    // Preserve additional fields from existing profile
-                    ...(existingProfile || {}),
-                    // Override with new data
-                    ...profileData,
                     updated_at: new Date().toISOString()
                 };
 
-                // Only update if we actually have meaningful data to save
-                if (mergedProfile.nfts.length > 0 || mergedProfile.listings.length > 0 || mergedProfile.balance !== '0') {
-                    const { error } = await supabase
-                        .from('user_profiles')
-                        .upsert(mergedProfile, { onConflict: 'wallet_address', ignoreDuplicates: false });
+                // PRODUCTION FIX: Always create/update profile, even with 0 NFTs (essential for production)
+                debugLog(`💾 PRODUCTION: Upserting profile with ${profileToSave.nfts.length} NFTs for ${address}...`);
+                const { data, error } = await supabase
+                    .from('user_profiles')
+                    .upsert(profileToSave, { onConflict: 'wallet_address', ignoreDuplicates: false })
+                    .select();
 
-                    if (error) {
-                        debugWarn('Profile cache error:', error);
-                        updateCacheStats('errors');
-                    } else {
-                        debugLog(`✅ Intelligently cached profile for ${address} (${mergedProfile.nfts.length} NFTs, ${mergedProfile.listings.length} listings)`);
-                        const key = getCacheKey('profile', String(address).toLowerCase());
-                        setCache(key, mergedProfile, 'profile');
-                    }
+                if (error) {
+                    criticalError('❌ PRODUCTION: Profile cache error:', error);
+                    debugWarn('🔍 PRODUCTION: Error details:', {
+                        message: error.message,
+                        details: error.details,
+                        hint: error.hint,
+                        code: error.code
+                    });
+                    updateCacheStats('errors');
                 } else {
-                    debugLog(`⚠️ Skipping profile cache for ${address} - no meaningful data to save`);
+                    debugLog(`✅ PRODUCTION: Profile ${existingProfile ? 'updated' : 'created'} for ${address} (${profileToSave.nfts.length} NFTs, ${profileToSave.listings.length} listings)`);
+                    debugLog(`🎯 PRODUCTION: Database operation successful - profile now exists in Supabase`);
+                    const key = getCacheKey('profile', String(address).toLowerCase());
+                    setCache(key, profileToSave, 'profile');
                 }
             } catch (error) {
-                debugWarn('Error caching profile:', error);
+                criticalError('❌ PRODUCTION: Error caching profile:', error);
                 updateCacheStats('errors');
             }
         },

@@ -1575,24 +1575,49 @@ function MarketplacePage() {
 
             {/* Live Auctions */}
             {auctionsEnabled && (
-                <section className="live-auctions">
-                    <div className="section-header">
-                        <h2>Live Auctions</h2>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <button
-                                className="refresh-button"
+                <motion.section 
+                    className="container mx-auto px-4 py-16 max-w-7xl"
+                    initial={{ opacity: 0, y: 30 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.6, delay: 0.2 }}
+                    viewport={{ once: true }}
+                >
+                    <div className="flex items-center justify-between mb-8">
+                        <motion.h2 
+                            className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-neon-orange to-neon-red bg-clip-text text-transparent"
+                            whileHover={{ scale: 1.02 }}
+                        >
+                            Live Auctions
+                        </motion.h2>
+                        <div className="flex items-center gap-3">
+                            <motion.button
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-all duration-200 hover:bg-accent/50 rounded-lg border border-muted-foreground/20"
                                 onClick={() => fetchAuctions(true)}
                                 disabled={isAuctionsLoading}
                                 title="Refresh auctions"
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
                             >
-                                <RefreshIcon /> {isAuctionsLoading ? 'Loading...' : 'Refresh Auctions'}
-                            </button>
-                            <Link to="/auctions/create" className="see-all-button">Create Auction →</Link>
+                                <RefreshIcon /> {isAuctionsLoading ? 'Loading...' : 'Refresh'}
+                            </motion.button>
+                            <Link 
+                                to="/auctions/create" 
+                                className="group flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-all duration-200 hover:bg-accent/50 rounded-lg"
+                            >
+                                Create Auction 
+                                <motion.span
+                                    className="inline-block"
+                                    whileHover={{ x: 4 }}
+                                    transition={{ type: "spring", stiffness: 400 }}
+                                >
+                                    →
+                                </motion.span>
+                            </Link>
                         </div>
                     </div>
 
                     {auctions.length > 0 ? (
-                        <div className="auctions-grid">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                             {auctions.slice(0, 8).map((a) => {
                                 const endMs = a.endTime || 0;
                                 const endsIn = endMs ? timeLeft(endMs) : '—';
@@ -1604,142 +1629,212 @@ function MarketplacePage() {
                                     <Link
                                         key={a.id}
                                         to={`/auctions/${a.id}`}
-                                        className="auction-card"
+                                        className="group"
                                         aria-label={`Open auction ${title}`}
                                     >
-                                        <div className="auction-image">
-                                            <SmartImage
-                                                srcList={[
-                                                    a.image,
-                                                    a.imageUrl,
-                                                    a.image_url,
-                                                    // Add fallback sources from raw metadata if available
-                                                    ...(a.metadata?.image ? [a.metadata.image] : []),
-                                                    ...(a.metadata?.image_url ? [a.metadata.image_url] : []),
-                                                    ...(a.metadata?.imageUrl ? [a.metadata.imageUrl] : [])
-                                                ].filter(Boolean)}
-                                                alt={title}
-                                                width={320}
-                                                height={200}
-                                                seed={`${a.nftContract}-${a.tokenId}`}
-                                                title={title}
-                                                contractAddress={a.nftContract}
-                                                tokenId={a.tokenId}
-                                            />
-                                            <div className="auction-badge">AUCTION</div>
-                                        </div>
-                                        <div className="auction-details">
-                                            <h3 title={title}>{title}</h3>
-                                            <p className="auction-collection" title={collectionLabel}>{collectionLabel}</p>
-                                            <div className="auction-meta">
-                                                <div className="meta">
-                                                    <span className="label">{hasBid ? 'Highest Bid' : 'Start Price'}</span>
-                                                    <span className="value">{formatPrice(price)} VTRU</span>
-                                                </div>
-                                                <div className="meta">
-                                                    <span className="label">Ends In</span>
-                                                    <span className="value">{endsIn}</span>
+                                        <motion.div 
+                                            className="cyber-card-hover overflow-hidden"
+                                            whileHover={{ scale: 1.02, y: -4 }}
+                                            transition={{ type: "spring", stiffness: 300 }}
+                                        >
+                                            <div className="relative">
+                                                <SmartImage
+                                                    srcList={[
+                                                        a.image,
+                                                        a.imageUrl,
+                                                        a.image_url,
+                                                        // Add fallback sources from raw metadata if available
+                                                        ...(a.metadata?.image ? [a.metadata.image] : []),
+                                                        ...(a.metadata?.image_url ? [a.metadata.image_url] : []),
+                                                        ...(a.metadata?.imageUrl ? [a.metadata.imageUrl] : [])
+                                                    ].filter(Boolean)}
+                                                    alt={title}
+                                                    width={320}
+                                                    height={200}
+                                                    seed={`${a.nftContract}-${a.tokenId}`}
+                                                    title={title}
+                                                    contractAddress={a.nftContract}
+                                                    tokenId={a.tokenId}
+                                                    className="w-full h-48 object-cover"
+                                                />
+                                                <div className="absolute top-3 left-3 bg-gradient-to-r from-neon-orange to-neon-red text-black px-3 py-1 rounded-full text-xs font-bold">
+                                                    AUCTION
                                                 </div>
                                             </div>
-                                        </div>
+                                            <div className="p-4 space-y-3">
+                                                <h3 className="font-bold text-lg text-foreground group-hover:text-neon-cyan transition-colors line-clamp-1" title={title}>
+                                                    {title}
+                                                </h3>
+                                                <p className="text-sm text-muted-foreground line-clamp-1" title={collectionLabel}>
+                                                    {collectionLabel}
+                                                </p>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="text-center p-2 bg-accent/30 rounded-lg">
+                                                        <div className="text-xs text-muted-foreground">{hasBid ? 'Highest Bid' : 'Start Price'}</div>
+                                                        <div className="font-bold text-neon-green">{formatPrice(price)} VTRU</div>
+                                                    </div>
+                                                    <div className="text-center p-2 bg-accent/30 rounded-lg">
+                                                        <div className="text-xs text-muted-foreground">Ends In</div>
+                                                        <div className="font-bold text-neon-orange">{endsIn}</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </motion.div>
                                     </Link>
                                 );
                             })}
                         </div>
                     ) : (
-                        <div className="empty-state card" style={{ marginTop: 8 }}>
-                            <div className="empty-icon">🏷️</div>
-                            <h3>No live auctions</h3>
-                            <p>Auctions you create or bid on will appear here.</p>
+                        <div className="text-center py-12">
+                            <div className="text-6xl mb-4">🏷️</div>
+                            <h3 className="text-xl font-bold mb-2">No live auctions</h3>
+                            <p className="text-muted-foreground">Auctions you create or bid on will appear here.</p>
                         </div>
                     )}
-                </section>
+                </motion.section>
             )}
 
             {/* Popular Collections Carousel */}
-            <section className="hot-collections">
-                <div className="section-header">
-                    <h2>Popular Collections</h2>
-                    <Link to="/collections" className="see-all-button">See All</Link>
+            <motion.section 
+                className="container mx-auto px-4 py-16 max-w-7xl"
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+                viewport={{ once: true }}
+            >
+                <div className="flex items-center justify-between mb-8">
+                    <motion.h2 
+                        className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-neon-purple to-neon-green bg-clip-text text-transparent"
+                        whileHover={{ scale: 1.02 }}
+                    >
+                        Popular Collections
+                    </motion.h2>
+                    <Link 
+                        to="/collections" 
+                        className="group flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-all duration-200 hover:bg-accent/50 rounded-lg"
+                    >
+                        See All 
+                        <motion.span
+                            className="inline-block"
+                            whileHover={{ x: 4 }}
+                            transition={{ type: "spring", stiffness: 400 }}
+                        >
+                            →
+                        </motion.span>
+                    </Link>
                 </div>
 
-                <div className="collections-carousel">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
                     {collections.slice(0, 5).map((collection, index) => {
                         const humanName = labelForCollection(collection);
                         const addr = (collection.address || '').toLowerCase();
                         return (
                             <Link
                                 to={`/collections/${addr}`}
-                                className="collection-card enhanced"
+                                className="group"
                                 key={addr || index}
                                 aria-label={`Open collection ${humanName}`}
                             >
-                                <div className="collection-header">
-                                    <div className="collection-avatar">
-                                        <SmartImage
-                                            srcList={[
-                                                collection.image,
-                                                collection.items[0]?.image,
-                                                collection.items[0]?.imageUrl,
-                                                collection.items[0]?.metadata?.image,
-                                                collection.items[0]?.metadata?.image_url,
-                                            ]}
-                                            alt={humanName}
-                                            width={64}
-                                            height={64}
-                                            seed={collection.address}
-                                            title={humanName}
-                                        />
-                                    </div>
-                                    <div className="collection-rank">#{index + 1}</div>
-                                </div>
-                                <div className="collection-preview">
-                                    {collection.items.slice(0, 4).map((item, i) => (
-                                        <div className="preview-item" key={i}>
+                                <motion.div 
+                                    className="cyber-card-hover p-6 h-full"
+                                    whileHover={{ scale: 1.02, y: -4 }}
+                                    transition={{ type: "spring", stiffness: 300 }}
+                                >
+                                    <div className="flex items-center justify-between mb-4">
+                                        <div className="relative">
                                             <SmartImage
                                                 srcList={[
-                                                    item.image,
-                                                    item.imageUrl,
-                                                    item.metadata?.image,
-                                                    item.metadata?.image_url,
-                                                    item.metadata?.animation_url,
+                                                    collection.image,
+                                                    collection.items[0]?.image,
+                                                    collection.items[0]?.imageUrl,
+                                                    collection.items[0]?.metadata?.image,
+                                                    collection.items[0]?.metadata?.image_url,
                                                 ]}
-                                                alt={`Preview ${i}`}
-                                                width={96}
-                                                height={96}
-                                                seed={`${item.nftContract}-${item.tokenId}-${i}`}
-                                                title={item.metadata?.name || item.name}
+                                                alt={humanName}
+                                                width={64}
+                                                height={64}
+                                                seed={collection.address}
+                                                title={humanName}
+                                                className="w-16 h-16 rounded-full object-cover border-2 border-neon-cyan/30"
                                             />
                                         </div>
-                                    ))}
-                                    {collection.items.length > 4 && (
-                                        <div className="preview-item more-items"><span>+{collection.items.length - 4}</span></div>
-                                    )}
-                                </div>
-                                <div className="collection-info">
-                                    <h3 title={humanName}>{humanName}</h3>
-                                    {collection.description && (
-                                        <p className="collection-description" title={collection.description}>
-                                            {collection.description.slice(0, 60)}{collection.description.length > 60 ? '...' : ''}
-                                        </p>
-                                    )}
-                                    <div className="collection-stats">
-                                        <div className="stat"><span className="value">{collection.items.length}</span><span className="label">items</span></div>
-                                        <div className="stat"><span className="value">${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}</span><span className="label">floor</span></div>
-                                        <div className="stat"><span className="value">${collection.totalVolume.toFixed(2)}</span><span className="label">volume</span></div>
-                                        <div className="stat"><span className="value">${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}</span><span className="label">avg price</span></div>
-                                    </div>
-                                    {collection.website && (
-                                        <div className="collection-links">
-                                            <a href={collection.website} target="_blank" rel="noopener noreferrer" className="website-link" onClick={(e) => e.stopPropagation()}>🌐 Website</a>
+                                        <div className="bg-gradient-to-r from-neon-cyan to-neon-pink text-black px-3 py-1 rounded-full text-sm font-bold">
+                                            #{index + 1}
                                         </div>
-                                    )}
-                                </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 mb-4">
+                                        {collection.items.slice(0, 4).map((item, i) => (
+                                            <div className="aspect-square relative overflow-hidden rounded-lg" key={i}>
+                                                <SmartImage
+                                                    srcList={[
+                                                        item.image,
+                                                        item.imageUrl,
+                                                        item.metadata?.image,
+                                                        item.metadata?.image_url,
+                                                        item.metadata?.animation_url,
+                                                    ]}
+                                                    alt={`Preview ${i}`}
+                                                    width={96}
+                                                    height={96}
+                                                    seed={`${item.nftContract}-${item.tokenId}-${i}`}
+                                                    title={item.metadata?.name || item.name}
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            </div>
+                                        ))}
+                                        {collection.items.length > 4 && (
+                                            <div className="aspect-square bg-gradient-to-br from-neon-purple/20 to-neon-cyan/20 rounded-lg flex items-center justify-center border border-neon-purple/30">
+                                                <span className="text-sm font-bold text-neon-purple">+{collection.items.length - 4}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="space-y-3">
+                                        <h3 className="font-bold text-lg text-foreground group-hover:text-neon-cyan transition-colors" title={humanName}>
+                                            {humanName}
+                                        </h3>
+                                        {collection.description && (
+                                            <p className="text-sm text-muted-foreground line-clamp-2" title={collection.description}>
+                                                {collection.description.slice(0, 60)}{collection.description.length > 60 ? '...' : ''}
+                                            </p>
+                                        )}
+                                        <div className="grid grid-cols-2 gap-2 text-xs">
+                                            <div className="text-center p-2 bg-accent/30 rounded-lg">
+                                                <div className="font-bold text-neon-green">{collection.items.length}</div>
+                                                <div className="text-muted-foreground">items</div>
+                                            </div>
+                                            <div className="text-center p-2 bg-accent/30 rounded-lg">
+                                                <div className="font-bold text-neon-green">${collection.floorPrice > 0 ? collection.floorPrice.toFixed(2) : '0.00'}</div>
+                                                <div className="text-muted-foreground">floor</div>
+                                            </div>
+                                            <div className="text-center p-2 bg-accent/30 rounded-lg">
+                                                <div className="font-bold text-neon-green">${collection.totalVolume.toFixed(2)}</div>
+                                                <div className="text-muted-foreground">volume</div>
+                                            </div>
+                                            <div className="text-center p-2 bg-accent/30 rounded-lg">
+                                                <div className="font-bold text-neon-green">${collection.avgPrice > 0 ? collection.avgPrice.toFixed(2) : '0.00'}</div>
+                                                <div className="text-muted-foreground">avg</div>
+                                            </div>
+                                        </div>
+                                        {collection.website && (
+                                            <div className="pt-2">
+                                                <a 
+                                                    href={collection.website} 
+                                                    target="_blank" 
+                                                    rel="noopener noreferrer" 
+                                                    className="inline-flex items-center gap-1 text-xs text-neon-cyan hover:text-neon-pink transition-colors" 
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    🌐 Website
+                                                </a>
+                                            </div>
+                                        )}
+                                    </div>
+                                </motion.div>
                             </Link>
                         );
                     })}
                 </div>
-            </section>
+            </motion.section>
 
             {/* Trending Collections */}
             {collections.length > 0 && (
@@ -2183,27 +2278,72 @@ function MarketplacePage() {
             {status && <div className="status-message">{status}</div>}
 
             {/* Call-to-action Section */}
-            <section className="marketplace-cta">
-                <div className="cta-content">
-                    <h2>Ready to list your NFTs?</h2>
-                    <p>Join creators and collectors in the vibrant Vitruveo marketplace</p>
-                    <div className="cta-buttons">
+            <motion.section 
+                className="container mx-auto px-4 py-16 max-w-7xl"
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+                viewport={{ once: true }}
+            >
+                <div className="text-center py-12 px-6 bg-gradient-to-br from-neon-purple/10 to-neon-cyan/10 rounded-3xl border border-neon-purple/20">
+                    <motion.h2 
+                        className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-neon-cyan to-neon-pink bg-clip-text text-transparent mb-4"
+                        whileHover={{ scale: 1.02 }}
+                    >
+                        Ready to list your NFTs?
+                    </motion.h2>
+                    <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
+                        Join creators and collectors in the vibrant Vitruveo marketplace
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-4">
                         {wallet ? (
                             <>
-                                <a href="/sell" className="primary-button">Create a Listing</a>
-                                <a href="/auctions/create" className="primary-button">Create Auction</a>
+                                <motion.a 
+                                    href="/sell" 
+                                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-neon-cyan to-neon-blue text-black font-semibold rounded-lg hover:shadow-lg hover:shadow-neon-cyan/25 transition-all duration-200"
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
+                                >
+                                    Create a Listing
+                                </motion.a>
+                                <motion.a 
+                                    href="/auctions/create" 
+                                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-neon-orange to-neon-red text-black font-semibold rounded-lg hover:shadow-lg hover:shadow-neon-orange/25 transition-all duration-200"
+                                    whileHover={{ scale: 1.05 }}
+                                    whileTap={{ scale: 0.95 }}
+                                >
+                                    Create Auction
+                                </motion.a>
                             </>
                         ) : (
-                            <button className="primary-button" onClick={connect}>Connect Wallet</button>
+                            <motion.button 
+                                className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-neon-cyan to-neon-blue text-black font-semibold rounded-lg hover:shadow-lg hover:shadow-neon-cyan/25 transition-all duration-200" 
+                                onClick={connect}
+                                whileHover={{ scale: 1.05 }}
+                                whileTap={{ scale: 0.95 }}
+                            >
+                                Connect Wallet
+                            </motion.button>
                         )}
-                        <a href="/profile" className="secondary-button">View Your Profile</a>
-                        <a href="/vibe-dashboard" className="secondary-button">VIBE Analytics</a>
+                        <motion.a 
+                            href="/profile" 
+                            className="inline-flex items-center gap-2 px-6 py-3 border border-muted-foreground/20 text-foreground font-medium rounded-lg hover:bg-accent/50 transition-all duration-200"
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                        >
+                            View Your Profile
+                        </motion.a>
+                        <motion.a 
+                            href="/vibe-dashboard" 
+                            className="inline-flex items-center gap-2 px-6 py-3 border border-muted-foreground/20 text-foreground font-medium rounded-lg hover:bg-accent/50 transition-all duration-200"
+                            whileHover={{ scale: 1.05 }}
+                            whileTap={{ scale: 0.95 }}
+                        >
+                            VIBE Analytics
+                        </motion.a>
                     </div>
                 </div>
-                <div className="cta-image">
-                    <img src={blockdustLogo} alt="BlockDust NFT Marketplace" />
-                </div>
-            </section>
+            </motion.section>
         </div>
     );
 }

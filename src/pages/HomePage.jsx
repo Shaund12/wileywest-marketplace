@@ -1132,24 +1132,70 @@ function HomePage() {
             </motion.section>
 
             {/* FEATURED */}
-            <section className="hp-featured">
-                <div className="hp-section__head">
-                    <h2>Featured Listings</h2>
-                    <Link to="/hot-listings" className="hp-link">View all →</Link>
+            <motion.section 
+                className="container mx-auto px-4 py-16 max-w-7xl"
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+                viewport={{ once: true }}
+            >
+                <div className="flex items-center justify-between mb-8">
+                    <motion.h2 
+                        className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-neon-cyan to-neon-pink bg-clip-text text-transparent"
+                        whileHover={{ scale: 1.02 }}
+                    >
+                        Featured Listings
+                    </motion.h2>
+                    <Link 
+                        to="/hot-listings" 
+                        className="group flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-all duration-200 hover:bg-accent/50 rounded-lg"
+                    >
+                        View all 
+                        <motion.span
+                            className="inline-block"
+                            whileHover={{ x: 4 }}
+                            transition={{ type: "spring", stiffness: 400 }}
+                        >
+                            →
+                        </motion.span>
+                    </Link>
                 </div>
                 {renderFeaturedListings()}
-            </section>
+            </motion.section>
 
             {/* LIVE AUCTIONS */}
-            <section className="hp-featured">
-                <div className="hp-section__head">
-                    <h2>Live Auctions</h2>
-                    <Link to="/my-auctions" className="hp-link">View all →</Link>
+            <motion.section 
+                className="container mx-auto px-4 py-16 max-w-7xl"
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 0.2 }}
+                viewport={{ once: true }}
+            >
+                <div className="flex items-center justify-between mb-8">
+                    <motion.h2 
+                        className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-neon-pink to-neon-purple bg-clip-text text-transparent"
+                        whileHover={{ scale: 1.02 }}
+                    >
+                        Live Auctions
+                    </motion.h2>
+                    <Link 
+                        to="/my-auctions" 
+                        className="group flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-all duration-200 hover:bg-accent/50 rounded-lg"
+                    >
+                        View all 
+                        <motion.span
+                            className="inline-block"
+                            whileHover={{ x: 4 }}
+                            transition={{ type: "spring", stiffness: 400 }}
+                        >
+                            →
+                        </motion.span>
+                    </Link>
                 </div>
                 {isAuctionsLoading ? (
                     <LoadingSkeleton type="card" count={3} className="grid" />
                 ) : auctions.length > 0 ? (
-                    <div className="hp-featured-grid">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {auctions.slice(0, 3).map((auction) => {
                             const endMs = auction.endTime || 0;
                             const endsIn = endMs ? timeLeft(endMs) : '—';
@@ -1164,70 +1210,65 @@ function HomePage() {
                             ].filter(Boolean);
 
                             return (
-                                <Link
+                                <motion.div
                                     key={auction.id}
-                                    to={`/auctions/${auction.id}`}
-                                    className="auction-preview-card"
-                                    style={{
-                                        display: 'block',
-                                        padding: '1rem',
-                                        borderRadius: '12px',
-                                        background: 'var(--hp-card-bg)',
-                                        border: '1px solid var(--hp-border)',
-                                        textDecoration: 'none',
-                                        color: 'inherit',
-                                        transition: 'all 0.2s ease',
-                                        position: 'relative'
-                                    }}
+                                    whileHover={{ y: -4, scale: 1.02 }}
+                                    transition={{ type: "spring", stiffness: 300 }}
                                 >
-                                    <div style={{
-                                        position: 'absolute',
-                                        top: '8px',
-                                        right: '8px',
-                                        background: 'linear-gradient(45deg, #ff6b35, #f7931e)',
-                                        color: 'white',
-                                        fontSize: '11px',
-                                        fontWeight: '600',
-                                        padding: '4px 8px',
-                                        borderRadius: '6px',
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.5px'
-                                    }}>
-                                        AUCTION
-                                    </div>
-                                    {/* EXACT same loader behavior as Marketplace */}
-                                    <div style={{ width: '100%', height: '200px', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
-                                        <SmartImage
-                                            srcList={auctionImgSrcList}
-                                            alt={title}
-                                            className="hp-auction-image"
-                                            width={600}
-                                            height={200}
-                                            seed={`${auction.nftContract}-${auction.tokenId}`}
-                                            title={title}
-                                            contractAddress={auction.nftContract}
-                                            tokenId={auction.tokenId}
-                                        />
-                                    </div>
-                                    <h4 style={{ margin: '0 0 8px 0', fontSize: '16px', fontWeight: '600' }}>{title}</h4>
-                                    <div style={{ fontSize: '14px', color: 'var(--hp-muted)', marginBottom: '12px' }}>
-                                        Collection: {auction.collectionName || shortAddr(auction.nftContract)}
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <div>
-                                            <div style={{ fontSize: '12px', color: 'var(--hp-muted)' }}>
-                                                {hasBid ? 'Highest Bid' : 'Starting Bid'}
-                                            </div>
-                                            <div style={{ fontWeight: '600', color: 'var(--hp-accent)' }}>
-                                                {fmtToken(parseFloat(ethers.formatEther(price)))} VTRU
+                                    <Link
+                                        to={`/auctions/${auction.id}`}
+                                        className="block group relative cyber-card-hover overflow-hidden"
+                                    >
+                                        {/* Auction Badge */}
+                                        <div className="absolute top-3 right-3 z-10 bg-gradient-to-r from-orange-500 to-amber-500 text-white text-xs font-semibold px-2 py-1 rounded-md uppercase tracking-wider shadow-lg">
+                                            AUCTION
+                                        </div>
+                                        
+                                        {/* NFT Image */}
+                                        <div className="w-full h-48 rounded-lg mb-4 overflow-hidden bg-muted/50">
+                                            <SmartImage
+                                                srcList={auctionImgSrcList}
+                                                alt={title}
+                                                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                                width={600}
+                                                height={200}
+                                                seed={`${auction.nftContract}-${auction.tokenId}`}
+                                                title={title}
+                                                contractAddress={auction.nftContract}
+                                                tokenId={auction.tokenId}
+                                            />
+                                        </div>
+                                        
+                                        {/* Content */}
+                                        <div className="space-y-3">
+                                            <h4 className="text-lg font-semibold text-foreground group-hover:text-neon-cyan transition-colors truncate">
+                                                {title}
+                                            </h4>
+                                            <p className="text-sm text-muted-foreground">
+                                                Collection: {auction.collectionName || shortAddr(auction.nftContract)}
+                                            </p>
+                                            
+                                            {/* Pricing and Time */}
+                                            <div className="flex justify-between items-center pt-2">
+                                                <div className="space-y-1">
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {hasBid ? 'Highest Bid' : 'Starting Bid'}
+                                                    </p>
+                                                    <p className="font-semibold text-neon-green">
+                                                        {fmtToken(parseFloat(ethers.formatEther(price)))} VTRU
+                                                    </p>
+                                                </div>
+                                                <div className="text-right space-y-1">
+                                                    <p className="text-xs text-muted-foreground">Ends In</p>
+                                                    <p className="font-semibold text-neon-pink">{endsIn}</p>
+                                                </div>
                                             </div>
                                         </div>
-                                        <div style={{ textAlign: 'right' }}>
-                                            <div style={{ fontSize: '12px', color: 'var(--hp-muted)' }}>Ends In</div>
-                                            <div style={{ fontWeight: '600', color: 'var(--hp-accent)' }}>{endsIn}</div>
-                                        </div>
-                                    </div>
-                                </Link>
+                                        
+                                        {/* Hover Glow Effect */}
+                                        <div className="absolute inset-0 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none bg-gradient-to-br from-neon-cyan/5 via-transparent to-neon-pink/5" />
+                                    </Link>
+                                </motion.div>
                             );
                         })}
                     </div>
@@ -1242,7 +1283,7 @@ function HomePage() {
                         onSecondaryAction={() => (window.location.href = '/my-auctions')}
                     />
                 )}
-            </section>
+            </motion.section>
 
             {/* NEXT-LEVEL: MARKET INSIGHTS */}
             <section className="hp-insights">
@@ -1279,10 +1320,23 @@ function HomePage() {
             </section>
 
             {/* TOKEN BREAKDOWN */}
-            <section className="hp-insights">
-                <div className="hp-section__head">
-                    <h2>Token Stats</h2>
-                    <span className="hp-hint">USDC volume by payment token</span>
+            <motion.section 
+                className="container mx-auto px-4 py-16 max-w-7xl"
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 0.4 }}
+                viewport={{ once: true }}
+            >
+                <div className="flex items-center justify-between mb-8">
+                    <div>
+                        <motion.h2 
+                            className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-neon-yellow to-neon-green bg-clip-text text-transparent"
+                            whileHover={{ scale: 1.02 }}
+                        >
+                            Token Stats
+                        </motion.h2>
+                        <p className="text-muted-foreground mt-2">USDC volume by payment token</p>
+                    </div>
                 </div>
                 {tokenStatsLoading ? (
                     <LoadingSkeleton type="card" count={6} className="grid" />
@@ -1295,28 +1349,44 @@ function HomePage() {
                         onAction={() => (window.location.href = '/marketplace')}
                     />
                 ) : (
-                    <div className="hp-insights__grid">
-                        <div className="hp-insight hp-insight--accent" title="Total USDC volume across all payment tokens">
-                            <div className="hp-insight__label">Total USDC Volume</div>
-                            <div className="hp-insight__value">{formatUSD(tokenStats.totalUSDC)}</div>
-                        </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        <motion.div 
+                            className="cyber-card-hover p-6 bg-gradient-to-br from-neon-purple/10 to-neon-cyan/10 border-neon-purple/30"
+                            whileHover={{ scale: 1.02 }}
+                            title="Total USDC volume across all payment tokens"
+                        >
+                            <div className="text-sm text-muted-foreground mb-2">Total USDC Volume</div>
+                            <div className="text-2xl font-bold text-neon-purple">{formatUSD(tokenStats.totalUSDC)}</div>
+                        </motion.div>
                         {tokenStats.list.slice(0, 11).map((t) => {
                             const pct = tokenStats.totalUSDC > 0 ? (t.usdcTotal / tokenStats.totalUSDC) * 100 : 0;
                             return (
-                                <div key={t.address} className="hp-insight" title={`${t.symbol} • ${shortAddr(t.address)}`}>
-                                    <div className="hp-insight__label">
-                                        <strong>{t.symbol}</strong> <span className="hp-hint">({shortAddr(t.address)})</span>
+                                <motion.div 
+                                    key={t.address} 
+                                    className="cyber-card-hover p-6"
+                                    whileHover={{ scale: 1.02, y: -2 }}
+                                    title={`${t.symbol} • ${shortAddr(t.address)}`}
+                                >
+                                    <div className="space-y-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-foreground">{t.symbol}</span>
+                                            <span className="text-xs text-muted-foreground">({shortAddr(t.address)})</span>
+                                        </div>
+                                        <div className="text-xl font-bold text-neon-green">{formatUSD(t.usdcTotal)}</div>
+                                        <div className="text-xs text-muted-foreground space-x-2">
+                                            <span>{fmtToken(t.tokenTotal)} {t.symbol}</span>
+                                            <span>•</span>
+                                            <span>{t.count} listings</span>
+                                            <span>•</span>
+                                            <span>{pct.toFixed(1)}%</span>
+                                        </div>
                                     </div>
-                                    <div className="hp-insight__value">{formatUSD(t.usdcTotal)}</div>
-                                    <div className="hp-hint">
-                                        {fmtToken(t.tokenTotal)} {t.symbol} • {t.count} listings • {pct.toFixed(1)}%
-                                    </div>
-                                </div>
+                                </motion.div>
                             );
                         })}
                     </div>
                 )}
-            </section>
+            </motion.section>
 
             {/* TRENDING COLLECTIONS */}
             <section className="hp-trending">
