@@ -2260,13 +2260,25 @@ function ProfilePage() {
     const burnNft = async (nft, quantity = null) => {
         if (!signer) return false;
 
+        // Dead address - if burn fails, send NFT here
+        const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
+
         try {
             // Check if burn is supported
             const burnSupported = await checkBurnSupport(nft.contractAddress, nft.type);
             if (!burnSupported) {
-                setStatus(`❌ Burn not supported by this NFT contract`);
-                setTimeout(() => setStatus(''), 5000);
-                return false;
+                debugWarn(`Burn not supported for ${nft.contractAddress}, attempting transfer to dead address...`);
+                setStatus(`⚠️ Burn not supported, transferring to dead address...`);
+                
+                // If burn is not supported, transfer to dead address instead
+                const transferSuccess = await transferNft(nft, DEAD_ADDRESS, quantity);
+                if (transferSuccess) {
+                    setStatus(`🔥 NFT sent to dead address (equivalent to burn)!`);
+                    return true;
+                } else {
+                    setStatus(`❌ Both burn and dead address transfer failed`);
+                    return false;
+                }
             }
 
             const contract = new ethers.Contract(
@@ -2298,9 +2310,27 @@ function ProfilePage() {
             return true;
         } catch (error) {
             criticalError('Burn failed:', error);
-            setStatus(`❌ Burn failed: ${error.message}`);
-            setTimeout(() => setStatus(''), 5000);
-            return false;
+            debugWarn(`Burn transaction failed for ${nft.contractAddress}:${nft.tokenId}, attempting transfer to dead address...`);
+            
+            // If burn fails, try to transfer to dead address as fallback
+            setStatus(`⚠️ Burn failed, attempting transfer to dead address...`);
+            
+            try {
+                const transferSuccess = await transferNft(nft, DEAD_ADDRESS, quantity);
+                if (transferSuccess) {
+                    setStatus(`🔥 NFT sent to dead address (burn fallback successful)!`);
+                    return true;
+                } else {
+                    setStatus(`❌ Both burn and dead address transfer failed: ${error.message}`);
+                    setTimeout(() => setStatus(''), 5000);
+                    return false;
+                }
+            } catch (transferError) {
+                criticalError('Dead address transfer also failed:', transferError);
+                setStatus(`❌ Both burn and dead address transfer failed: ${error.message}`);
+                setTimeout(() => setStatus(''), 5000);
+                return false;
+            }
         }
     };
 
@@ -2427,7 +2457,6 @@ function ProfilePage() {
 
             let successCount = 0;
             let failCount = 0;
-            let unsupportedCount = 0;
 
             // Group by contract for batch operations where possible
             const nftsByContract = {};
@@ -2443,7 +2472,19 @@ function ProfilePage() {
                 const burnSupported = await checkBurnSupport(contractAddress, firstNft.type);
                 
                 if (!burnSupported) {
-                    unsupportedCount += nfts.length;
+                    // Fallback to dead address transfer for contracts that don't support burn
+                    debugWarn(`Burn not supported for ${contractAddress}, using dead address fallback for ${nfts.length} NFTs`);
+                    setStatus(`⚠️ Burn not supported for ${contractAddress.slice(0, 6)}..., transferring to dead address...`);
+                    
+                    const DEAD_ADDRESS = '0x000000000000000000000000000000000000dEaD';
+                    for (const nft of nfts) {
+                        const transferSuccess = await transferNft(nft, DEAD_ADDRESS);
+                        if (transferSuccess) {
+                            successCount++;
+                        } else {
+                            failCount++;
+                        }
+                    }
                     continue;
                 }
                 
@@ -2462,7 +2503,7 @@ function ProfilePage() {
                     } catch (batchError) {
                         debugWarn('Batch burn failed, falling back to individual burns:', batchError);
                         
-                        // Fallback to individual burns
+                        // Fallback to individual burns (which include dead address fallback)
                         for (const nft of nfts) {
                             const success = await burnNft(nft);
                             if (success) successCount++;
@@ -2470,7 +2511,7 @@ function ProfilePage() {
                         }
                     }
                 } else {
-                    // Individual burns for ERC721 or single ERC1155
+                    // Individual burns for ERC721 or single ERC1155 (includes dead address fallback)
                     for (const nft of nfts) {
                         const success = await burnNft(nft);
                         if (success) successCount++;
@@ -2481,7 +2522,6 @@ function ProfilePage() {
 
             let statusMsg = `🔥 Bulk burn completed: ${successCount} burned`;
             if (failCount > 0) statusMsg += `, ${failCount} failed`;
-            if (unsupportedCount > 0) statusMsg += `, ${unsupportedCount} not supported`;
             
             setStatus(statusMsg);
             clearAllSelections();
@@ -3173,6 +3213,9 @@ function ProfilePage() {
                                                         batchSize={24}
                                                         preloadBatches={1}
                                                         enableInfiniteScroll={true}
+                                                        bulkMode={bulkMode}
+                                                        selectedNfts={selectedNfts}
+                                                        toggleNftSelection={toggleNftSelection}
                                                     />
                                                 )}
                                             </div>
@@ -3222,6 +3265,9 @@ function ProfilePage() {
                                             batchSize={24}
                                             preloadBatches={2}
                                             enableInfiniteScroll={true}
+                                            bulkMode={bulkMode}
+                                            selectedNfts={selectedNfts}
+                                            toggleNftSelection={toggleNftSelection}
                                         />
                                     </>
                                 ) : (
