@@ -2207,6 +2207,41 @@ const updateListingPrice = async (listingId, newPricePerUnit) => {
     }
 };
 
+// 1) Add this helper to write sales to Supabase and reload them back
+const syncSalesWithSupabase = useCallback(async () => {
+  try {
+    if (!supabaseConnected || !cacheSalesHistory || !getCachedSalesHistory) return false;
+
+    // de-dupe before persisting
+    const unique = (() => {
+      const seen = new Set();
+      const out = [];
+      for (const s of salesHistory) {
+        const key = s.transactionHash || `${s.listingId}-${s.timestamp}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push(s);
+        }
+      }
+      return out;
+    })();
+
+    await cacheSalesHistory(unique);
+
+    // Always reload the canonical list from Supabase
+    const reloaded = await getCachedSalesHistory();
+    if (Array.isArray(reloaded)) {
+      setSalesHistory(reloaded);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    debugWarn('syncSalesWithSupabase failed:', err);
+    return false;
+  }
+}, [supabaseConnected, cacheSalesHistory, getCachedSalesHistory, salesHistory]);
+
+// 2) Ensure refreshBlockchainData exists and syncs to Supabase before calculating stats
 const refreshBlockchainData = useCallback(
   async (options = { fullScan: false }) => {
     try {
@@ -2216,6 +2251,11 @@ const refreshBlockchainData = useCallback(
         setLastScannedBlock(0);
       }
       await fetchPastSalesEvents(marketplace);
+
+      // Persist to Supabase and reload canonical dataset
+      await syncSalesWithSupabase();
+
+      // Recalculate stats using the canonical salesHistory
       await calculateMarketplaceStats();
       return true;
     } catch (e) {
@@ -2223,7 +2263,7 @@ const refreshBlockchainData = useCallback(
       return false;
     }
   },
-  [marketplace, provider, calculateMarketplaceStats]
+  [marketplace, provider, syncSalesWithSupabase, calculateMarketplaceStats]
 );
 
     return (
