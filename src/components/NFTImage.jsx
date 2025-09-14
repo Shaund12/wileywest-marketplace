@@ -78,85 +78,121 @@ function expandToCandidateUrls(raw) {
     }
 }
 
-// Enhanced working image finder with better reliability for IPFS gateways
-function findFirstWorkingImage(candidates, timeoutMs = 5000) {
+// Robust image loading that handles IPFS black box issues
+function loadImageWithCacheBusting(url, options = {}) {
+    const { timeout = 3000, retryWithCacheBust = true } = options;
+    
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        let timeoutId;
+        let hasTimedOut = false;
+        
+        const cleanup = () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+            }
+            img.onload = null;
+            img.onerror = null;
+            img.onabort = null;
+        };
+        
+        const handleLoad = () => {
+            if (hasTimedOut) return;
+            cleanup();
+            
+            // Verify the image actually loaded with dimensions
+            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                debugLog(`✅ [NFT Image] Successfully loaded image: ${img.src} (${img.naturalWidth}x${img.naturalHeight})`);
+                resolve(img.src);
+            } else {
+                debugWarn(`⚠️ [NFT Image] Image loaded but has no dimensions: ${img.src}`);
+                
+                // Try with cache busting if we haven't already
+                if (retryWithCacheBust && !img.src.includes('cb=')) {
+                    const cacheBustedUrl = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now() + '&retry=1';
+                    debugLog(`🔄 [NFT Image] Retrying with cache busting: ${cacheBustedUrl}`);
+                    
+                    loadImageWithCacheBusting(cacheBustedUrl, { timeout, retryWithCacheBust: false })
+                        .then(resolve)
+                        .catch(reject);
+                } else {
+                    reject(new Error('Image has no dimensions'));
+                }
+            }
+        };
+        
+        const handleError = (e) => {
+            if (hasTimedOut) return;
+            cleanup();
+            
+            debugWarn(`❌ [NFT Image] Error loading image: ${img.src}`, e?.type || 'unknown error');
+            
+            // For IPFS URLs, try with cache busting to overcome browser caching issues
+            if (retryWithCacheBust && !img.src.includes('cb=') && 
+                (url.includes('ipfs') || url.includes('dweb') || url.includes('gateway'))) {
+                const cacheBustedUrl = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now() + '&bypass=1';
+                debugLog(`🔄 [NFT Image] IPFS error, retrying with cache busting: ${cacheBustedUrl}`);
+                
+                loadImageWithCacheBusting(cacheBustedUrl, { timeout, retryWithCacheBust: false })
+                    .then(resolve)
+                    .catch(reject);
+            } else {
+                reject(new Error(`Failed to load: ${img.src}`));
+            }
+        };
+        
+        const handleTimeout = () => {
+            hasTimedOut = true;
+            cleanup();
+            debugWarn(`⏰ [NFT Image] Timeout loading image: ${url}`);
+            reject(new Error(`Timeout loading: ${url}`));
+        };
+        
+        // Set up timeout
+        timeoutId = setTimeout(handleTimeout, timeout);
+        
+        // Set up event handlers
+        img.onload = handleLoad;
+        img.onerror = handleError;
+        img.onabort = handleError;
+        
+        // Set important attributes to prevent black box issues
+        img.crossOrigin = 'anonymous';
+        img.decoding = 'async';
+        
+        // Start loading the image
+        debugLog(`🔍 [NFT Image] Starting to load: ${url}`);
+        img.src = url;
+    });
+}
+
+// Simplified and reliable image finder that focuses on actual loading success
+function findFirstWorkingImage(candidates, timeoutMs = 3000) {
     return new Promise((resolve, reject) => {
         if (!candidates?.length) return reject(new Error('No candidates'));
         if (typeof window === 'undefined') return reject(new Error('SSR'));
         
         let settled = false;
-        let idx = 0;
-        
-        const testAndValidateUrl = (url) => {
-            return new Promise((resolveUrl, rejectUrl) => {
-                const testImg = new Image();
-                
-                // First, test with cache busting to check availability
-                const timer1 = setTimeout(() => {
-                    testImg.onload = null;
-                    testImg.onerror = null;
-                    rejectUrl(new Error('Timeout during availability test'));
-                }, timeoutMs);
-                
-                testImg.onload = () => {
-                    clearTimeout(timer1);
-                    
-                    // If cache-busted version works, now test the clean URL
-                    const cleanImg = new Image();
-                    const timer2 = setTimeout(() => {
-                        cleanImg.onload = null;
-                        cleanImg.onerror = null;
-                        rejectUrl(new Error('Clean URL failed'));
-                    }, 2000); // Shorter timeout for clean URL test
-                    
-                    cleanImg.onload = () => {
-                        clearTimeout(timer2);
-                        resolveUrl(url); // Return clean URL
-                    };
-                    
-                    cleanImg.onerror = (e) => {
-                        clearTimeout(timer2);
-                        // If clean URL fails but cache-busted worked, 
-                        // we'll use cache-busted URL as fallback
-                        debugWarn(`🔄 [NFT Image] Clean URL failed for ${url}, using cache-busted version`);
-                        
-                        // Check if the error might be CORS-related
-                        const corsError = e.target && !e.target.naturalWidth && !e.target.naturalHeight;
-                        if (corsError) {
-                            debugWarn(`🚫 [NFT Image] Possible CORS issue detected for ${url}`);
-                        }
-                        
-                        resolveUrl(url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now());
-                    };
-                    
-                    // Test clean URL
-                    cleanImg.src = url;
-                };
-                
-                testImg.onerror = () => {
-                    clearTimeout(timer1);
-                    rejectUrl(new Error('URL not available'));
-                };
-                
-                // Test with cache busting first
-                testImg.src = url + (url.includes('?') ? '&' : '?') + 'cb=' + Date.now();
-            });
-        };
+        let currentIndex = 0;
         
         const tryNext = async () => {
             if (settled) return;
-            if (idx >= candidates.length) {
-                return reject(new Error('No gateway worked'));
+            if (currentIndex >= candidates.length) {
+                return reject(new Error('No working gateway found'));
             }
             
-            const url = candidates[idx++];
+            const url = candidates[currentIndex++];
+            debugLog(`🔍 [NFT Image] Testing gateway ${currentIndex}/${candidates.length}: ${url}`);
             
             try {
-                const workingUrl = await testAndValidateUrl(url);
+                const workingUrl = await loadImageWithCacheBusting(url, { timeout: timeoutMs });
                 if (settled) return;
                 settled = true;
+                debugLog(`✅ [NFT Image] Found working URL: ${workingUrl}`);
                 resolve(workingUrl);
             } catch (error) {
+                debugWarn(`⚠️ [NFT Image] Gateway ${currentIndex-1} failed:`, error.message);
                 // Try next candidate
                 tryNext();
             }
@@ -274,7 +310,7 @@ const NFTImage = ({
     const [loadAttempts, setLoadAttempts] = useState(0);
     const [fallbackUrl, setFallbackUrl] = useState(null);
 
-    // Enhanced image source resolution
+    // Simplified and reliable image source resolution
     useEffect(() => {
         const resolveImageSources = async () => {
             setIsLoading(true);
@@ -304,7 +340,7 @@ const NFTImage = ({
             }
 
             if (!imageSources.length) {
-                debugWarn('🔍 [NFT Image] No image sources found, using fallback');
+                debugLog('🔍 [NFT Image] No image sources found, using fallback');
                 setCurrentImageUrl(fallback);
                 setIsLoading(false);
                 return;
@@ -324,128 +360,111 @@ const NFTImage = ({
             }
 
             if (!candidates.length) {
-                debugWarn('🔍 [NFT Image] No valid candidates generated, using fallback');
+                debugLog('🔍 [NFT Image] No valid candidates generated, using fallback');
                 setCurrentImageUrl(fallback);
                 setIsLoading(false);
                 return;
             }
 
             setAvailableGateways(candidates);
-            debugLog(`🔍 [NFT Image] Found ${candidates.length} gateway candidates for ${contractAddress}:${tokenId}`);
+            debugLog(`🔍 [NFT Image] Testing ${candidates.length} gateway candidates for ${contractAddress}:${tokenId}`);
 
-            // Try to find working image
+            // Try to find working image with simplified approach
             try {
                 const workingUrl = await findFirstWorkingImage(candidates);
-                debugLog(`✅ [NFT Image] Found working URL: ${workingUrl}`);
+                debugLog(`✅ [NFT Image] Successfully found working URL: ${workingUrl}`);
                 setCurrentImageUrl(workingUrl);
                 setIsLoading(false);
                 setHasError(false);
             } catch (error) {
-                debugWarn(`❌ [NFT Image] Enhanced method failed for ${contractAddress}:${tokenId}, trying simplified approach`);
-                
-                // Fallback: try the first candidate URL directly without complex validation
-                if (candidates.length > 0) {
-                    debugLog(`🔄 [NFT Image] Trying first candidate directly: ${candidates[0]}`);
-                    setCurrentImageUrl(candidates[0]);
-                    setIsLoading(false);
-                    setHasError(false);
-                } else {
-                    debugWarn(`❌ [NFT Image] No candidates available, using fallback`);
-                    setCurrentImageUrl(fallback);
-                    setIsLoading(false);
-                    setHasError(false); // Don't show error when we have fallback
-                }
+                debugWarn(`❌ [NFT Image] All gateways failed for ${contractAddress}:${tokenId}:`, error.message);
+                debugLog(`🔄 [NFT Image] Using fallback SVG for ${contractAddress}:${tokenId}`);
+                setCurrentImageUrl(fallback);
+                setIsLoading(false);
+                setHasError(false); // Don't show error when we have fallback
             }
         };
 
         resolveImageSources();
     }, [src, listing, contractAddress, tokenId, alt, width, height]);
 
-    // Manual retry function
+    // Simplified manual retry function
     const retryImageLoad = useCallback(() => {
-        if (availableGateways.length > 0) {
+        if (availableGateways.length > 0 && loadAttempts < 3) {
             setLoadAttempts(prev => prev + 1);
             setIsLoading(true);
             setHasError(false);
             
-            // For manual retry, try a more direct approach
-            if (loadAttempts >= 1) {
-                // After first retry, use direct URL approach
-                const directUrl = availableGateways[Math.min(loadAttempts - 1, availableGateways.length - 1)];
-                debugLog(`🔄 [NFT Image] Manual retry with direct URL: ${directUrl}`);
-                setCurrentImageUrl(directUrl);
-                setIsLoading(false);
-                return;
-            }
+            // For retry, try the next available gateway
+            const nextIndex = loadAttempts % availableGateways.length;
+            const nextUrl = availableGateways[nextIndex];
             
-            // First retry: try sophisticated method again
-            findFirstWorkingImage(availableGateways)
-                .then(workingUrl => {
-                    debugLog(`✅ [NFT Image] Retry found working URL: ${workingUrl}`);
-                    setCurrentImageUrl(workingUrl);
-                    setIsLoading(false);
-                    setHasError(false);
-                })
-                .catch(() => {
-                    debugWarn(`❌ [NFT Image] Retry failed, trying direct approach`);
-                    if (availableGateways.length > 0) {
-                        const directUrl = availableGateways[0];
-                        debugLog(`🔄 [NFT Image] Using direct URL: ${directUrl}`);
-                        setCurrentImageUrl(directUrl);
-                    } else {
-                        setCurrentImageUrl(fallbackUrl);
-                    }
-                    setIsLoading(false);
-                    setHasError(false);
-                });
+            debugLog(`🔄 [NFT Image] Manual retry attempt ${loadAttempts + 1} with URL: ${nextUrl}`);
+            setCurrentImageUrl(nextUrl);
+            setIsLoading(false);
         }
-    }, [availableGateways, fallbackUrl, loadAttempts]);
+    }, [availableGateways, loadAttempts]);
 
-    // Handle image load events
+    // Handle image load events with additional validation
     const handleImageLoad = useCallback((e) => {
-        debugLog(`✅ [NFT Image] Successfully loaded: ${currentImageUrl}`);
-        setIsLoading(false);
-        setHasError(false);
-        onLoad?.(e);
-    }, [currentImageUrl, onLoad]);
+        const img = e.target;
+        
+        // Additional validation to prevent black box display
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+            debugLog(`✅ [NFT Image] Successfully rendered: ${currentImageUrl} (${img.naturalWidth}x${img.naturalHeight})`);
+            setIsLoading(false);
+            setHasError(false);
+            onLoad?.(e);
+        } else {
+            debugWarn(`⚠️ [NFT Image] Image appears to have loaded but has no dimensions: ${currentImageUrl}`);
+            
+            // If the image loaded but has no dimensions, try the fallback
+            if (fallbackUrl && currentImageUrl !== fallbackUrl) {
+                debugLog(`🔄 [NFT Image] Using fallback due to dimension issue: ${fallbackUrl}`);
+                setCurrentImageUrl(fallbackUrl);
+            } else {
+                setIsLoading(false);
+                setHasError(true);
+            }
+        }
+    }, [currentImageUrl, fallbackUrl, onLoad]);
 
     const handleImageError = useCallback((e) => {
-        debugWarn(`❌ [NFT Image] Failed to load: ${currentImageUrl}`, e);
+        const img = e.target;
+        debugWarn(`❌ [NFT Image] Failed to render: ${currentImageUrl}`, e?.type || 'unknown error');
         
-        // Check if this might be a CORS issue
-        const corsError = e.target && !e.target.naturalWidth && !e.target.naturalHeight;
-        if (corsError) {
-            debugWarn(`🚫 [NFT Image] Possible CORS issue detected for ${currentImageUrl}`);
+        // Check if this is a potential black box issue (image claims to load but doesn't display)
+        const potentialBlackBox = !img.naturalWidth && !img.naturalHeight && img.complete;
+        
+        if (potentialBlackBox) {
+            debugWarn(`🚫 [NFT Image] Detected potential black box issue for: ${currentImageUrl}`);
+            
+            // For black box issues, try to force reload with more aggressive cache busting
+            if (!currentImageUrl.includes('force=') && !currentImageUrl.startsWith('data:')) {
+                const forceReloadUrl = currentImageUrl + 
+                    (currentImageUrl.includes('?') ? '&' : '?') + 
+                    'force=' + Date.now() + '&fix=blackbox';
+                    
+                debugLog(`🔄 [NFT Image] Attempting force reload: ${forceReloadUrl}`);
+                setCurrentImageUrl(forceReloadUrl);
+                return; // Don't proceed to fallback yet
+            }
         }
         
-        // If the current image is not a data URL (fallback), try the fallback
-        if (currentImageUrl && !currentImageUrl.startsWith('data:') && fallbackUrl) {
-            debugLog(`🔄 [NFT Image] Falling back to SVG: ${fallbackUrl}`);
+        // If we have a fallback URL and current image is not already the fallback
+        if (fallbackUrl && currentImageUrl !== fallbackUrl) {
+            debugLog(`🔄 [NFT Image] Using fallback SVG: ${fallbackUrl}`);
             setCurrentImageUrl(fallbackUrl);
             setIsLoading(false);
             setHasError(false);
         } else {
-            // If even fallback fails, we should try to retry with a different approach
-            if (availableGateways.length > 1 && loadAttempts < 2) {
-                debugLog(`🔄 [NFT Image] Retrying with simplified approach, attempt ${loadAttempts + 1}`);
-                setLoadAttempts(prev => prev + 1);
-                setIsLoading(true);
-                
-                // Try a simplified approach - just use the first gateway URL without complex validation
-                const nextGatewayIndex = loadAttempts % availableGateways.length;
-                const simpleUrl = availableGateways[nextGatewayIndex];
-                if (simpleUrl && simpleUrl !== currentImageUrl) {
-                    setCurrentImageUrl(simpleUrl);
-                    return;
-                }
-            }
-            
+            // If we're already showing fallback or don't have one, show error state
             setIsLoading(false);
             setHasError(true);
         }
         
         onError?.(e);
-    }, [currentImageUrl, fallbackUrl, onError, availableGateways, loadAttempts]);
+    }, [currentImageUrl, fallbackUrl, onError]);
 
     // Render loading state
     if (isLoading) {
@@ -463,12 +482,16 @@ const NFTImage = ({
                             height: '100%', 
                             objectFit: 'cover',
                             backgroundColor: 'transparent',
-                            minHeight: '1px',
-                            minWidth: '1px'
+                            border: 'none',
+                            outline: 'none',
+                            display: 'block',
+                            opacity: '0.8'
                         }}
                         crossOrigin="anonymous"
-                        loading="lazy"
-                        decoding="async"
+                        loading="eager"
+                        decoding="sync"
+                        fetchPriority="high"
+                        referrerPolicy="no-referrer"
                     />
                 )}
                 <div className="nft-image-loading-overlay">
@@ -517,15 +540,17 @@ const NFTImage = ({
                     width: '100%', 
                     height: '100%', 
                     objectFit: 'cover',
-                    // Add these properties to prevent black box issues
                     backgroundColor: 'transparent',
-                    minHeight: '1px',
-                    minWidth: '1px'
+                    border: 'none',
+                    outline: 'none',
+                    display: 'block',
+                    opacity: '1'
                 }}
-                // Add these attributes to help with CORS and loading issues
                 crossOrigin="anonymous"
-                loading="lazy"
-                decoding="async"
+                loading="eager"
+                decoding="sync"
+                fetchPriority="high"
+                referrerPolicy="no-referrer"
             />
         </div>
     );
