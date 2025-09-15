@@ -358,6 +358,14 @@ const ERC1155_APPROVAL_ABI = [
     'function isApprovedForAll(address owner, address operator) view returns (bool)',
 ];
 
+// ERC-404 uses the same approval pattern as ERC-721
+const ERC404_APPROVAL_ABI = [
+    'function setApprovalForAll(address operator, bool approved) returns ()',
+    'function isApprovedForAll(address owner, address operator) view returns (bool)',
+    'function approve(address to, uint256 tokenId) returns ()',
+    'function getApproved(uint256 tokenId) view returns (address)',
+];
+
 /* =========================================================
    Component
    ========================================================= */
@@ -587,7 +595,7 @@ function SellPage() {
                     }
                     
                     if (tokenURI) {
-                        const candidates = metadataCandidatesFromUri(tokenURI, token.tokenId, token.type === 'ERC1155');
+                        const candidates = metadataCandidatesFromUri(tokenURI, token.tokenId, token.type === 'ERC1155' || token.type === 'ERC404');
                         const { json: metadata } = await fetchJsonFromCandidates(candidates, 5000);
                         
                         if (metadata) {
@@ -669,9 +677,9 @@ function SellPage() {
     const handleTokenIdSelection = (tokenId) => {
         setFormData(prev => ({ ...prev, tokenId }));
         
-        // Also set quantity for ERC1155 tokens
+        // Also set quantity for ERC1155 and ERC404 tokens
         const selectedToken = availableTokenIds.find(t => t.tokenId === tokenId);
-        if (selectedToken && selectedToken.type === 'ERC1155') {
+        if (selectedToken && (selectedToken.type === 'ERC1155' || selectedToken.type === 'ERC404')) {
             setFormData(prev => ({ ...prev, quantity: selectedToken.balance }));
         }
     };
@@ -800,9 +808,10 @@ function SellPage() {
             const mktAddr = await getMarketplaceAddress();
             if (!mktAddr) throw new Error("Couldn't determine marketplace address");
 
-            if (nftType === 'ERC721') {
+            if (nftType === 'ERC721' || nftType === 'ERC404') {
                 setStatus('Checking NFT approval status...');
-                const nft = new ethers.Contract(formData.nftContract, ERC721_APPROVAL_ABI, signer);
+                const abi = nftType === 'ERC721' ? ERC721_APPROVAL_ABI : ERC404_APPROVAL_ABI;
+                const nft = new ethers.Contract(formData.nftContract, abi, signer);
                 const isAll = await nft.isApprovedForAll(wallet, mktAddr);
                 if (!isAll) {
                     const approved = await nft.getApproved(formData.tokenId);
@@ -1593,7 +1602,7 @@ function SellPage() {
                                                                                     </div>
                                                                                     <div className="token-details">
                                                                                         ID: {formData.tokenId}
-                                                                                        {selectedToken?.type === 'ERC1155' ? ` • Balance: ${selectedToken.balance}` : ''}
+                                                                                        {selectedToken?.type === 'ERC1155' || selectedToken?.type === 'ERC404' ? ` • Balance: ${selectedToken.balance}` : ''}
                                                                                     </div>
                                                                                 </div>
                                                                             </>
@@ -1652,7 +1661,7 @@ function SellPage() {
                                                                                 </div>
                                                                                 <div className="token-details">
                                                                                     ID: {token.tokenId}
-                                                                                    {token.type === 'ERC1155' ? ` • Balance: ${token.balance}` : ''}
+                                                                                    {token.type === 'ERC1155' || token.type === 'ERC404' ? ` • Balance: ${token.balance}` : ''}
                                                                                 </div>
                                                                             </div>
                                                                         </div>
