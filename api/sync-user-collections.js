@@ -31,6 +31,17 @@ const ERC1155_ABI = [
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ];
 
+const ERC404_ABI = [
+    'function balanceOf(address owner) view returns (uint256)',
+    'function erc721BalanceOf(address owner) view returns (uint256)',
+    'function ownerOf(uint256 tokenId) view returns (address)',
+    'function tokenURI(uint256 tokenId) view returns (string)',
+    'function name() view returns (string)',
+    'function symbol() view returns (string)',
+    'function decimals() view returns (uint8)',
+    'function getOwnedTokens(address owner) view returns (uint256[])'
+];
+
 const ERC1155_IFACE = new ethers.Interface([
     'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
@@ -57,7 +68,8 @@ const KNOWN_COLLECTIONS_REGISTRY = {
     '0x9acbDedd548De51615Ff2adbA468075330853215': { name: 'VMonsters', symbol: 'VMON' },
     '0xc5d518d131738481947cFa4670F94eb7b948a1ac': { name: 'V-Share', symbol: 'VSHARE' },
     '0xE1A5518CEbd226FE2a3251F93A1F6AAef65d3131': { name: 'Skoollz NFT Collection', symbol: 'SKLZ' },
-    '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906': { name: 'Pixel Ninja Cats', symbol: 'PNCAT' }
+    '0x2D732b0Bb33566A13E586aE83fB21d2feE34e906': { name: 'Pixel Ninja Cats', symbol: 'PNCAT' },
+    '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453': { name: 'Crocodeal-404', symbol: 'CROC404' }
 };
 
 const KNOWN_NFT_CONTRACTS = [...Object.keys(KNOWN_COLLECTIONS_REGISTRY)];
@@ -90,16 +102,42 @@ async function fetchJson(url, timeoutMs) {
 }
 
 async function classifyContract(address) {
+    // Check for known ERC-404 contract first
+    if (address.toLowerCase() === '0x30da83269da1dfe17253bf07f92056c2adcca453') {
+        return 'ERC404';
+    }
+    
     try {
         const c = new ethers.Contract(address, ERC721_ABI, provider);
         const sup = await c.supportsInterface('0x80ac58cd').catch(() => false);
         if (sup) return 'ERC721';
     } catch { }
+    
     try {
         const c2 = new ethers.Contract(address, ERC1155_ABI, provider);
         const sup2 = await c2.supportsInterface('0xd9b67a26').catch(() => false);
         if (sup2) return 'ERC1155';
     } catch { }
+    
+    // Try ERC-404 detection
+    try {
+        const c404 = new ethers.Contract(address, ERC404_ABI, provider);
+        // Try to call ERC-404 specific function
+        await c404.erc721BalanceOf('0x0000000000000000000000000000000000000000');
+        return 'ERC404';
+    } catch { 
+        // Try alternative ERC-404 detection
+        try {
+            const c404Alt = new ethers.Contract(address, ERC404_ABI, provider);
+            const name = await c404Alt.name();
+            const decimals = await c404Alt.decimals();
+            // If it has both name and decimals, and decimals is reasonable for ERC-404
+            if (name && decimals <= 18) {
+                return 'ERC404';
+            }
+        } catch { }
+    }
+    
     return null;
 }
 
@@ -272,6 +310,105 @@ async function scanERC1155(contractAddr, wallet, fromBlock, toBlock) {
     return out;
 }
 
+async function scanERC404(contractAddr, wallet, fromBlock, toBlock) {
+    const out = [];
+    const c = new ethers.Contract(contractAddr, ERC404_ABI, provider);
+    
+    try {
+        // Try to get ERC-721 balance for the wallet
+        let erc721Balance = 0;
+        try {
+            erc721Balance = await c.erc721BalanceOf(wallet);
+            erc721Balance = Number(erc721Balance);
+        } catch (e) {
+            // erc721BalanceOf might not be implemented, try to get regular balance and estimate
+            try {
+                const totalBalance = await c.balanceOf(wallet);
+                const decimals = await c.decimals();
+                erc721Balance = Math.floor(Number(totalBalance) / Math.pow(10, Number(decimals)));
+            } catch (balanceError) {
+                // Can't determine balance, return empty
+                return out;
+            }
+        }
+        
+        if (erc721Balance === 0) return out;
+        
+        // Try to get owned tokens using ERC-404 specific method
+        try {
+            const ownedTokens = await c.getOwnedTokens(wallet);
+            for (const tokenId of ownedTokens) {
+                let tokenURI = null;
+                try {
+                    tokenURI = await c.tokenURI(tokenId);
+                } catch (e) {
+                    // URI might not be available
+                }
+                
+                out.push({
+                    contractAddress: contractAddr,
+                    tokenId: tokenId.toString(),
+                    type: 'ERC404',
+                    balance: '1',
+                    tokenURI,
+                    metadata: {}
+                });
+            }
+            return out;
+        } catch (e) {
+            // getOwnedTokens not available, try alternative approach
+        }
+        
+        // Fallback: scan Transfer events like ERC-721
+        const transferTopic = ethers.id('Transfer(address,address,uint256)');
+        const walletTopic = ethers.zeroPadValue(wallet.toLowerCase(), 32);
+        const tokenIds = new Set();
+        
+        for (let start = fromBlock; start <= toBlock; start += CONFIG.CHUNK_BLOCKS) {
+            const end = Math.min(start + CONFIG.CHUNK_BLOCKS - 1, toBlock);
+            try {
+                const toLogs = await provider.getLogs({ 
+                    address: contractAddr, 
+                    fromBlock: start, 
+                    toBlock: end, 
+                    topics: [transferTopic, null, walletTopic] 
+                });
+                toLogs.forEach(l => {
+                    const tid = l.topics[3];
+                    if (tid) tokenIds.add(BigInt(tid).toString());
+                });
+            } catch { }
+        }
+        
+        // Check ownership of found token IDs
+        for (const id of tokenIds) {
+            try {
+                const owner = await c.ownerOf(id);
+                if (owner.toLowerCase() === wallet.toLowerCase()) {
+                    let tokenURI = null;
+                    try {
+                        tokenURI = await c.tokenURI(id);
+                    } catch { }
+                    
+                    out.push({
+                        contractAddress: contractAddr,
+                        tokenId: id,
+                        type: 'ERC404',
+                        balance: '1',
+                        tokenURI,
+                        metadata: {}
+                    });
+                }
+            } catch { }
+        }
+        
+    } catch (error) {
+        console.error(`Error scanning ERC-404 contract ${contractAddr}:`, error);
+    }
+    
+    return out;
+}
+
 async function fetchMetadataInParallel(nfts) {
     const ipfsGateway = 'https://gateway.pinata.cloud/ipfs/';
     const chunks = [];
@@ -336,8 +473,11 @@ async function fullOrIncrementalScan(wallet, fullRescan = false) {
         if (type === 'ERC721') {
             const items = await scanERC721(addr, wallet, fromBlock, toBlock);
             results.push(...items);
-        } else {
+        } else if (type === 'ERC1155') {
             const items = await scanERC1155(addr, wallet, fromBlock, toBlock);
+            results.push(...items);
+        } else if (type === 'ERC404') {
+            const items = await scanERC404(addr, wallet, fromBlock, toBlock);
             results.push(...items);
         }
     }

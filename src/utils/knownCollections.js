@@ -212,6 +212,17 @@ export const KNOWN_COLLECTIONS = {
         type: 'ERC721',
         verified: true,
         category: 'Art'
+    },
+    // ERC-404 Collections
+    '0x30da83269da1dfe17253bf07f92056c2adcca453': {
+        address: '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453',
+        name: 'Crocodeal-404',
+        symbol: 'CROC404',
+        description: 'Crocodeal-404 hybrid NFT collection implementing ERC-404 standard',
+        explorerUrl: 'https://explorer.vitruveo.net/token/0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453',
+        type: 'ERC404',
+        verified: true,
+        category: 'Gaming'
     }
 };
 
