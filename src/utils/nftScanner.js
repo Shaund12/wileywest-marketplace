@@ -762,8 +762,10 @@ export class NFTScanner {
                         return erc1155NFTs;
                     }
                     else if (contractType === 'ERC404') {
-                        this.updateStatus(`Scanning ERC-404 contract: ${address}`);
+                        this.updateStatus(`🔍 Scanning ERC-404 contract: ${address}`);
+                        debugLog(`🚀 Triggering ERC-404 scan for ${address}`);
                         const erc404NFTs = await this.scanERC404Contract(address, scanFromGenesis);
+                        debugLog(`✅ ERC-404 scan complete for ${address}: found ${erc404NFTs.length} tokens`);
                         return erc404NFTs;
                     }
                     
@@ -1351,12 +1353,12 @@ export class NFTScanner {
                     try {
                         const balance = await erc404Contract.balanceOf(this.walletAddress).catch(() => 0n);
                         this.contractCache[contractAddress] = { type: 'ERC404', balance: Number(balance) };
-                        debugLog(`Detected known Crocodeal-404 contract: ${contractAddress}`);
+                        debugLog(`🎯 Detected known Crocodeal-404 contract: ${contractAddress} (balance: ${Number(balance)})`);
                         return 'ERC404';
                     } catch (e) {
                         // Even if balance check fails, we know this is ERC-404
                         this.contractCache[contractAddress] = { type: 'ERC404', balance: 0 };
-                        debugLog(`Detected known Crocodeal-404 contract (balance check failed): ${contractAddress}`);
+                        debugLog(`🎯 Detected known Crocodeal-404 contract (balance check failed): ${contractAddress}`);
                         return 'ERC404';
                     }
                 }
@@ -1460,10 +1462,12 @@ export class NFTScanner {
     // Scan an ERC-404 contract (hybrid ERC-20/ERC-721)
     async scanERC404Contract(contractAddress, scanFromGenesis = false) {
         try {
+            debugLog(`🔍 Starting ERC-404 scan for ${contractAddress} (scanFromGenesis: ${scanFromGenesis})`);
             const contract = new ethers.Contract(contractAddress, ERC404_ABI, this.provider);
             
             // Get contract info
             const contractInfo = await this.getContractInfo(contractAddress, 'ERC404');
+            debugLog(`📋 ERC-404 contract info: ${contractInfo.name || contractAddress}`);
             
             // ERC-404 tokens can have both ERC-20 and ERC-721 balances
             let erc20Balance = 0;
@@ -1473,9 +1477,9 @@ export class NFTScanner {
             try {
                 const totalBalance = await contract.balanceOf(this.walletAddress);
                 erc20Balance = Number(totalBalance);
-                debugLog(`ERC-404 ${contractAddress} - ERC-20 balance: ${erc20Balance}`);
+                debugLog(`✅ ERC-404 ${contractAddress} - ERC-20 balance: ${erc20Balance}`);
             } catch (balanceError) {
-                debugWarn(`Error getting ERC-404 basic balance for ${contractAddress}:`, balanceError);
+                debugWarn(`⚠️ Error getting ERC-404 basic balance for ${contractAddress}:`, balanceError);
                 // Even if balance fails, continue with scanning since we want to detect the contract type
             }
             
@@ -1483,19 +1487,22 @@ export class NFTScanner {
             try {
                 erc721Balance = await contract.erc721BalanceOf(this.walletAddress);
                 erc721Balance = Number(erc721Balance);
-                debugLog(`ERC-404 ${contractAddress} - ERC-721 balance: ${erc721Balance}`);
+                debugLog(`✅ ERC-404 ${contractAddress} - ERC-721 balance: ${erc721Balance}`);
             } catch (e) {
+                debugLog(`⚠️ ERC-404 ${contractAddress} - erc721BalanceOf not available: ${e.message}`);
                 // erc721BalanceOf might not be implemented, estimate from ERC-20 balance
                 if (erc20Balance > 0) {
                     try {
                         const decimals = await contract.decimals().catch(() => 18);
                         erc721Balance = Math.floor(erc20Balance / Math.pow(10, decimals));
-                        debugLog(`ERC-404 ${contractAddress} - Estimated ERC-721 balance: ${erc721Balance} (from ERC-20 balance)`);
+                        debugLog(`🔢 ERC-404 ${contractAddress} - Estimated ERC-721 balance: ${erc721Balance} (from ERC-20 balance)`);
                     } catch (decimalsError) {
                         // If we can't get decimals, assume 1 NFT per large balance unit
                         erc721Balance = erc20Balance > 1000 ? 1 : 0;
-                        debugLog(`ERC-404 ${contractAddress} - Fallback ERC-721 balance estimate: ${erc721Balance}`);
+                        debugLog(`🎯 ERC-404 ${contractAddress} - Fallback ERC-721 balance estimate: ${erc721Balance}`);
                     }
+                } else {
+                    debugLog(`💭 ERC-404 ${contractAddress} - No ERC-20 balance, user likely doesn't own tokens`);
                 }
             }
             
@@ -1699,7 +1706,13 @@ export class NFTScanner {
                 }
             }
             
-            debugLog(`ERC-404 ${contractAddress} - Final result: ${results.length} NFTs found`);
+            debugLog(`📊 ERC-404 ${contractAddress} - Final scan result: ${results.length} NFTs found (ERC-20: ${erc20Balance}, ERC-721: ${erc721Balance})`);
+            if (results.length === 0) {
+                debugLog(`💡 ERC-404 ${contractAddress} - No tokens found. This could mean:`);
+                debugLog(`   - User doesn't own any tokens in this contract`);
+                debugLog(`   - Contract implements ERC-404 differently than expected`);
+                debugLog(`   - Network/RPC issues prevented token discovery`);
+            }
             return results;
             
         } catch (error) {
