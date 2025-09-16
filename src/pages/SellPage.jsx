@@ -394,6 +394,21 @@ function SellPage() {
         price: '',
         paymentToken: ethers.ZeroAddress,
     });
+    
+    // Debug URL parameters on page load
+    useEffect(() => {
+        const urlContract = searchParams.get('contract');
+        const urlTokenId = searchParams.get('tokenId');
+        if (urlContract || urlTokenId) {
+            debugLog('🔍 SellPage loaded with URL parameters:', {
+                contract: urlContract,
+                tokenId: urlTokenId,
+                contractType: typeof urlContract,
+                contractLength: urlContract?.length,
+                allParams: Object.fromEntries(searchParams.entries())
+            });
+        }
+    }, [searchParams]);
 
     // New dropdown states
     const [userNftCollections, setUserNftCollections] = useState([]);
@@ -1225,8 +1240,68 @@ function SellPage() {
         setOwnershipVerified(false);
 
         try {
-            if (!ethers.isAddress(formData.nftContract)) throw new Error('Invalid contract address format');
-            const checksum = ethers.getAddress(formData.nftContract);
+            // Enhanced debugging for contract address validation
+            debugLog('🔍 Contract address validation details:', {
+                original: formData.nftContract,
+                type: typeof formData.nftContract,
+                length: formData.nftContract?.length,
+                isString: typeof formData.nftContract === 'string',
+                trimmed: formData.nftContract?.trim(),
+                startsWithOx: formData.nftContract?.startsWith?.('0x'),
+                urlParams: Object.fromEntries(new URLSearchParams(window.location.search))
+            });
+            
+            // Clean and validate contract address with comprehensive error messages
+            let contractAddress = formData.nftContract;
+            
+            // Basic type and existence checks
+            if (!contractAddress) {
+                throw new Error('Contract address is required. Please enter a valid Ethereum contract address.');
+            }
+            
+            if (typeof contractAddress !== 'string') {
+                throw new Error(`Contract address must be a string. Received: ${typeof contractAddress}`);
+            }
+            
+            // Clean the address
+            contractAddress = contractAddress.trim();
+            
+            if (contractAddress.length === 0) {
+                throw new Error('Contract address cannot be empty or only whitespace.');
+            }
+            
+            // Check basic format requirements
+            if (!contractAddress.startsWith('0x')) {
+                throw new Error(`Contract address must start with '0x'. Received: "${contractAddress}"`);
+            }
+            
+            if (contractAddress.length !== 42) {
+                throw new Error(`Contract address must be exactly 42 characters long (including '0x'). Received: "${contractAddress}" (length: ${contractAddress.length})`);
+            }
+            
+            // Use ethers.js validation
+            if (!ethers.isAddress(contractAddress)) {
+                // Check if it's close to the known Crocodeal-404 address
+                const crocodeal404Address = '0x30dA83269Da1Dfe17253Bf07F92056c2adCcA453';
+                const inputLower = contractAddress.toLowerCase();
+                const crocodealLower = crocodeal404Address.toLowerCase();
+                
+                if (inputLower.length === 42 && inputLower.startsWith('0x')) {
+                    // Count character differences
+                    let differences = 0;
+                    for (let i = 0; i < Math.min(inputLower.length, crocodealLower.length); i++) {
+                        if (inputLower[i] !== crocodealLower[i]) differences++;
+                    }
+                    
+                    if (differences <= 3) { // Allow up to 3 character differences
+                        throw new Error(`Invalid Ethereum address format. Did you mean the Crocodeal-404 address: "${crocodeal404Address}"? Your input: "${contractAddress}"`);
+                    }
+                }
+                
+                throw new Error(`Invalid Ethereum address format. Please check the contract address: "${contractAddress}". For Crocodeal-404, use: ${crocodeal404Address}`);
+            }
+            
+            const checksum = ethers.getAddress(contractAddress);
             const tokenIdStr = String(formData.tokenId);
 
             const setFallback = (type, qty = '1', nameTitle = `NFT #${tokenIdStr}`) => {
@@ -1335,6 +1410,12 @@ function SellPage() {
 
     useEffect(() => {
         if (formData.nftContract && formData.tokenId && wallet && provider) {
+            debugLog('🚀 Auto-triggering fetchNftMetadata due to URL parameters:', {
+                contract: formData.nftContract,
+                tokenId: formData.tokenId,
+                wallet: wallet,
+                provider: !!provider
+            });
             fetchNftMetadata();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
