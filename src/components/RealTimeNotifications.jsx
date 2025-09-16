@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, TrendingUp, Gavel, Activity, Zap } from 'lucide-react';
 import { useRealTimeListings, useRealTimeAuctions, useRealTimeActivity } from '../context/WebSocketContext';
@@ -14,12 +14,12 @@ const RealTimeNotifications = ({ className }) => {
     const { newBidCount, clearNewCount: clearBidCount } = useRealTimeAuctions();
     const { activities } = useRealTimeActivity();
 
-    // Combine all real-time updates into notifications
-    useEffect(() => {
+    // Combine all real-time updates into notifications (optimized with useMemo)
+    const combinedNotifications = useMemo(() => {
         const newNotifications = [];
         
-        // Add new listings
-        listings.slice(0, 5).forEach(listing => {
+        // Add new listings (limit to reduce processing)
+        listings.slice(0, 3).forEach(listing => {
             newNotifications.push({
                 id: `listing-${listing.id}`,
                 type: 'listing',
@@ -31,8 +31,8 @@ const RealTimeNotifications = ({ className }) => {
             });
         });
         
-        // Add recent activities
-        activities.slice(0, 3).forEach((activity, index) => {
+        // Add recent activities (limit to reduce processing)
+        activities.slice(0, 2).forEach((activity, index) => {
             newNotifications.push({
                 id: `activity-${index}`,
                 type: 'activity',
@@ -44,8 +44,13 @@ const RealTimeNotifications = ({ className }) => {
             });
         });
         
-        setNotifications(newNotifications.slice(0, 8)); // Keep only 8 most recent
+        return newNotifications.slice(0, 5); // Keep only 5 most recent to reduce memory usage
     }, [listings, activities]);
+
+    // Update notifications only when the memoized value changes
+    useEffect(() => {
+        setNotifications(combinedNotifications);
+    }, [combinedNotifications]);
 
     const totalNotifications = newListingCount + newBidCount;
     

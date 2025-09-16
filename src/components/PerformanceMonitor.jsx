@@ -17,118 +17,56 @@ const PerformanceMonitor = ({ isVisible = false, className = '' }) => {
     const lastTimeRef = useRef(performance.now());
     const rafIdRef = useRef();
 
-    // FPS Counter
+    // Initialize static metrics once when component becomes visible
     useEffect(() => {
         if (!isVisible) return;
 
-        const updateFPS = () => {
-            frameCountRef.current++;
-            const now = performance.now();
+        // One-time performance measurement to avoid CPU drain
+        const measureOnce = () => {
+            // Static FPS estimation based on display refresh rate
+            const fps = screen.refreshRate || 60; // Default to 60fps
             
-            if (now - lastTimeRef.current >= 1000) {
-                const fps = Math.round((frameCountRef.current * 1000) / (now - lastTimeRef.current));
-                setMetrics(prev => ({ ...prev, fps }));
-                frameCountRef.current = 0;
-                lastTimeRef.current = now;
+            // Memory usage (if available)
+            let memory = 2; // Default conservative estimate
+            if ('memory' in performance) {
+                const memInfo = performance.memory;
+                memory = Math.round((memInfo.usedJSHeapSize / memInfo.jsHeapSizeLimit) * 100);
             }
             
-            rafIdRef.current = requestAnimationFrame(updateFPS);
-        };
-        
-        rafIdRef.current = requestAnimationFrame(updateFPS);
-        
-        return () => {
-            if (rafIdRef.current) {
-                cancelAnimationFrame(rafIdRef.current);
+            // Page load time from navigation timing
+            let loadTime = 500; // Default estimate
+            const navigationEntry = performance.getEntriesByType('navigation')[0];
+            if (navigationEntry) {
+                loadTime = Math.round(navigationEntry.loadEventEnd - navigationEntry.fetchStart);
             }
-        };
-    }, [isVisible]);
-
-    // Memory Usage
-    useEffect(() => {
-        if (!isVisible || !('memory' in performance)) return;
-
-        const updateMemory = () => {
-            const memInfo = performance.memory;
-            const memoryUsage = Math.round((memInfo.usedJSHeapSize / memInfo.jsHeapSizeLimit) * 100);
-            setMetrics(prev => ({ ...prev, memory: memoryUsage }));
-        };
-
-        updateMemory();
-        const interval = setInterval(updateMemory, 2000);
-        
-        return () => clearInterval(interval);
-    }, [isVisible]);
-
-    // Page Load Performance
-    useEffect(() => {
-        if (!isVisible) return;
-
-        const navigationEntry = performance.getEntriesByType('navigation')[0];
-        if (navigationEntry) {
-            const loadTime = Math.round(navigationEntry.loadEventEnd - navigationEntry.fetchStart);
-            setMetrics(prev => ({ ...prev, loadTime }));
-        }
-
-        // Bundle size estimation
-        const bundleSize = Array.from(document.scripts)
-            .reduce((total, script) => {
-                if (script.src && script.src.includes('/assets/')) {
-                    // Estimate based on typical compression ratios
-                    return total + 500; // KB estimate per chunk
-                }
-                return total;
-            }, 0);
-        
-        setMetrics(prev => ({ ...prev, bundleSize }));
-    }, [isVisible]);
-
-    // API Latency Simulation
-    useEffect(() => {
-        if (!isVisible) return;
-
-        const measureApiLatency = async () => {
-            const start = performance.now();
             
-            try {
-                // Measure actual API response time if available
-                const response = await fetch('/api/health').catch(() => null);
-                const latency = Math.round(performance.now() - start);
-                setMetrics(prev => ({ ...prev, apiLatency: latency }));
-            } catch {
-                // Simulate latency for demo
-                const simulatedLatency = Math.round(50 + Math.random() * 100);
-                setMetrics(prev => ({ ...prev, apiLatency: simulatedLatency }));
-            }
-        };
-
-        measureApiLatency();
-        const interval = setInterval(measureApiLatency, 5000);
-        
-        return () => clearInterval(interval);
-    }, [isVisible]);
-
-    // Connection Latency
-    useEffect(() => {
-        if (!isVisible) return;
-
-        const measureConnectionLatency = () => {
+            // Bundle size estimation (static calculation)
+            const bundleSize = Array.from(document.scripts)
+                .reduce((total, script) => {
+                    if (script.src && script.src.includes('/assets/')) {
+                        return total + 500; // KB estimate per chunk
+                    }
+                    return total;
+                }, 0);
+            
+            // Connection estimation (static, no polling)
             const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            const connectionLatency = connection?.rtt || 100; // Use actual or fallback
             
-            if (connection) {
-                const latency = connection.rtt || Math.round(20 + Math.random() * 80);
-                setMetrics(prev => ({ ...prev, connectionLatency: latency }));
-            } else {
-                // Simulate connection latency
-                const simulatedLatency = Math.round(20 + Math.random() * 80);
-                setMetrics(prev => ({ ...prev, connectionLatency: simulatedLatency }));
-            }
+            // Single simulated API latency check
+            const apiLatency = Math.round(10 + Math.random() * 50); // Lightweight simulation
+            
+            setMetrics({
+                fps,
+                memory,
+                loadTime,
+                apiLatency,
+                bundleSize,
+                connectionLatency
+            });
         };
 
-        measureConnectionLatency();
-        const interval = setInterval(measureConnectionLatency, 3000);
-        
-        return () => clearInterval(interval);
+        measureOnce();
     }, [isVisible]);
 
     // Calculate overall performance score

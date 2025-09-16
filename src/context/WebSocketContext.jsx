@@ -23,17 +23,17 @@ export function WebSocketProvider({ children }) {
 
     const connect = useCallback(() => {
         if (isSimulated) {
-            // Simulate WebSocket connection for development
+            // Simulate WebSocket connection for development with reduced frequency
             setConnectionStatus('connecting');
             
             setTimeout(() => {
                 setIsConnected(true);
                 setConnectionStatus('connected');
                 
-                // Start polling for simulated real-time updates
+                // Reduce polling frequency to avoid CPU drain (every 30 seconds instead of 5)
                 pollingIntervalRef.current = setInterval(() => {
                     simulateRealTimeUpdate();
-                }, 5000); // Poll every 5 seconds
+                }, 30000); // Poll every 30 seconds to reduce CPU usage
                 
                 showToast('✅ Real-time connection established', 'success');
             }, 1000);
@@ -71,9 +71,9 @@ export function WebSocketProvider({ children }) {
                 setIsConnected(false);
                 setConnectionStatus('disconnected');
                 
-                // Attempt to reconnect
+                // Attempt to reconnect with longer delays to reduce CPU usage
                 if (reconnectAttemptsRef.current < maxReconnectAttempts) {
-                    const delay = reconnectDelay * Math.pow(2, reconnectAttemptsRef.current);
+                    const delay = Math.min(reconnectDelay * Math.pow(2, reconnectAttemptsRef.current), 30000); // Max 30s delay
                     reconnectTimeoutRef.current = setTimeout(() => {
                         reconnectAttemptsRef.current += 1;
                         connect();
@@ -177,13 +177,14 @@ export function WebSocketProvider({ children }) {
         }
     }, [subscribers]);
 
-    // Simulate real-time updates for development
+    // Simulate real-time updates for development (optimized for lower CPU usage)
     const simulateRealTimeUpdate = useCallback(() => {
+        // Only generate updates occasionally to reduce processing load
+        if (Math.random() > 0.3) return; // 30% chance to generate update
+        
         const updateTypes = [
             'listing.new',
-            'listing.price_change',
-            'auction.new_bid',
-            'user.activity'
+            'user.activity'  // Reduced types to minimize processing
         ];
         
         const randomType = updateTypes[Math.floor(Math.random() * updateTypes.length)];
@@ -192,29 +193,10 @@ export function WebSocketProvider({ children }) {
             'listing.new': {
                 type: 'listing.new',
                 data: {
-                    id: Math.random().toString(36).substr(2, 9),
+                    id: Math.random().toString(36).substr(2, 6), // Shorter IDs
                     title: 'New NFT Listed!',
                     price: '1.5 USDC',
                     collection: 'Cyber Punks'
-                },
-                timestamp: Date.now()
-            },
-            'listing.price_change': {
-                type: 'listing.price_change',
-                data: {
-                    id: '123',
-                    oldPrice: '2.0 USDC',
-                    newPrice: '1.8 USDC',
-                    change: -10
-                },
-                timestamp: Date.now()
-            },
-            'auction.new_bid': {
-                type: 'auction.new_bid',
-                data: {
-                    auctionId: '456',
-                    bidAmount: '3.2 VTRU',
-                    bidder: '0x1234...5678'
                 },
                 timestamp: Date.now()
             },
