@@ -36,6 +36,11 @@ import { WalletProvider } from './context/WalletContext';
 import { PremiumWalletProvider } from './context/PremiumWalletContext';
 import { MarketplaceProvider } from './context/MarketplaceContext';
 import { SupabaseProvider } from './context/SupabaseContext';
+import { WebSocketProvider } from './context/WebSocketContext';
+
+// Enhanced components
+import RealTimeNotifications from './components/RealTimeNotifications';
+import PerformanceMonitor from './components/PerformanceMonitor';
 
 // Wagmi and AppKit
 import { WagmiProvider } from 'wagmi';
@@ -250,6 +255,22 @@ function useIdleRoutePrefetch() {
 
 function App() {
     useIdleRoutePrefetch();
+    
+    // Performance monitoring state
+    const [showPerformanceMonitor, setShowPerformanceMonitor] = useState(false);
+    
+    // Toggle performance monitor with keyboard shortcut
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+                e.preventDefault();
+                setShowPerformanceMonitor(prev => !prev);
+            }
+        };
+        
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
 
     // Create QueryClient for React Query
     const queryClient = new QueryClient();
@@ -258,85 +279,92 @@ function App() {
         <WagmiProvider config={wagmiAdapter.wagmiConfig}>
             <QueryClientProvider client={queryClient}>
                 <SupabaseProvider>
-                    <PremiumWalletProvider>
-                        {/* Keep old WalletProvider for backward compatibility during transition */}
-                        <WalletProvider rpcUrl={rpcUrl}>
-                            {/* Pass ABI array, not the whole artifact */}
-                            <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi.abi}>
-                                <BrowserRouter>
-                                    <RouteProgressBar />
-                                    <ScrollToTop />
-                                    <TitleSetter />
-                                    <OnlineStatusBanner />
-                                    <EnvWarningBanner />
-                                    <div className="app-container">
-                                        <Navigation />
-                                        <div className="main-content">
-                                            <RouteErrorBoundary>
-                                                <Suspense fallback={
-                                                    <div className="hp" style={{ maxWidth: 900, margin: '3rem auto', padding: '0 1.25rem' }}>
-                                                        <div className="hp-section__head"><h2>Loading…</h2></div>
-                                                        <div className="hp-mini">
-                                                            <div className="hp-mini__card"><div className="hp-mini__label">Preparing</div><div className="hp-mini__value">…</div></div>
-                                                            <div className="hp-mini__card"><div className="hp-mini__label">Routes</div><div className="hp-mini__value">…</div></div>
-                                                            <div className="hp-mini__card"><div className="hp-mini__label">Assets</div><div className="hp-mini__value">…</div></div>
+                    <WebSocketProvider>
+                        <PremiumWalletProvider>
+                            {/* Keep old WalletProvider for backward compatibility during transition */}
+                            <WalletProvider rpcUrl={rpcUrl}>
+                                {/* Pass ABI array, not the whole artifact */}
+                                <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi.abi}>
+                                    <BrowserRouter>
+                                        <RouteProgressBar />
+                                        <ScrollToTop />
+                                        <TitleSetter />
+                                        <OnlineStatusBanner />
+                                        <EnvWarningBanner />
+                                        <div className="app-container">
+                                            <Navigation />
+                                            <div className="main-content">
+                                                <RouteErrorBoundary>
+                                                    <Suspense fallback={
+                                                        <div className="hp" style={{ maxWidth: 900, margin: '3rem auto', padding: '0 1.25rem' }}>
+                                                            <div className="hp-section__head"><h2>Loading…</h2></div>
+                                                            <div className="hp-mini">
+                                                                <div className="hp-mini__card"><div className="hp-mini__label">Preparing</div><div className="hp-mini__value">…</div></div>
+                                                                <div className="hp-mini__card"><div className="hp-mini__label">Routes</div><div className="hp-mini__value">…</div></div>
+                                                                <div className="hp-mini__card"><div className="hp-mini__label">Assets</div><div className="hp-mini__value">…</div></div>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                }>
-                                                    <Routes>
-                                                        <Route path="/" element={<HomePage />} />
-                                                        <Route path="/profile" element={<ProfilePage />} />
-                                                        <Route path="/marketplace" element={<MarketplacePage />} />
-                                                        <Route path="/hot-listings" element={<HotListingsPage />} />
-                                                        <Route path="/sell" element={<SellPage />} />
+                                                    }>
+                                                        <Routes>
+                                                            <Route path="/" element={<HomePage />} />
+                                                            <Route path="/profile" element={<ProfilePage />} />
+                                                            <Route path="/marketplace" element={<MarketplacePage />} />
+                                                            <Route path="/hot-listings" element={<HotListingsPage />} />
+                                                            <Route path="/sell" element={<SellPage />} />
                         
 
-                                                        <Route path="/terms" element={<TermsPage />} />
-                                                        <Route path="/privacy" element={<PrivacyPage />} />
+                                                            <Route path="/terms" element={<TermsPage />} />
+                                                            <Route path="/privacy" element={<PrivacyPage />} />
 
-                                                        {/* collections routes */}
-                                                        <Route path="/collections" element={<div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
-                                                            <div className="hp-section__head"><h2>Collections</h2></div>
-                                                            <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
-                                                        </div>} />
-                                                        <Route path="/collections/:address" element={<CollectionPage />} />
-                                                        <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
+                                                            {/* collections routes */}
+                                                            <Route path="/collections" element={<div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
+                                                                <div className="hp-section__head"><h2>Collections</h2></div>
+                                                                <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
+                                                            </div>} />
+                                                            <Route path="/collections/:address" element={<CollectionPage />} />
+                                                            <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
 
-                                                        {/* NFT detail routes */}
-                                                        <Route path="/nft/:contractAddress/:tokenId" element={<NFTDetailPage />} />
+                                                            {/* NFT detail routes */}
+                                                            <Route path="/nft/:contractAddress/:tokenId" element={<NFTDetailPage />} />
 
-                                                        {/* Auction routes - always enabled */}
-                                                        <Route path="/auctions/create" element={<CreateAuctionPage />} />
-                                                        <Route path="/auctions/:id" element={<AuctionDetailPage />} />
-                                                        <Route path="/my-auctions" element={<MyAuctionsRedirect />} />
-                                                        <Route path="/admin/paths" element={<AdminPathsPage />} />
-                                                        <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
+                                                            {/* Auction routes - always enabled */}
+                                                            <Route path="/auctions/create" element={<CreateAuctionPage />} />
+                                                            <Route path="/auctions/:id" element={<AuctionDetailPage />} />
+                                                            <Route path="/my-auctions" element={<MyAuctionsRedirect />} />
+                                                            <Route path="/admin/paths" element={<AdminPathsPage />} />
+                                                            <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
                         
 
-                                                        {/* Fallback */}
-                                                        <Route path="*" element={<Navigate to="/" replace />} />
-                                                    </Routes>
-                                                </Suspense>
-                                            </RouteErrorBoundary>
+                                                            {/* Fallback */}
+                                                            <Route path="*" element={<Navigate to="/" replace />} />
+                                                        </Routes>
+                                                    </Suspense>
+                                                </RouteErrorBoundary>
+                                            </div>
+                                            <Footer />
                                         </div>
-                                        <Footer />
-                                    </div>
-                                    {import.meta.env.PROD && <Analytics />}
-                                    <Toaster 
-                                        position="top-right"
-                                        toastOptions={{
-                                            style: {
-                                                background: 'rgba(17, 25, 40, 0.95)',
-                                                border: '1px solid rgba(0, 255, 255, 0.3)',
-                                                color: '#00ffff',
-                                                backdropFilter: 'blur(16px)',
-                                            },
-                                        }}
-                                    />
-                                </BrowserRouter>
-                            </MarketplaceProvider>
-                        </WalletProvider>
-                    </PremiumWalletProvider>
+                                        
+                                        {/* Enhanced UI Components */}
+                                        <RealTimeNotifications />
+                                        <PerformanceMonitor isVisible={showPerformanceMonitor} />
+                                        
+                                        {import.meta.env.PROD && <Analytics />}
+                                        <Toaster 
+                                            position="top-right"
+                                            toastOptions={{
+                                                style: {
+                                                    background: 'rgba(17, 25, 40, 0.95)',
+                                                    border: '1px solid rgba(0, 255, 255, 0.3)',
+                                                    color: '#00ffff',
+                                                    backdropFilter: 'blur(16px)',
+                                                },
+                                            }}
+                                        />
+                                    </BrowserRouter>
+                                </MarketplaceProvider>
+                            </WalletProvider>
+                        </PremiumWalletProvider>
+                    </WebSocketProvider>
                 </SupabaseProvider>
             </QueryClientProvider>
         </WagmiProvider>

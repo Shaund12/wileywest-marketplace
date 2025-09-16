@@ -7,6 +7,7 @@ import { useSupabase } from '../context/SupabaseContext';
 import ListingCard from '../components/ListingCard';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
+import VirtualizedNFTGrid from '../components/VirtualizedNFTGrid';
 import { convertToUSDCValue, formatPriceWithUSDC } from '../utils/tokenUtils';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
@@ -2213,28 +2214,58 @@ function MarketplacePage() {
                                 className="loading"
                             />
                         ) : isLoading ? (
-                            <LoadingSkeleton type="card" count={6} className="grid" />
+                            <LoadingSkeleton type="marketplace-grid" />
                         ) : currentItems.length > 0 ? (
                             <>
-                                <div className={`listings-${viewMode}`}>
-                                    {currentItems.map((listing) => (
-                                        <ListingCard key={listing.id} listing={listing} viewMode={viewMode} />
-                                    ))}
-                                </div>
+                                {/* Use VirtualizedNFTGrid for better performance with large datasets */}
+                                {currentItems.length > 50 ? (
+                                    <VirtualizedNFTGrid
+                                        items={currentItems}
+                                        loading={isLoading}
+                                        hasMore={currentPage < totalPages}
+                                        onLoadMore={autoLoadNext ? async () => {
+                                            if (currentPage < totalPages) {
+                                                paginate(currentPage + 1);
+                                            }
+                                        } : null}
+                                        className="virtualized-marketplace-grid"
+                                        itemsPerRow={viewMode === 'grid' ? 4 : viewMode === 'compact' ? 6 : 3}
+                                        minItemWidth={viewMode === 'grid' ? 280 : viewMode === 'compact' ? 220 : 350}
+                                    />
+                                ) : (
+                                    <div className={`listings-${viewMode}`}>
+                                        {currentItems.map((listing) => (
+                                            <motion.div
+                                                key={listing.id}
+                                                initial={{ opacity: 0, y: 20 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ duration: 0.3 }}
+                                                whileHover={{ y: -5 }}
+                                            >
+                                                <ListingCard listing={listing} viewMode={viewMode} />
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                )}
 
-                                {/* Pagination */}
-                                {!autoLoadNext && totalPages > 1 && (
-                                    <div className="pagination">
+                                {/* Pagination - only show for non-virtualized grid */}
+                                {currentItems.length <= 50 && !autoLoadNext && totalPages > 1 && (
+                                    <motion.div 
+                                        className="pagination"
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        transition={{ delay: 0.2 }}
+                                    >
                                         <button onClick={() => paginate(1)} disabled={currentPage === 1} className="pagination-button">First</button>
                                         <button onClick={() => paginate(currentPage - 1)} disabled={currentPage === 1} className="pagination-button">Previous</button>
                                         <div className="pagination-info">Page {Math.min(currentPage, totalPages)} of {totalPages}</div>
                                         <button onClick={() => paginate(currentPage + 1)} disabled={currentPage >= totalPages} className="pagination-button">Next</button>
                                         <button onClick={() => paginate(totalPages)} disabled={currentPage >= totalPages} className="pagination-button">Last</button>
-                                    </div>
+                                    </motion.div>
                                 )}
 
-                                {/* Infinite loader sentinel */}
-                                {autoLoadNext && currentPage < totalPages && (
+                                {/* Infinite loader sentinel - only for non-virtualized grid */}
+                                {currentItems.length <= 50 && autoLoadNext && currentPage < totalPages && (
                                     <div ref={sentinelRef} style={{ height: 1 }} aria-hidden="true" />
                                 )}
                             </>
