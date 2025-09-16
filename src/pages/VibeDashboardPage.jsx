@@ -33,40 +33,85 @@ function VibeDashboardPage() {
             setLoading(true);
             setError(null);
 
+            // Show demo data when marketplace address is not configured
             if (!marketplaceAddress || marketplaceAddress === '0x0000000000000000000000000000000000000000') {
-                setError('Marketplace contract address not configured. Please check environment configuration.');
-                debugWarn('Marketplace address not configured:', marketplaceAddress);
-                setStats({
-                    totalVTRUSent: '0',
-                    vtruSent24h: '0',
-                    vtruSent7d: '0',
-                    totalTransactions: 0,
-                    totalPlatformFees: '0',
-                    totalRoyalties: '0',
-                    avgPayout: '0'
-                });
-                setChartData([]);
-                setLeaderboards({ collections: [], royalties: [] });
-                setRecentEvents([]);
+                debugWarn('Marketplace address not configured, showing demo data:', marketplaceAddress);
+                
+                // Demo data to show what the dashboard looks like
+                const demoStats = {
+                    totalVTRUSent: '1,247.8934',
+                    vtruSent24h: '89.2341',
+                    vtruSent7d: '523.7821',
+                    totalTransactions: 156,
+                    totalPlatformFees: '89.4521',
+                    totalRoyalties: '34.2190',
+                    avgPayout: '8.0012'
+                };
+
+                const demoChartData = [
+                    { date: '2025-01-14', vtruSent: 45.2, transactions: 8 },
+                    { date: '2025-01-15', vtruSent: 67.8, transactions: 12 },
+                    { date: '2025-01-16', vtruSent: 89.3, transactions: 15 },
+                    { date: '2025-01-17', vtruSent: 123.4, transactions: 21 },
+                    { date: '2025-01-18', vtruSent: 156.7, transactions: 18 },
+                    { date: '2025-01-19', vtruSent: 134.2, transactions: 16 },
+                    { date: '2025-01-20', vtruSent: 178.9, transactions: 24 }
+                ];
+
+                const demoLeaderboards = {
+                    collections: [
+                        { name: 'CyberPunks NFT', address: '0x1234...5678', platformFees: '23.4521', royalties: '12.3456' },
+                        { name: 'Neon Art Collection', address: '0x2345...6789', platformFees: '18.7632', royalties: '8.9012' },
+                        { name: 'Digital Dreams', address: '0x3456...7890', platformFees: '15.2341', royalties: '6.7890' },
+                        { name: 'Pixel Warriors', address: '0x4567...8901', platformFees: '12.8907', royalties: '5.4321' },
+                        { name: 'Meta Verse Assets', address: '0x5678...9012', platformFees: '9.6754', royalties: '4.1234' }
+                    ],
+                    royalties: [
+                        { collection: 'Top Creator 1', recipient: '0xabcd...1234', amount: '12.3456' },
+                        { collection: 'Top Creator 2', recipient: '0xbcde...2345', amount: '8.9012' },
+                        { collection: 'Top Creator 3', recipient: '0xcdef...3456', amount: '6.7890' },
+                        { collection: 'Top Creator 4', recipient: '0xdef0...4567', amount: '5.4321' },
+                        { collection: 'Top Creator 5', recipient: '0xef01...5678', amount: '4.1234' }
+                    ]
+                };
+
+                const demoEvents = [
+                    { time: '2 min ago', description: 'VIBE payout 12.4567 VTRU from sale transaction', hash: '0x1234567890abcdef1234567890abcdef12345678', type: 'vibe_payout' },
+                    { time: '8 min ago', description: 'VIBE payout 8.9012 VTRU from auction transaction', hash: '0x2345678901bcdef12345678901bcdef123456789', type: 'vibe_payout' },
+                    { time: '15 min ago', description: 'VIBE payout 15.6789 VTRU from sale transaction', hash: '0x3456789012cdef123456789012cdef1234567890', type: 'vibe_payout' },
+                    { time: '23 min ago', description: 'VIBE payout 6.7890 VTRU from auction transaction', hash: '0x456789013def1234567890123def12345678901', type: 'vibe_payout' },
+                    { time: '31 min ago', description: 'VIBE payout 9.8765 VTRU from sale transaction', hash: '0x56789014ef123456789014ef123456789012345', type: 'vibe_payout' }
+                ];
+
+                setStats(demoStats);
+                setChartData(demoChartData);
+                setLeaderboards(demoLeaderboards);
+                setRecentEvents(demoEvents);
+                setError('Demo mode: Using sample data. Configure VITE_MARKETPLACE_ADDRESS to see real blockchain data.');
                 setLoading(false);
                 return;
             }
 
+            // Show cached/fallback data when provider is not available but address is configured
             if (!provider) {
-                setError('No blockchain provider available. Please connect your wallet or check network connection.');
-                debugWarn('Provider not available, showing no data');
-                setStats({
-                    totalVTRUSent: '0',
-                    vtruSent24h: '0',
-                    vtruSent7d: '0',
+                debugWarn('Provider not available, showing fallback data');
+                
+                // Fallback data - could be cached from previous successful loads
+                const fallbackStats = {
+                    totalVTRUSent: '0.0000',
+                    vtruSent24h: '0.0000',
+                    vtruSent7d: '0.0000',
                     totalTransactions: 0,
-                    totalPlatformFees: '0',
-                    totalRoyalties: '0',
-                    avgPayout: '0'
-                });
+                    totalPlatformFees: '0.0000',
+                    totalRoyalties: '0.0000',
+                    avgPayout: '0.0000'
+                };
+
+                setStats(fallbackStats);
                 setChartData([]);
                 setLeaderboards({ collections: [], royalties: [] });
                 setRecentEvents([]);
+                setError('Network unavailable: Cannot connect to blockchain. Please check your connection or try again later.');
                 setLoading(false);
                 return;
             }
@@ -353,13 +398,14 @@ function VibeDashboardPage() {
     useEffect(() => {
         let cancelled = false;
         const loadData = async () => {
-            if (!cancelled && provider && marketplaceAddress) {
+            if (!cancelled) {
+                // Always load data regardless of provider/address status
                 await loadDashboardData();
             }
         };
         loadData();
         return () => { cancelled = true; };
-    }, [provider, marketplaceAddress, timeframe, loadDashboardData]);
+    }, [loadDashboardData]);
 
     const formatTimeAgo = useCallback((timestamp) => {
         if (!timestamp || isNaN(timestamp)) return 'Unknown';
@@ -428,10 +474,39 @@ function VibeDashboardPage() {
                 </div>
             </div>
 
-            {/* Error */}
+            {/* Error/Info Banner */}
             {error && (
-                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-300 px-4 py-3 mb-6">
-                    <p>{error}</p>
+                <div className={`rounded-lg border px-4 py-3 mb-6 ${
+                    error.includes('Demo mode') 
+                        ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' 
+                        : error.includes('Network unavailable')
+                        ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
+                        : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                }`}>
+                    <div className="flex items-start gap-3">
+                        <span className="text-lg">
+                            {error.includes('Demo mode') ? '🎬' : error.includes('Network unavailable') ? '🌐' : '⚠️'}
+                        </span>
+                        <div>
+                            <p className="font-medium">
+                                {error.includes('Demo mode') ? 'Demo Mode Active' : 
+                                 error.includes('Network unavailable') ? 'Connection Issue' : 'Configuration Error'}
+                            </p>
+                            <p className="text-sm opacity-90 mt-1">{error}</p>
+                            {error.includes('Demo mode') && (
+                                <p className="text-xs opacity-75 mt-2">
+                                    💡 This shows sample data to demonstrate the dashboard features. 
+                                    Real data will be displayed when properly configured.
+                                </p>
+                            )}
+                            {error.includes('Network unavailable') && (
+                                <p className="text-xs opacity-75 mt-2">
+                                    💡 Try refreshing the page or check your network connection. 
+                                    You can also connect a wallet to enable blockchain access.
+                                </p>
+                            )}
+                        </div>
+                    </div>
                 </div>
             )}
 
