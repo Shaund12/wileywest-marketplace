@@ -120,7 +120,7 @@ function VibeDashboardPage() {
             const marketplace = new ethers.Contract(marketplaceAddress, MarketplaceAbi.abi, provider);
 
             const currentBlock = await provider.getBlockNumber();
-            const SCAN_BLOCKS = 50000;
+            const SCAN_BLOCKS = 200000; // Increased from 50k to 200k blocks to capture more history
             const fromBlock = Math.max(currentBlock - SCAN_BLOCKS, 0);
 
             debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events (${SCAN_BLOCKS} blocks)`);
@@ -139,9 +139,24 @@ function VibeDashboardPage() {
 
             const allBreakdownEvents = [...saleBreakdownEvents, ...auctionBreakdownEvents];
             debugLog(`📈 Found ${saleBreakdownEvents.length} sale breakdowns and ${auctionBreakdownEvents.length} auction breakdowns`);
+            
+            // Add more detailed logging about recent events
+            if (allBreakdownEvents.length > 0) {
+                const recentEvents = allBreakdownEvents.slice(-5); // Get last 5 events
+                debugLog(`🔍 Recent events (last 5):`);
+                for (let i = 0; i < recentEvents.length; i++) {
+                    const event = recentEvents[i];
+                    const vibeOutWVTRU = ethers.formatEther(event.args.vibeOutWVTRU || '0');
+                    const vibeOutNative = ethers.formatEther(event.args.vibeOutNative || '0');
+                    debugLog(`  Event ${i + 1}: tx=${event.transactionHash}, block=${event.blockNumber}, vibeOutWVTRU=${vibeOutWVTRU}, vibeOutNative=${vibeOutNative}`);
+                }
+            }
 
             if (allBreakdownEvents.length === 0) {
-                debugWarn('No breakdown events found in recent blocks');
+                debugWarn(`No breakdown events found in recent ${SCAN_BLOCKS} blocks (${fromBlock} to ${currentBlock})`);
+                debugLog(`Current block: ${currentBlock}, scanning from block: ${fromBlock}`);
+                debugLog(`If there should be recent transactions, they might be in a different block range or the events might have different names.`);
+                
                 setStats({
                     totalVTRUSent: '0',
                     vtruSent24h: '0',
@@ -154,6 +169,7 @@ function VibeDashboardPage() {
                 setChartData([]);
                 setLeaderboards({ collections: [], royalties: [] });
                 setRecentEvents([]);
+                setError('No recent VIBE transactions found in the last 200,000 blocks. This could mean transactions are older or in a different range.');
                 setLoading(false);
                 return;
             }
