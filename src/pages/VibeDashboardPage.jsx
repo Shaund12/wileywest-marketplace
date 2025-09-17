@@ -365,95 +365,31 @@ function VibeDashboardPage() {
         } catch (error) {
             criticalError('Error loading vibe dashboard data from blockchain:', error);
             let errorMessage = 'Failed to load vibe fee data from blockchain.';
-            let showSampleData = false;
-            
             if (error.message?.includes('Failed to fetch')) {
-                errorMessage = 'Network connection failed. Showing sample data structure.';
-                showSampleData = true;
+                errorMessage = 'Network connection failed. Please check your internet connection and try again.';
             } else if (error.message?.includes('network')) {
                 errorMessage = 'Blockchain network error. Check if you are on the correct network (Vitruveo).';
-                showSampleData = true;
             } else if (error.message?.includes('UNPREDICTABLE_GAS_LIMIT')) {
                 errorMessage = 'Smart contract interaction failed.';
             } else if (error.code === 'NETWORK_ERROR') {
-                errorMessage = 'Blockchain network is unreachable. Showing sample data structure.';
-                showSampleData = true;
+                errorMessage = 'Blockchain network is unreachable. Please try again later.';
             } else {
                 errorMessage = `Failed to load vibe fee data: ${error.message || 'Unknown error'}.`;
             }
 
-            // When blockchain is unreachable but marketplace address is configured,
-            // show sample data to demonstrate what the dashboard would look like with real data
-            if (showSampleData && marketplaceAddress && marketplaceAddress !== '0x0000000000000000000000000000000000000000') {
-                debugWarn('🌐 Blockchain unreachable - showing sample vibe dashboard data structure');
-                
-                // Sample data that demonstrates the expected structure when blockchain is working
-                const sampleStats = {
-                    totalVTRUSent: '247.8934',
-                    vtruSent24h: '19.2341', 
-                    vtruSent7d: '123.7821',
-                    totalTransactions: 43,
-                    totalPlatformFees: '18.4521',
-                    totalRoyalties: '7.2190',
-                    avgPayout: '5.7614'
-                };
-
-                const sampleChartData = [
-                    { date: '2025-01-14', vtruSent: 15.20, transactions: 3 },
-                    { date: '2025-01-15', vtruSent: 22.80, transactions: 4 },
-                    { date: '2025-01-16', vtruSent: 18.30, transactions: 5 },
-                    { date: '2025-01-17', vtruSent: 31.40, transactions: 7 },
-                    { date: '2025-01-18', vtruSent: 26.70, transactions: 6 },
-                    { date: '2025-01-19', vtruSent: 19.20, transactions: 4 },
-                    { date: '2025-01-20', vtruSent: 23.90, transactions: 5 }
-                ];
-
-                const sampleLeaderboards = {
-                    collections: [
-                        { name: 'PixelNinja Cats', address: '0x2D732b0B...E34e906', platformFees: '8.4521' },
-                        { name: 'NeonKatz Collection', address: '0x89207A7F...BE1AE29b8', platformFees: '6.2341' },
-                        { name: 'V-Share NFTs', address: '0xc5d518d1...48a1ac', platformFees: '3.7659' }
-                    ],
-                    royalties: [
-                        { collection: 'Artist Alpha', recipient: '0xabcd...1234', amount: '3.2456' },
-                        { collection: 'Creator Beta', recipient: '0xbcde...2345', amount: '2.1012' },
-                        { collection: 'Designer Gamma', recipient: '0xcdef...3456', amount: '1.8522' }
-                    ]
-                };
-
-                const sampleEvents = [
-                    { time: '3 min ago', description: 'VIBE payout 4.2567 VTRU from sale transaction', hash: '0x1234567890abcdef1234567890abcdef12345678', type: 'vibe_payout' },
-                    { time: '12 min ago', description: 'VIBE payout 2.8012 VTRU from auction transaction', hash: '0x2345678901bcdef12345678901bcdef123456789', type: 'vibe_payout' },
-                    { time: '28 min ago', description: 'VIBE payout 6.1789 VTRU from sale transaction', hash: '0x3456789012cdef123456789012cdef1234567890', type: 'vibe_payout' },
-                    { time: '45 min ago', description: 'VIBE payout 3.4567 VTRU from auction transaction', hash: '0x456789013def1234567890123def12345678901', type: 'vibe_payout' },
-                    { time: '1h ago', description: 'VIBE payout 5.2765 VTRU from sale transaction', hash: '0x56789014ef123456789014ef123456789012345', type: 'vibe_payout' }
-                ];
-
-                setStats(sampleStats);
-                setChartData(sampleChartData);
-                setLeaderboards(sampleLeaderboards);
-                setRecentEvents(sampleEvents);
-                
-                errorMessage += ' This shows the structure of live blockchain data.';
-            }
-
             setError(errorMessage);
-            
-            // Only set fallback zero values if we're not showing sample data
-            if (!showSampleData) {
-                setStats({
-                    totalVTRUSent: '0',
-                    vtruSent24h: '0',
-                    vtruSent7d: '0',
-                    totalTransactions: 0,
-                    totalPlatformFees: '0',
-                    totalRoyalties: '0',
-                    avgPayout: '0'
-                });
-                setChartData([]);
-                setLeaderboards({ collections: [], royalties: [] });
-                setRecentEvents([]);
-            }
+            setStats({
+                totalVTRUSent: '0',
+                vtruSent24h: '0',
+                vtruSent7d: '0',
+                totalTransactions: 0,
+                totalPlatformFees: '0',
+                totalRoyalties: '0',
+                avgPayout: '0'
+            });
+            setChartData([]);
+            setLeaderboards({ collections: [], royalties: [] });
+            setRecentEvents([]);
         } finally {
             setLoading(false);
         }
@@ -543,22 +479,17 @@ function VibeDashboardPage() {
                 <div className={`rounded-lg border px-4 py-3 mb-6 ${
                     error.includes('Demo mode') 
                         ? 'border-blue-500/30 bg-blue-500/10 text-blue-300' 
-                        : error.includes('Network connection failed') || error.includes('Blockchain network is unreachable')
-                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
                         : error.includes('Network unavailable')
                         ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
                         : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
                 }`}>
                     <div className="flex items-start gap-3">
                         <span className="text-lg">
-                            {error.includes('Demo mode') ? '🎬' : 
-                             error.includes('Network connection failed') || error.includes('Blockchain network is unreachable') ? '🌐' :
-                             error.includes('Network unavailable') ? '🌐' : '⚠️'}
+                            {error.includes('Demo mode') ? '🎬' : error.includes('Network unavailable') ? '🌐' : '⚠️'}
                         </span>
                         <div>
                             <p className="font-medium">
                                 {error.includes('Demo mode') ? 'Demo Mode Active' : 
-                                 error.includes('Network connection failed') || error.includes('Blockchain network is unreachable') ? 'Blockchain Unreachable - Sample Data' : 
                                  error.includes('Network unavailable') ? 'Connection Issue' : 'Configuration Error'}
                             </p>
                             <p className="text-sm opacity-90 mt-1">{error}</p>
@@ -566,12 +497,6 @@ function VibeDashboardPage() {
                                 <p className="text-xs opacity-75 mt-2">
                                     💡 This shows sample data to demonstrate the dashboard features. 
                                     Real data will be displayed when properly configured.
-                                </p>
-                            )}
-                            {(error.includes('Network connection failed') || error.includes('Blockchain network is unreachable')) && (
-                                <p className="text-xs opacity-75 mt-2">
-                                    💡 The blockchain is not accessible in this environment. The dashboard structure shown 
-                                    represents how live data would appear when connected to the Vitruveo network.
                                 </p>
                             )}
                             {error.includes('Network unavailable') && (
