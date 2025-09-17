@@ -120,10 +120,10 @@ function VibeDashboardPage() {
             const marketplace = new ethers.Contract(marketplaceAddress, MarketplaceAbi.abi, provider);
 
             const currentBlock = await provider.getBlockNumber();
-            const SCAN_BLOCKS = 200000; // Increased from 50k to 200k blocks to capture more history
-            const fromBlock = Math.max(currentBlock - SCAN_BLOCKS, 0);
+            const GENESIS_BLOCK = 11635620; // Contract genesis block for all-time VIBE stats
+            const fromBlock = GENESIS_BLOCK;
 
-            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events (${SCAN_BLOCKS} blocks)`);
+            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for all-time vibe fee events (${currentBlock - fromBlock + 1} blocks from genesis)`);
 
             const saleBreakdownEvents = await marketplace.queryFilter(
                 marketplace.filters.SaleBreakdown(),
@@ -153,9 +153,10 @@ function VibeDashboardPage() {
             }
 
             if (allBreakdownEvents.length === 0) {
-                debugWarn(`No breakdown events found in recent ${SCAN_BLOCKS} blocks (${fromBlock} to ${currentBlock})`);
-                debugLog(`Current block: ${currentBlock}, scanning from block: ${fromBlock}`);
-                debugLog(`If there should be recent transactions, they might be in a different block range or the events might have different names.`);
+                debugWarn(`No breakdown events found from genesis block ${GENESIS_BLOCK} to current block ${currentBlock}`);
+                debugLog(`Current block: ${currentBlock}, scanning from genesis block: ${fromBlock}`);
+                debugLog(`Total blocks scanned: ${currentBlock - fromBlock + 1}`);
+                debugLog(`If there should be transactions, they might have different event names or the contract might not have any VIBE activity yet.`);
                 
                 setStats({
                     totalVTRUSent: '0',
@@ -169,7 +170,7 @@ function VibeDashboardPage() {
                 setChartData([]);
                 setLeaderboards({ collections: [], royalties: [] });
                 setRecentEvents([]);
-                setError('No recent VIBE transactions found in the last 200,000 blocks. This could mean transactions are older or in a different range.');
+                setError('No VIBE transactions found since contract genesis block. This could mean no marketplace activity has generated VIBE fees yet.');
                 setLoading(false);
                 return;
             }
