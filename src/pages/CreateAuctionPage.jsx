@@ -7,6 +7,7 @@ import { useSupabase } from '../context/SupabaseContext';
 import { getSupportedTokens, formatTokenAmount } from '../utils/tokenRegistry';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import { refreshUserNFTCollections } from '../utils/nftOwnershipUtils';
+import EnhancedPriceTicker from '../components/EnhancedPriceTicker';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import './AuctionStyles.css';
@@ -1345,51 +1346,37 @@ function CreateAuctionPage() {
         <p>Set up a timed auction for your NFT</p>
       </div>
 
-      {/* Price Ticker with Uniswap Price Data */}
-      {Object.keys(livePrice).length > 0 && (
-        <div className="price-ticker">
-          <div className="ticker-header">
-            <span>Uniswap V3 Token Prices</span>
-            <span className="ticker-time">Last updated: {formatTime(lastUpdateTime)}</span>
-          </div>
-          <div className="ticker-items">
-            {Object.entries(tokenList)
-              .filter(([address]) => {
+      {/* Enhanced Price Ticker with Blockchain Scanning and History */}
+      {Object.keys(tokenList).length > 0 && (
+        <EnhancedPriceTicker
+          provider={provider}
+          tokenList={tokenList}
+          onPriceUpdate={(priceData) => {
+            // Update legacy price state for compatibility
+            const prices = {};
+            const changes = {};
+            const sources = {};
+            const errors = {};
+            
+            Object.entries(priceData).forEach(([address, data]) => {
+              if (data && data.price !== undefined) {
                 const priceKey = address === ethers.ZeroAddress ? WVTRU_ADDRESS : address;
-                return livePrice[priceKey] !== null;
-              })
-              .map(([address, token]) => {
-                const priceKey = address === ethers.ZeroAddress ? WVTRU_ADDRESS : address;
-                const price = livePrice[priceKey];
-                const change = priceChange[priceKey] || 0;
-                const source = priceSources[priceKey];
-                const error = priceErrors[priceKey];
-
-                return (
-                  <div className={`ticker-item ${error ? 'has-error' : ''}`} key={address}>
-                    <div className="ticker-symbol">{token.symbol}</div>
-                    {price ? (
-                      <>
-                        <div className="ticker-price">${price.toFixed(4)}</div>
-                        <div className={`ticker-change ${change > 0 ? 'positive' : change < 0 ? 'negative' : ''}`}>
-                          {change > 0 ? '+' : ''}
-                          {change.toFixed(2)}%
-                        </div>
-                      </>
-                    ) : (
-                      <div className="ticker-no-price">No Price Data</div>
-                    )}
-                    <div className="ticker-source" title={error || source}>{error ? 'Error' : source}</div>
-                  </div>
-                );
-              })}
-            <div className="ticker-refresh" onClick={() => fetchUniswapPrices()} title="Refresh Uniswap Prices">
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
-              </svg>
-            </div>
-          </div>
-        </div>
+                prices[priceKey] = data.price;
+                changes[priceKey] = data.changes?.['24h']?.changePercent || 0;
+                sources[priceKey] = data.source || 'Unknown';
+              }
+            });
+            
+            setLivePrice(prices);
+            setPriceChange(changes);
+            setPriceSources(sources);
+            setPriceErrors(errors);
+            setLastUpdateTime(new Date());
+          }}
+          showAdvancedMetrics={true}
+          enableBlockchainScan={true}
+          autoRefreshInterval={30000}
+        />
       )}
 
       {/* NFT Preview */}
