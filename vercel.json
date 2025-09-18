@@ -14,6 +14,12 @@
     }
   ],
   "functions": {
+    "api/sync-listings.js": {
+      "maxDuration": 300
+    },
+    "api/sync-user-collections.js": {
+      "maxDuration": 120
+    },
     "api/image-proxy.js": {
       "maxDuration": 30
     },
