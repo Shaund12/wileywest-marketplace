@@ -53,8 +53,8 @@ function VibeDashboardPage() {
             }
 
             if (!provider) {
-                setError('No blockchain provider available. Please connect your wallet or check network connection.');
-                debugWarn('Provider not available, showing no data');
+                setError('Network unavailable: Cannot connect to blockchain. Please check your connection or try again later.');
+                debugWarn('Provider not available, cannot load blockchain data');
                 setStats({
                     totalVTRUSent: '0',
                     vtruSent24h: '0',
@@ -75,10 +75,10 @@ function VibeDashboardPage() {
             const marketplace = new ethers.Contract(marketplaceAddress, MarketplaceAbi.abi, provider);
 
             const currentBlock = await provider.getBlockNumber();
-            const SCAN_BLOCKS = 50000;
-            const fromBlock = Math.max(currentBlock - SCAN_BLOCKS, 0);
+            const GENESIS_BLOCK = 11635620; // Contract genesis block for all-time VIBE stats
+            const fromBlock = GENESIS_BLOCK;
 
-            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for vibe fee events (${SCAN_BLOCKS} blocks)`);
+            debugLog(`📊 Scanning blocks ${fromBlock} to ${currentBlock} for all-time vibe fee events (${currentBlock - fromBlock + 1} blocks from genesis)`);
 
             const saleBreakdownEvents = await marketplace.queryFilter(
                 marketplace.filters.SaleBreakdown(),
@@ -96,7 +96,7 @@ function VibeDashboardPage() {
             debugLog(`📈 Found ${saleBreakdownEvents.length} sale breakdowns and ${auctionBreakdownEvents.length} auction breakdowns`);
 
             if (allBreakdownEvents.length === 0) {
-                debugWarn('No breakdown events found in recent blocks');
+                debugWarn(`No breakdown events found from genesis block ${GENESIS_BLOCK} to current block ${currentBlock}`);
                 setStats({
                     totalVTRUSent: '0',
                     vtruSent24h: '0',
@@ -353,13 +353,13 @@ function VibeDashboardPage() {
     useEffect(() => {
         let cancelled = false;
         const loadData = async () => {
-            if (!cancelled && provider && marketplaceAddress) {
+            if (!cancelled) {
                 await loadDashboardData();
             }
         };
         loadData();
         return () => { cancelled = true; };
-    }, [provider, marketplaceAddress, timeframe, loadDashboardData]);
+    }, [loadDashboardData]);
 
     const formatTimeAgo = useCallback((timestamp) => {
         if (!timestamp || isNaN(timestamp)) return 'Unknown';
@@ -379,8 +379,8 @@ function VibeDashboardPage() {
     const tfBtn = (key, label) => (
         <button
             className={`px-3 py-1.5 rounded-md text-sm font-medium transition ${timeframe === key
-                    ? 'bg-indigo-600 text-white shadow'
-                    : 'bg-white/5 text-gray-300 hover:bg-white/10'
+                ? 'bg-indigo-600 text-white shadow'
+                : 'bg-white/5 text-gray-300 hover:bg-white/10'
                 }`}
             onClick={() => setTimeframe(key)}
         >
@@ -390,7 +390,6 @@ function VibeDashboardPage() {
 
     return (
         <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-            {/* Header */}
             <div className="flex flex-col gap-3 mb-6">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                     <div>
@@ -428,21 +427,18 @@ function VibeDashboardPage() {
                 </div>
             </div>
 
-            {/* Error */}
             {error && (
                 <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 text-rose-300 px-4 py-3 mb-6">
                     <p>{error}</p>
                 </div>
             )}
 
-            {/* Loading */}
             {loading ? (
                 <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-10 text-center text-gray-300">
                     Loading dashboard data...
                 </div>
             ) : (
                 <>
-                    {/* Primary KPIs */}
                     <section className="mb-6">
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                             {[
@@ -463,7 +459,6 @@ function VibeDashboardPage() {
                         </div>
                     </section>
 
-                    {/* Secondary KPIs */}
                     <section className="mb-8">
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             {[
@@ -480,7 +475,6 @@ function VibeDashboardPage() {
                         </div>
                     </section>
 
-                    {/* Charts */}
                     <section className="mb-8">
                         <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white">
                             <div className="flex items-center justify-between gap-3 mb-4">
@@ -511,7 +505,6 @@ function VibeDashboardPage() {
                         </div>
                     </section>
 
-                    {/* Leaderboards */}
                     <section className="mb-10 grid grid-cols-1 lg:grid-cols-2 gap-6">
                         <div className="rounded-xl border border-white/10 bg-white/5 p-4 text-white">
                             <h3 className="text-lg font-bold mb-3">Top Collections by Platform Fees</h3>
@@ -552,7 +545,6 @@ function VibeDashboardPage() {
                         </div>
                     </section>
 
-                    {/* Marketplace Overview + Embedded MarketplaceStats */}
                     <motion.section
                         className="mb-10"
                         initial={{ opacity: 0, y: 20 }}
@@ -574,14 +566,14 @@ function VibeDashboardPage() {
                             </div>
                             <div className="rounded-xl border border-white/10 bg-gradient-to-br from-emerald-500/15 to-cyan-500/15 p-5 text-center">
                                 <h3 className="text-3xl font-extrabold text-emerald-400">
-                                        {marketplaceStats.hasUSDCRates ? `$${Number(marketplaceStats.currentListingVolume || 0).toFixed(2)}` : (marketplaceStats.currentListingVolume || '0')}
+                                    {marketplaceStats.hasUSDCRates ? `$${Number(marketplaceStats.currentListingVolume || 0).toFixed(2)}` : (marketplaceStats.currentListingVolume || '0')}
                                 </h3>
                                 <p className="font-semibold text-white mt-1">Current Listing Volume</p>
                                 <small className="text-gray-400">{marketplaceStats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
                             </div>
                             <div className="rounded-xl border border-white/10 bg-gradient-to-br from-amber-500/15 to-rose-500/15 p-5 text-center">
                                 <h3 className="text-3xl font-extrabold text-amber-300">
-                                        {marketplaceStats.hasUSDCRates ? `$${Number(marketplaceStats.actualSoldVolume || 0).toFixed(2)}` : (marketplaceStats.actualSoldVolume || '0')}
+                                    {marketplaceStats.hasUSDCRates ? `$${Number(marketplaceStats.actualSoldVolume || 0).toFixed(2)}` : (marketplaceStats.actualSoldVolume || '0')}
                                 </h3>
                                 <p className="font-semibold text-white mt-1">Actual Sold Volume</p>
                                 <small className="text-gray-400">{marketplaceStats.hasUSDCRates ? 'USDC' : 'Native tokens'}</small>
@@ -598,7 +590,6 @@ function VibeDashboardPage() {
                         <MarketplaceStats />
                     </motion.section>
 
-                    {/* Events Feed */}
                     <section>
                         <h3 className="text-lg font-bold text-white mb-3">Recent Marketplace Payouts</h3>
                         <div className="rounded-xl border border-white/10 bg-white/5 p-4">
