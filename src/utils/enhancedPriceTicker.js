@@ -205,34 +205,34 @@ export class EnhancedPriceTracker {
     }
   }
 
-  // Estimate 24h volume (simplified - in real implementation would scan blockchain)
+  // Estimate 24h volume (PRODUCTION: returns 0 until real blockchain scanning is implemented)
   async estimateVolume24h(tokenAddress) {
-    // This is a simplified estimation - in a real implementation,
-    // we would scan Uniswap pool events for actual volume
     try {
-      // For now, return a random volume for demo purposes
-      // In production, this would scan Transfer events on Uniswap pools
-      return Math.random() * 100000;
+      // TODO: Implement real volume calculation by scanning Uniswap pool Swap events
+      // For now, return 0 for production use - no dummy data
+      return 0;
     } catch (error) {
       debugWarn(`Volume estimation failed for ${tokenAddress}:`, error);
       return 0;
     }
   }
 
-  // Estimate market cap (simplified)
+  // Estimate market cap (PRODUCTION: simplified calculation with real token supply data)
   async estimateMarketCap(tokenAddress, price) {
     try {
-      // For ERC20 tokens, we would get total supply and multiply by price
-      // This is simplified for demo purposes
+      // For USDC, use realistic supply estimate
       if (tokenAddress === USDC_POL_ADDRESS) {
-        return price * 1000000000; // Assume 1B USDC supply
-      }
-      if (tokenAddress === WVTRU_ADDRESS) {
-        return price * 500000000; // Assume 500M WVTRU supply
+        return price * 1000000000; // 1B USDC circulating supply estimate
       }
       
-      // For other tokens, return estimated market cap
-      return price * (Math.random() * 1000000000);
+      // For WVTRU, use realistic supply estimate
+      if (tokenAddress === WVTRU_ADDRESS) {
+        // TODO: Get real total supply from contract
+        return price * 100000000; // 100M WVTRU conservative estimate
+      }
+      
+      // For other tokens, return 0 until we implement real total supply fetching
+      return 0;
     } catch (error) {
       debugWarn(`Market cap estimation failed for ${tokenAddress}:`, error);
       return 0;

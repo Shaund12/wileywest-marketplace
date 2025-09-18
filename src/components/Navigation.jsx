@@ -10,6 +10,7 @@ import { Button } from './ui/button';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { cn } from '../lib/utils';
 import logo from '../assets/blockdust-logo.png';
+import { getEnhancedPriceTracker } from '../utils/enhancedPriceTicker';
 import {
     fetchTokenPriceInUSDC,
     USDC_POL_ADDRESS,
@@ -92,6 +93,11 @@ export default function Navigation() {
     const location = useLocation();
     const [tokenPrice, setTokenPrice] = useState(null);
     const [isLoadingPrice, setIsLoadingPrice] = useState(false);
+    const [priceHistory, setPriceHistory] = useState([]);
+    const [priceChange24h, setPriceChange24h] = useState(0);
+    const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
+    const [isScanning, setIsScanning] = useState(false);
+    const [lastPriceUpdate, setLastPriceUpdate] = useState(null);
 
     const [showLPDetails, setShowLPDetails] = useState(false);
     const [lpDetails, setLpDetails] = useState({
@@ -131,26 +137,58 @@ export default function Navigation() {
         };
     }, []);
 
-    // Fetch VTRU price using tokenUtils (on-chain via pool tick)
+    // Enhanced VTRU price fetching with history tracking
     useEffect(() => {
-        async function fetchTokenPrice() {
+        let priceTracker = null;
+        
+        async function fetchEnhancedTokenPrice() {
             if (!provider) return;
 
             setIsLoadingPrice(true);
             try {
-                const price = await fetchTokenPriceInUSDC(ethers.ZeroAddress, provider);
-                setTokenPrice(price);
+                // Initialize enhanced price tracker
+                if (!priceTracker) {
+                    priceTracker = getEnhancedPriceTracker(provider);
+                }
+                
+                // Get enhanced price data with history
+                const enhancedData = await priceTracker.fetchEnhancedPrice(ethers.ZeroAddress, {
+                    symbol: 'VTRU',
+                    name: 'Vitruveo Token'
+                });
+                
+                setTokenPrice(enhancedData.price);
+                setPriceChange24h(enhancedData.changes?.['24h']?.changePercent || 0);
+                setLastPriceUpdate(new Date());
+                
+                // Get price trend for display
+                const trend = priceTracker.getPriceTrend(ethers.ZeroAddress, selectedTimeframe);
+                setPriceHistory(trend);
+                
             } catch (error) {
-                console.error('Failed to fetch VTRU price:', error);
+                console.error('Failed to fetch enhanced VTRU price:', error);
+                // Fallback to basic price fetching
+                try {
+                    const price = await fetchTokenPriceInUSDC(ethers.ZeroAddress, provider);
+                    setTokenPrice(price);
+                    setLastPriceUpdate(new Date());
+                } catch (fallbackError) {
+                    console.error('Fallback price fetch also failed:', fallbackError);
+                }
             } finally {
                 setIsLoadingPrice(false);
             }
         }
 
-        fetchTokenPrice();
-        const interval = setInterval(fetchTokenPrice, 120_000);
-        return () => clearInterval(interval);
-    }, [provider]);
+        fetchEnhancedTokenPrice();
+        const interval = setInterval(fetchEnhancedTokenPrice, 60_000); // Update every minute
+        return () => {
+            clearInterval(interval);
+            if (priceTracker) {
+                priceTracker.stopAutoUpdate();
+            }
+        };
+    }, [provider, selectedTimeframe]);
 
     // Fetch LP details when dropdown is opened - REAL on-chain balances
     useEffect(() => {
@@ -211,6 +249,35 @@ export default function Navigation() {
 
         fetchLPDetails();
     }, [showLPDetails, provider]);
+
+    // Blockchain scanning function
+    async function handleBlockchainScan() {
+        if (!provider || isScanning) return;
+        
+        setIsScanning(true);
+        try {
+            const priceTracker = getEnhancedPriceTracker(provider);
+            await priceTracker.scanForTokens();
+            
+            // Refresh price data after scanning
+            const enhancedData = await priceTracker.fetchEnhancedPrice(ethers.ZeroAddress, {
+                symbol: 'VTRU',
+                name: 'Vitruveo Token'
+            });
+            
+            setTokenPrice(enhancedData.price);
+            setPriceChange24h(enhancedData.changes?.['24h']?.changePercent || 0);
+            setLastPriceUpdate(new Date());
+            
+            const trend = priceTracker.getPriceTrend(ethers.ZeroAddress, selectedTimeframe);
+            setPriceHistory(trend);
+            
+        } catch (error) {
+            console.error('Blockchain scanning failed:', error);
+        } finally {
+            setIsScanning(false);
+        }
+    }
 
     async function copyAddress() {
         try {
@@ -311,15 +378,31 @@ export default function Navigation() {
                                 transition={{ delay: 0.3 }}
                                 onClick={() => setShowLPDetails(!showLPDetails)}
                             >
-                                <div className="flex items-center">
-                                    <span className="mr-1">VTRU:</span>
-                                    {isLoadingPrice ? (
-                                        <span className="animate-pulse">Loading...</span>
-                                    ) : tokenPrice ? (
-                                        <span>${Number(tokenPrice).toFixed(6)}</span>
-                                    ) : (
-                                        <span>$--.--</span>
+                                <div className="flex items-center space-x-2">
+                                    <div className="flex items-center">
+                                        <span className="mr-1">VTRU:</span>
+                                        {isLoadingPrice ? (
+                                            <span className="animate-pulse">Loading...</span>
+                                        ) : tokenPrice ? (
+                                            <span>${Number(tokenPrice).toFixed(6)}</span>
+                                        ) : (
+                                            <span>$--.--</span>
+                                        )}
+                                    </div>
+                                    
+                                    {/* Price Change Indicator */}
+                                    {priceChange24h !== 0 && (
+                                        <div className={cn(
+                                            "flex items-center text-xs font-medium",
+                                            priceChange24h > 0 ? "text-neon-green" : priceChange24h < 0 ? "text-neon-pink" : "text-muted-foreground"
+                                        )}>
+                                            <span className="mr-0.5">
+                                                {priceChange24h > 0 ? '↗' : priceChange24h < 0 ? '↘' : '→'}
+                                            </span>
+                                            <span>{priceChange24h > 0 ? '+' : ''}{priceChange24h.toFixed(2)}%</span>
+                                        </div>
                                     )}
+                                    
                                     <span className="ml-1">
                                         {showLPDetails ? (
                                             <ChevronUp className="h-3 w-3" />
@@ -363,6 +446,64 @@ export default function Navigation() {
                                                             ${tokenPrice ? Number(tokenPrice).toFixed(6) : '--'}
                                                         </span>
                                                     </div>
+
+                                                    {/* Price Change with Timeframe */}
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-muted-foreground">24h Change:</span>
+                                                        <span className={cn(
+                                                            "font-mono",
+                                                            priceChange24h > 0 ? "text-neon-green" : priceChange24h < 0 ? "text-neon-pink" : "text-muted-foreground"
+                                                        )}>
+                                                            {priceChange24h > 0 ? '+' : ''}{priceChange24h.toFixed(2)}%
+                                                        </span>
+                                                    </div>
+
+                                                    {/* Price History */}
+                                                    {priceHistory.length > 0 && (
+                                                        <div className="pt-2 border-t border-neon-green/20">
+                                                            <div className="flex justify-between items-center mb-1">
+                                                                <span className="text-muted-foreground text-xs">Price History:</span>
+                                                                <select 
+                                                                    value={selectedTimeframe} 
+                                                                    onChange={(e) => setSelectedTimeframe(e.target.value)}
+                                                                    className="bg-transparent text-xs border border-neon-green/30 rounded px-1"
+                                                                >
+                                                                    <option value="1h">1h</option>
+                                                                    <option value="24h">24h</option>
+                                                                    <option value="7d">7d</option>
+                                                                    <option value="30d">30d</option>
+                                                                </select>
+                                                            </div>
+                                                            <div className="text-xs text-muted-foreground">
+                                                                {priceHistory.length} price points tracked
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Blockchain Scan Button */}
+                                                    <div className="pt-2 border-t border-neon-green/20">
+                                                        <button
+                                                            onClick={handleBlockchainScan}
+                                                            disabled={isScanning}
+                                                            className="w-full text-xs font-medium py-1.5 px-2 rounded-md border border-neon-cyan/30 hover:bg-neon-cyan/5 text-neon-cyan disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        >
+                                                            {isScanning ? (
+                                                                <>
+                                                                    <div className="inline-block h-3 w-3 animate-spin rounded-full border border-neon-cyan border-r-transparent mr-1"></div>
+                                                                    Scanning...
+                                                                </>
+                                                            ) : (
+                                                                '🔍 Scan Blockchain'
+                                                            )}
+                                                        </button>
+                                                    </div>
+
+                                                    {/* Last Update Time */}
+                                                    {lastPriceUpdate && (
+                                                        <div className="text-xs text-muted-foreground text-center pt-1">
+                                                            Updated: {lastPriceUpdate.toLocaleTimeString()}
+                                                        </div>
+                                                    )}
 
                                                     <div className="flex justify-between items-center">
                                                         <span className="text-muted-foreground">Pool Fee:</span>
@@ -510,14 +651,29 @@ export default function Navigation() {
                                         className="flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium bg-neon-green/10 text-neon-green border border-neon-green/30"
                                         onClick={() => setShowLPDetails(!showLPDetails)}
                                     >
-                                        <div className="flex items-center">
-                                            <span className="mr-1">VTRU:</span>
-                                            {isLoadingPrice ? (
-                                                <span className="animate-pulse">Loading...</span>
-                                            ) : tokenPrice ? (
-                                                <span>${Number(tokenPrice).toFixed(6)}</span>
-                                            ) : (
-                                                <span>$--.--</span>
+                                        <div className="flex items-center space-x-2">
+                                            <div className="flex items-center">
+                                                <span className="mr-1">VTRU:</span>
+                                                {isLoadingPrice ? (
+                                                    <span className="animate-pulse">Loading...</span>
+                                                ) : tokenPrice ? (
+                                                    <span>${Number(tokenPrice).toFixed(6)}</span>
+                                                ) : (
+                                                    <span>$--.--</span>
+                                                )}
+                                            </div>
+                                            
+                                            {/* Mobile Price Change */}
+                                            {priceChange24h !== 0 && (
+                                                <div className={cn(
+                                                    "flex items-center text-xs",
+                                                    priceChange24h > 0 ? "text-neon-green" : priceChange24h < 0 ? "text-neon-pink" : "text-muted-foreground"
+                                                )}>
+                                                    <span className="mr-0.5">
+                                                        {priceChange24h > 0 ? '↗' : priceChange24h < 0 ? '↘' : '→'}
+                                                    </span>
+                                                    <span>{priceChange24h > 0 ? '+' : ''}{priceChange24h.toFixed(2)}%</span>
+                                                </div>
                                             )}
                                         </div>
                                         <span>
