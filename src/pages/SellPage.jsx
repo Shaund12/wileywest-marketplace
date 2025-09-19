@@ -315,6 +315,26 @@ const ERC1155_ABI = [
     'function symbol() view returns (string)',
 ];
 
+// ERC-404 ABI for metadata fetching (hybrid ERC-20/ERC-721)
+const ERC404_METADATA_ABI = [
+    // ERC-721 like functions for metadata
+    'function tokenURI(uint256 tokenId) view returns (string)',
+    'function ownerOf(uint256 tokenId) view returns (address)',
+    'function name() view returns (string)',
+    'function symbol() view returns (string)',
+    // ERC-20 like functions for balance
+    'function balanceOf(address owner) view returns (uint256)',
+    'function decimals() view returns (uint8)',
+    // Standard ERC-404 specific functions
+    'function erc721BalanceOf(address owner) view returns (uint256)',
+    'function erc20BalanceOf(address owner) view returns (uint256)',
+    // Custom Vitruveo ERC-404 functions
+    'function tokensOfOwner(address owner) view returns (uint256[])',
+    'function getUserTokenIds(address user) view returns (uint256[])',
+    'function nftBalanceOf(address owner) view returns (uint256)',
+    'function getOwnedTokens(address owner) view returns (uint256[])'
+];
+
 const UNISWAP_V3_FACTORY_ABI = [
     'function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool)',
 ];
@@ -1359,6 +1379,131 @@ function SellPage() {
                 setLoading(false);
                 return;
             } catch {
+                // Continue to ERC-404
+            }
+
+            // ERC-404 path (custom Vitruveo implementation)
+            try {
+                debugLog('🔍 Trying ERC-404 metadata fetching for:', checksum);
+                const erc404 = new ethers.Contract(checksum, ERC404_METADATA_ABI, provider);
+                
+                // Try multiple strategies to verify ownership for ERC-404
+                let isOwner = false;
+                let nftBalance = 0;
+                
+                // Strategy 1: Try standard ERC-721 ownerOf for the specific token
+                try {
+                    const owner = await erc404.ownerOf(formData.tokenId);
+                    isOwner = (owner || '').toLowerCase() === (wallet || '').toLowerCase();
+                    debugLog('✅ ERC-404 ownerOf check:', { owner, isOwner });
+                } catch (ownerError) {
+                    debugLog('⚠️ ERC-404 ownerOf failed:', ownerError.message);
+                }
+                
+                // Strategy 2: If ownerOf failed, try custom ERC-404 balance functions
+                if (!isOwner) {
+                    try {
+                        // Try custom Vitruveo functions to get owned tokens
+                        const ownedTokenStrategies = [
+                            { name: 'tokensOfOwner', func: () => erc404.tokensOfOwner(wallet) },
+                            { name: 'getUserTokenIds', func: () => erc404.getUserTokenIds(wallet) },
+                            { name: 'getOwnedTokens', func: () => erc404.getOwnedTokens(wallet) }
+                        ];
+                        
+                        for (const strategy of ownedTokenStrategies) {
+                            try {
+                                const ownedTokens = await strategy.func();
+                                debugLog(`✅ ERC-404 ${strategy.name} returned:`, ownedTokens);
+                                if (Array.isArray(ownedTokens) && ownedTokens.length > 0) {
+                                    // Check if our token ID is in the owned tokens
+                                    const tokenIdStr = formData.tokenId.toString();
+                                    isOwner = ownedTokens.some(tokenId => tokenId.toString() === tokenIdStr);
+                                    nftBalance = ownedTokens.length;
+                                    debugLog(`🎯 ERC-404 token ${tokenIdStr} ownership via ${strategy.name}:`, isOwner);
+                                    if (isOwner) break;
+                                }
+                            } catch (e) {
+                                debugLog(`⚠️ ERC-404 ${strategy.name} failed:`, e.message);
+                            }
+                        }
+                    } catch (balanceError) {
+                        debugLog('⚠️ ERC-404 balance strategies failed:', balanceError.message);
+                    }
+                }
+                
+                // Strategy 3: Fallback - try to get any NFT balance to confirm this is ERC-404
+                if (!isOwner) {
+                    try {
+                        const balanceStrategies = [
+                            { name: 'erc721BalanceOf', func: () => erc404.erc721BalanceOf(wallet) },
+                            { name: 'nftBalanceOf', func: () => erc404.nftBalanceOf(wallet) }
+                        ];
+                        
+                        for (const strategy of balanceStrategies) {
+                            try {
+                                const balance = await strategy.func();
+                                nftBalance = Number(balance);
+                                debugLog(`✅ ERC-404 ${strategy.name} balance:`, nftBalance);
+                                if (nftBalance > 0) break;
+                            } catch (e) {
+                                debugLog(`⚠️ ERC-404 ${strategy.name} failed:`, e.message);
+                            }
+                        }
+                    } catch (e) {
+                        debugLog('⚠️ ERC-404 balance fallback failed:', e.message);
+                    }
+                }
+                
+                setOwnershipVerified(isOwner);
+                if (!isOwner && nftBalance === 0) { 
+                    setStatus('Warning: You do not appear to own any tokens in this ERC-404 contract'); 
+                    setLoading(false); 
+                    return; 
+                }
+                
+                setNftType('ERC404');
+                setBalance(nftBalance > 0 ? nftBalance.toString() : '1');
+                
+                let tokenURI = null;
+                try { 
+                    tokenURI = await erc404.tokenURI(formData.tokenId); 
+                    debugLog('✅ ERC-404 tokenURI:', tokenURI);
+                } catch (uriError) { 
+                    debugLog('⚠️ ERC-404 tokenURI failed:', uriError.message);
+                }
+                
+                if (!tokenURI) { 
+                    setFallback('ERC404', nftBalance > 0 ? nftBalance.toString() : '1'); 
+                    setLoading(false); 
+                    return; 
+                }
+
+                try {
+                    const metaCands = metadataCandidatesFromUri(tokenURI, formData.tokenId, false);
+                    const { json } = await fetchJsonFromCandidates(metaCands);
+                    setMetadata(json);
+                    setNftName(json?.name || `ERC-404 NFT #${tokenIdStr}`);
+                    try {
+                        const media = uniq(flatten(mediaCandidatesFromMetadata(json).map(expandToCandidateUrls)));
+                        const firstVideo = media.find(isVideoUrl);
+                        if (firstVideo) setNftImage(firstVideo);
+                        else setNftImage(await findFirstWorkingImage(media));
+                    } catch {
+                        const isVShare = isVShareContract(checksum);
+                        const fallback = isVShare
+                            ? vShareLpSvgDataUrl({ contract: checksum, tokenId: tokenIdStr, title: json?.name || `ERC-404 NFT #${tokenIdStr}` })
+                            : svgFallbackDataUrl({ seed: `${checksum}-${tokenIdStr}`, width: 640, height: 460, title: json?.name || `ERC-404 NFT #${tokenIdStr}` });
+                        setNftImage(fallback);
+                    }
+                    setStatus('');
+                    debugLog('✅ ERC-404 metadata loaded successfully');
+                } catch {
+                    setFallback('ERC404', nftBalance > 0 ? nftBalance.toString() : '1');
+                }
+                setLoading(false);
+                return;
+            } catch (erc404Error) {
+                debugLog('❌ ERC-404 metadata fetching failed:', erc404Error.message);
                 // Continue to ERC1155
             }
 
@@ -1399,7 +1544,7 @@ function SellPage() {
                     setFallback('ERC1155', qty);
                 }
             } catch {
-                setStatus('Could not determine NFT standard or fetch metadata. Double-check contract/token ID.');
+                setStatus('Could not determine NFT standard or fetch metadata. This contract may not be ERC-721, ERC-1155, or ERC-404, or the token ID may not exist. Please verify the contract address and token ID.');
             }
         } catch (error) {
             setStatus('Error fetching NFT metadata: ' + (error.message || error));
