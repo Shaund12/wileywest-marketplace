@@ -34,7 +34,7 @@ const EXTENDED_ERC1155_ABI = [
     'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)'
 ];
 
-// ERC-404 ABI (hybrid ERC-20/ERC-721 standard)
+// ERC-404 ABI (hybrid ERC-20/ERC-721 standard) - Extended for custom implementations
 const ERC404_ABI = [
     // ERC-20 like functions
     'function balanceOf(address owner) view returns (uint256)',
@@ -46,11 +46,27 @@ const ERC404_ABI = [
     'function ownerOf(uint256 tokenId) view returns (address)',
     'function tokenURI(uint256 tokenId) view returns (string)',
     'function getOwnedTokens(address owner) view returns (uint256[])',
-    // ERC-404 specific functions
+    // Standard ERC-404 specific functions
     'function erc721BalanceOf(address owner) view returns (uint256)',
     'function erc20BalanceOf(address owner) view returns (uint256)',
     'function getERC721QueueLength() view returns (uint256)',
     'function getERC721TokensInQueue(uint256 start, uint256 count) view returns (uint256[])',
+    // Custom/Alternative ERC-404 functions (for Vitruveo and other custom implementations)
+    'function nftBalanceOf(address owner) view returns (uint256)',
+    'function tokensOfOwner(address owner) view returns (uint256[])',
+    'function tokensOfOwnerIn(address owner, uint256 start, uint256 stop) view returns (uint256[])',
+    'function numberMinted(address owner) view returns (uint256)',
+    'function explicitOwnershipOf(uint256 tokenId) view returns (uint256)',
+    'function startTokenId() view returns (uint256)',
+    'function nextTokenId() view returns (uint256)',
+    'function totalMinted() view returns (uint256)',
+    // ERC721A-style functions that might be in custom ERC-404
+    'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)',
+    // Vitruveo-specific potential functions
+    'function getUserTokenIds(address user) view returns (uint256[])',
+    'function getUserNFTBalance(address user) view returns (uint256)',
+    'function getTokensByOwner(address owner) view returns (uint256[])',
+    'function ownedTokens(address owner) view returns (uint256[])',
     // Events
     'event Transfer(address indexed from, address indexed to, uint256 value)',
     'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
@@ -1325,29 +1341,11 @@ export class NFTScanner {
             }
             
             // Try as ERC-404 (hybrid ERC-20/ERC-721) with timeout protection
-            // This needs to be more aggressive since ERC-404 is a newer standard
+            // Enhanced for custom implementations like Vitruveo's version
             try {
                 const erc404Contract = new ethers.Contract(contractAddress, ERC404_ABI, this.provider);
                 
-                // Strategy 1: Check for ERC-404 specific functions
-                try {
-                    // Try to get ERC721 balance which is specific to ERC-404
-                    const erc721BalancePromise = erc404Contract.erc721BalanceOf(this.walletAddress);
-                    const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('ERC-404 balance timeout')), 5000)
-                    );
-                    
-                    const erc721Balance = await Promise.race([erc721BalancePromise, timeoutPromise]);
-                    if (erc721Balance !== undefined) {
-                        this.contractCache[contractAddress] = { type: 'ERC404', balance: Number(erc721Balance) };
-                        debugLog(`Detected ERC-404 via erc721BalanceOf: ${contractAddress}`);
-                        return 'ERC404';
-                    }
-                } catch (e) {
-                    // erc721BalanceOf failed, continue with other detection methods
-                }
-                
-                // Strategy 2: Check for known ERC-404 contracts first (most reliable)
+                // Strategy 1: Check for known ERC-404 contracts first (most reliable)
                 if (contractAddress.toLowerCase() === '0x30da83269da1dfe17253bf07f92056c2adcca453') {
                     // This is definitely Crocodeal-404, mark it as ERC-404 regardless of other checks
                     try {
@@ -1360,6 +1358,38 @@ export class NFTScanner {
                         this.contractCache[contractAddress] = { type: 'ERC404', balance: 0 };
                         debugLog(`🎯 Detected known Crocodeal-404 contract (balance check failed): ${contractAddress}`);
                         return 'ERC404';
+                    }
+                }
+                
+                // Strategy 2: Try multiple ERC-404 specific functions (for different implementations)
+                const erc404Functions = [
+                    { name: 'erc721BalanceOf', func: () => erc404Contract.erc721BalanceOf(this.walletAddress) },
+                    { name: 'nftBalanceOf', func: () => erc404Contract.nftBalanceOf(this.walletAddress) },
+                    { name: 'tokensOfOwner', func: () => erc404Contract.tokensOfOwner(this.walletAddress) },
+                    { name: 'getOwnedTokens', func: () => erc404Contract.getOwnedTokens(this.walletAddress) },
+                    { name: 'getUserTokenIds', func: () => erc404Contract.getUserTokenIds(this.walletAddress) },
+                    { name: 'getUserNFTBalance', func: () => erc404Contract.getUserNFTBalance(this.walletAddress) },
+                    { name: 'getTokensByOwner', func: () => erc404Contract.getTokensByOwner(this.walletAddress) },
+                    { name: 'ownedTokens', func: () => erc404Contract.ownedTokens(this.walletAddress) }
+                ];
+                
+                for (const { name, func } of erc404Functions) {
+                    try {
+                        const timeoutPromise = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error(`${name} timeout`)), 5000)
+                        );
+                        
+                        const result = await Promise.race([func(), timeoutPromise]);
+                        
+                        if (result !== undefined) {
+                            const balance = Array.isArray(result) ? result.length : Number(result);
+                            this.contractCache[contractAddress] = { type: 'ERC404', balance };
+                            debugLog(`✅ Detected ERC-404 via ${name}: ${contractAddress} (balance: ${balance})`);
+                            return 'ERC404';
+                        }
+                    } catch (e) {
+                        debugLog(`⚠️ ERC-404 function ${name} failed for ${contractAddress}: ${e.message}`);
+                        // Continue to next function
                     }
                 }
                 
@@ -1511,46 +1541,111 @@ export class NFTScanner {
             
             const results = [];
             
-            // Strategy 1: Try to get owned tokens using ERC-404 specific method if available
-            try {
-                const ownedTokens = await contract.getOwnedTokens(this.walletAddress);
-                debugLog(`ERC-404 ${contractAddress} - getOwnedTokens returned ${ownedTokens.length} tokens`);
-                
-                for (const tokenId of ownedTokens) {
-                    let tokenURI = null;
-                    try {
-                        tokenURI = await contract.tokenURI(tokenId);
-                    } catch (e) {
-                        debugLog(`No tokenURI available for ERC-404 token ${tokenId}`);
+            // Enhanced strategy system for custom ERC-404 implementations
+            const tokenDiscoveryStrategies = [
+                {
+                    name: 'getOwnedTokens',
+                    execute: async () => {
+                        const ownedTokens = await contract.getOwnedTokens(this.walletAddress);
+                        return Array.isArray(ownedTokens) ? ownedTokens : [];
                     }
-                    
-                    results.push({
-                        contractAddress,
-                        tokenId: tokenId.toString(),
-                        type: 'ERC404',
-                        tokenURI,
-                        balance: '1'
-                    });
-                    
-                    this.updateProgress({ found: this.progress.found + 1 });
+                },
+                {
+                    name: 'tokensOfOwner',
+                    execute: async () => {
+                        const ownedTokens = await contract.tokensOfOwner(this.walletAddress);
+                        return Array.isArray(ownedTokens) ? ownedTokens : [];
+                    }
+                },
+                {
+                    name: 'getUserTokenIds',
+                    execute: async () => {
+                        const ownedTokens = await contract.getUserTokenIds(this.walletAddress);
+                        return Array.isArray(ownedTokens) ? ownedTokens : [];
+                    }
+                },
+                {
+                    name: 'getTokensByOwner',
+                    execute: async () => {
+                        const ownedTokens = await contract.getTokensByOwner(this.walletAddress);
+                        return Array.isArray(ownedTokens) ? ownedTokens : [];
+                    }
+                },
+                {
+                    name: 'ownedTokens',
+                    execute: async () => {
+                        const ownedTokens = await contract.ownedTokens(this.walletAddress);
+                        return Array.isArray(ownedTokens) ? ownedTokens : [];
+                    }
+                },
+                {
+                    name: 'tokensOfOwnerIn',
+                    execute: async () => {
+                        // Try to get tokens using tokensOfOwnerIn with reasonable range
+                        try {
+                            const startTokenId = await contract.startTokenId().catch(() => 1);
+                            const totalSupply = await contract.totalSupply().catch(() => 10000);
+                            const endTokenId = Math.min(Number(startTokenId) + 10000, Number(totalSupply));
+                            const ownedTokens = await contract.tokensOfOwnerIn(this.walletAddress, startTokenId, endTokenId);
+                            return Array.isArray(ownedTokens) ? ownedTokens : [];
+                        } catch (e) {
+                            // Fallback to smaller range
+                            const ownedTokens = await contract.tokensOfOwnerIn(this.walletAddress, 1, 1000);
+                            return Array.isArray(ownedTokens) ? ownedTokens : [];
+                        }
+                    }
                 }
-                
-                if (results.length > 0) {
-                    debugLog(`ERC-404 ${contractAddress} - Found ${results.length} NFTs via getOwnedTokens`);
-                    return results;
+            ];
+            
+            // Try each strategy until we find tokens
+            for (const strategy of tokenDiscoveryStrategies) {
+                try {
+                    debugLog(`🔍 ERC-404 ${contractAddress} - Trying strategy: ${strategy.name}`);
+                    const ownedTokens = await strategy.execute();
+                    
+                    if (ownedTokens && ownedTokens.length > 0) {
+                        debugLog(`✅ ERC-404 ${contractAddress} - ${strategy.name} returned ${ownedTokens.length} tokens`);
+                        
+                        for (const tokenId of ownedTokens) {
+                            let tokenURI = null;
+                            try {
+                                tokenURI = await contract.tokenURI(tokenId);
+                            } catch (e) {
+                                debugLog(`⚠️ No tokenURI available for ERC-404 token ${tokenId}`);
+                            }
+                            
+                            results.push({
+                                contractAddress,
+                                tokenId: tokenId.toString(),
+                                type: 'ERC404',
+                                tokenURI,
+                                balance: '1'
+                            });
+                            
+                            this.updateProgress({ found: this.progress.found + 1 });
+                        }
+                        
+                        if (results.length > 0) {
+                            debugLog(`🎯 ERC-404 ${contractAddress} - Found ${results.length} NFTs via ${strategy.name}`);
+                            return results;
+                        }
+                    } else {
+                        debugLog(`⚠️ ERC-404 ${contractAddress} - ${strategy.name} returned no tokens`);
+                    }
+                } catch (e) {
+                    debugLog(`❌ ERC-404 ${contractAddress} - ${strategy.name} failed: ${e.message}`);
                 }
-            } catch (e) {
-                debugLog(`ERC-404 ${contractAddress} - getOwnedTokens not available: ${e.message}`);
             }
             
-            // Strategy 2: Try to get tokens from ERC-721 queue if available
+            // Strategy: Queue-based scanning (for standard ERC-404)
             try {
+                debugLog(`🔍 ERC-404 ${contractAddress} - Trying queue-based scanning`);
                 const queueLength = await contract.getERC721QueueLength();
-                debugLog(`ERC-404 ${contractAddress} - Queue length: ${queueLength}`);
+                debugLog(`📊 ERC-404 ${contractAddress} - Queue length: ${queueLength}`);
                 
                 if (queueLength > 0) {
                     const queueTokens = await contract.getERC721TokensInQueue(0, Math.min(Number(queueLength), 100));
-                    debugLog(`ERC-404 ${contractAddress} - Retrieved ${queueTokens.length} tokens from queue`);
+                    debugLog(`📋 ERC-404 ${contractAddress} - Retrieved ${queueTokens.length} tokens from queue`);
                     
                     // Check ownership of queued tokens
                     for (const tokenId of queueTokens) {
@@ -1561,7 +1656,7 @@ export class NFTScanner {
                                 try {
                                     tokenURI = await contract.tokenURI(tokenId);
                                 } catch (e) {
-                                    debugLog(`No tokenURI available for ERC-404 queue token ${tokenId}`);
+                                    debugLog(`⚠️ No tokenURI available for ERC-404 queue token ${tokenId}`);
                                 }
                                 
                                 results.push({
@@ -1581,12 +1676,12 @@ export class NFTScanner {
                     }
                     
                     if (results.length > 0) {
-                        debugLog(`ERC-404 ${contractAddress} - Found ${results.length} NFTs via queue scanning`);
+                        debugLog(`🎯 ERC-404 ${contractAddress} - Found ${results.length} NFTs via queue scanning`);
                         return results;
                     }
                 }
             } catch (e) {
-                debugLog(`ERC-404 ${contractAddress} - Queue methods not available: ${e.message}`);
+                debugLog(`❌ ERC-404 ${contractAddress} - Queue methods not available: ${e.message}`);
             }
             
             // Strategy 3: Event-based approach - scan for Transfer events
@@ -1667,15 +1762,19 @@ export class NFTScanner {
                 }
             }
             
-            // Strategy 4: If we have an ERC-20 balance but no NFTs found, create a representation
-            // This handles cases where ERC-404 acts more like ERC-20 but should still be detected
+            // Strategy: Manual token ID probing (for custom implementations without enumeration)
             if (erc20Balance > 0 && results.length === 0) {
-                debugLog(`ERC-404 ${contractAddress} - Has ERC-20 balance but no NFTs found, creating representation`);
+                debugLog(`🔍 ERC-404 ${contractAddress} - Trying manual token ID probing (balance: ${erc20Balance})`);
                 
-                // For Crocodeal-404 specifically, we know it should have NFT representation
+                // For Crocodeal-404 specifically and other custom implementations
                 if (contractAddress.toLowerCase() === '0x30da83269da1dfe17253bf07f92056c2adcca453') {
-                    // Try some common token IDs
-                    const commonTokenIds = [1, 2, 3, 4, 5];
+                    // Try a wider range of common token IDs for Crocodeal-404
+                    const commonTokenIds = [];
+                    for (let i = 1; i <= 100; i++) {
+                        commonTokenIds.push(i);
+                    }
+                    
+                    debugLog(`🎯 Crocodeal-404 specific probing: checking ${commonTokenIds.length} token IDs`);
                     
                     for (const tokenId of commonTokenIds) {
                         try {
@@ -1685,7 +1784,7 @@ export class NFTScanner {
                                 try {
                                     tokenURI = await contract.tokenURI(tokenId);
                                 } catch (e) {
-                                    debugLog(`No tokenURI available for common token ${tokenId}`);
+                                    debugLog(`⚠️ No tokenURI available for manual probe token ${tokenId}`);
                                 }
                                 
                                 results.push({
@@ -1699,7 +1798,42 @@ export class NFTScanner {
                                 this.updateProgress({ found: this.progress.found + 1 });
                             }
                         } catch (e) {
-                            // Token doesn't exist or not owned
+                            // Token doesn't exist or not owned, continue
+                            continue;
+                        }
+                    }
+                    
+                    if (results.length > 0) {
+                        debugLog(`🎯 ERC-404 ${contractAddress} - Found ${results.length} NFTs via manual probing`);
+                        return results;
+                    }
+                } else {
+                    // For other custom ERC-404 implementations, try a smaller range
+                    const commonTokenIds = [1, 2, 3, 4, 5, 10, 20, 50, 100];
+                    
+                    for (const tokenId of commonTokenIds) {
+                        try {
+                            const owner = await contract.ownerOf(tokenId);
+                            if (owner.toLowerCase() === this.walletAddress.toLowerCase()) {
+                                let tokenURI = null;
+                                try {
+                                    tokenURI = await contract.tokenURI(tokenId);
+                                } catch (e) {
+                                    debugLog(`⚠️ No tokenURI available for manual probe token ${tokenId}`);
+                                }
+                                
+                                results.push({
+                                    contractAddress,
+                                    tokenId: tokenId.toString(),
+                                    type: 'ERC404',
+                                    tokenURI,
+                                    balance: '1'
+                                });
+                                
+                                this.updateProgress({ found: this.progress.found + 1 });
+                            }
+                        } catch (e) {
+                            // Token doesn't exist or not owned, continue
                             continue;
                         }
                     }
