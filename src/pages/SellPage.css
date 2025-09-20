@@ -452,54 +452,73 @@
   color: #ffffff;
 }
 
-/* Token Dropdown Container */
-.token-dropdown-container {
-  margin-top: 20px;
-}
-
-.token-dropdown-wrapper {
-  position: relative;
-  margin-bottom: 20px;
-}
-
+/* Enhanced Token Dropdown Styling - No White on White Text */
 .token-dropdown {
   width: 100%;
   padding: 16px 20px;
   padding-right: 50px;
   border-radius: 12px;
-  background: linear-gradient(135deg, rgba(26, 28, 37, 0.9), rgba(15, 17, 26, 0.9));
-  border: 1px solid var(--sell-border);
-  color: rgba(255, 255, 255, 0.9);
+  background: linear-gradient(135deg, rgba(26, 28, 37, 0.95), rgba(15, 17, 26, 0.95));
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.95); /* Ensure white text on dark background */
   font-size: 1rem;
   font-weight: 500;
   font-family: 'Inter', sans-serif;
   transition: all 0.3s ease;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(15px);
+  box-shadow: 
+    0 5px 15px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
   appearance: none;
   cursor: pointer;
+  text-shadow: 0 0 5px rgba(0, 255, 255, 0.3);
 }
 
 .token-dropdown:focus {
   outline: none;
-  border-color: var(--sell-primary);
-  background: linear-gradient(135deg, rgba(26, 28, 37, 0.95), rgba(15, 17, 26, 0.95));
-  box-shadow: 0 0 0 3px rgba(85, 51, 255, 0.25),
-              0 8px 20px rgba(0, 0, 0, 0.3);
+  border-color: var(--neon-cyan);
+  background: linear-gradient(135deg, rgba(26, 28, 37, 0.98), rgba(15, 17, 26, 0.98));
+  color: rgba(255, 255, 255, 1); /* Bright white text on focus */
+  box-shadow: 
+    0 0 0 3px rgba(0, 255, 255, 0.3),
+    0 8px 25px rgba(0, 0, 0, 0.4),
+    inset 0 0 20px rgba(0, 255, 255, 0.1);
+  text-shadow: 
+    0 0 5px rgba(0, 255, 255, 0.5),
+    0 0 10px rgba(0, 255, 255, 0.3);
 }
 
 .token-dropdown:hover {
-  background: linear-gradient(135deg, rgba(26, 28, 37, 0.95), rgba(15, 17, 26, 0.95));
+  background: linear-gradient(135deg, rgba(26, 28, 37, 0.98), rgba(15, 17, 26, 0.98));
+  border-color: rgba(0, 255, 255, 0.5);
+  color: rgba(255, 255, 255, 1); /* Ensure bright white text on hover */
   transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3),
-              0 0 15px rgba(85, 51, 255, 0.2);
+  box-shadow: 
+    0 10px 30px rgba(0, 0, 0, 0.4),
+    0 0 20px rgba(0, 255, 255, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
 }
 
+/* Dropdown option styling - CRITICAL for visibility */
 .token-dropdown option {
-  background: rgba(15, 17, 26, 0.95);
-  color: rgba(255, 255, 255, 0.9);
-  padding: 12px;
-  border: none;
+  background: rgba(15, 17, 26, 0.98) !important; /* Dark background */
+  color: rgba(255, 255, 255, 0.95) !important; /* Bright white text */
+  padding: 12px 16px !important;
+  border: none !important;
+  font-weight: 500 !important;
+  text-shadow: 0 0 3px rgba(0, 255, 255, 0.2) !important;
+}
+
+.token-dropdown option:hover,
+.token-dropdown option:focus,
+.token-dropdown option:checked {
+  background: linear-gradient(90deg, 
+    rgba(0, 255, 255, 0.2), 
+    rgba(128, 0, 255, 0.15)) !important;
+  color: rgba(255, 255, 255, 1) !important; /* Brightest white on interaction */
+  text-shadow: 
+    0 0 5px rgba(0, 255, 255, 0.4),
+    0 0 8px rgba(0, 255, 255, 0.2) !important;
 }
 
 .dropdown-icon {
@@ -1890,31 +1909,74 @@ button:disabled {
     animation: spin 1s linear infinite;
 }
 
-/* Enhanced dropdown styling */
+/* Enhanced dropdown styling - No white on white text */
 .input[disabled] {
     opacity: 0.6;
     cursor: not-allowed;
     background: var(--bg-tertiary);
 }
 
-/* Collection selection styling */
+/* Collection selection styling - Enhanced visibility */
 .form-group select {
-    background: var(--bg-secondary);
-    border: 1px solid var(--sell-border);
-    color: var(--text-primary);
+    background: linear-gradient(135deg, 
+      rgba(26, 28, 37, 0.95) 0%, 
+      rgba(15, 17, 26, 0.95) 100%) !important;
+    border: 1px solid rgba(0, 255, 255, 0.3) !important;
+    color: rgba(255, 255, 255, 0.95) !important; /* Bright white text */
     font-size: 14px;
-    transition: all 0.2s ease;
+    font-weight: 500;
+    padding: 12px 16px;
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+    text-shadow: 0 0 3px rgba(0, 255, 255, 0.2);
+    transition: all 0.3s ease;
+    appearance: none;
+    cursor: pointer;
 }
 
 .form-group select:focus {
-    border-color: var(--sell-primary);
-    box-shadow: 0 0 0 3px rgba(85, 51, 255, 0.1);
+    border-color: var(--neon-cyan) !important;
+    background: linear-gradient(135deg, 
+      rgba(26, 28, 37, 0.98) 0%, 
+      rgba(15, 17, 26, 0.98) 100%) !important;
+    color: rgba(255, 255, 255, 1) !important; /* Brightest white on focus */
+    box-shadow: 
+      0 0 0 3px rgba(0, 255, 255, 0.25),
+      0 0 15px rgba(0, 255, 255, 0.2) !important;
+    text-shadow: 
+      0 0 5px rgba(0, 255, 255, 0.4),
+      0 0 8px rgba(0, 255, 255, 0.2);
 }
 
+.form-group select:hover {
+    border-color: rgba(0, 255, 255, 0.5) !important;
+    background: linear-gradient(135deg, 
+      rgba(26, 28, 37, 0.98) 0%, 
+      rgba(15, 17, 26, 0.98) 100%) !important;
+    color: rgba(255, 255, 255, 1) !important;
+    box-shadow: 0 0 15px rgba(0, 255, 255, 0.15);
+}
+
+/* Critical: Option styling to prevent white-on-white */
 .form-group select option {
-    background: var(--bg-secondary);
-    color: var(--text-primary);
-    padding: 8px 12px;
+    background: rgba(15, 17, 26, 0.98) !important; /* Dark background */
+    color: rgba(255, 255, 255, 0.95) !important; /* Bright white text */
+    padding: 12px 16px !important;
+    border: none !important;
+    font-weight: 500 !important;
+    text-shadow: 0 0 2px rgba(0, 255, 255, 0.2) !important;
+}
+
+.form-group select option:hover,
+.form-group select option:focus,
+.form-group select option:checked {
+    background: linear-gradient(90deg, 
+      rgba(0, 255, 255, 0.2), 
+      rgba(128, 0, 255, 0.15)) !important;
+    color: rgba(255, 255, 255, 1) !important; /* Brightest white on interaction */
+    text-shadow: 
+      0 0 5px rgba(0, 255, 255, 0.4),
+      0 0 8px rgba(0, 255, 255, 0.2) !important;
 }
 
 /* Token ID dropdown specific styling */
@@ -2037,7 +2099,7 @@ button:disabled {
     }
 }
 
-/* ===== ENHANCED TOKEN DROPDOWN WITH IMAGES ===== */
+/* ===== ENHANCED TOKEN DROPDOWN WITH IMAGES - NO WHITE ON WHITE ===== */
 
 .token-dropdown-with-images {
     position: relative;
@@ -2049,23 +2111,41 @@ button:disabled {
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    background: var(--sell-card-bg);
-    border: 1px solid var(--sell-border);
+    background: linear-gradient(135deg, 
+      rgba(26, 28, 37, 0.95) 0%, 
+      rgba(15, 17, 26, 0.95) 100%);
+    border: 1px solid rgba(0, 255, 255, 0.3);
     border-radius: 12px;
     cursor: pointer;
     transition: all 0.3s ease;
     min-height: 60px;
+    backdrop-filter: blur(15px);
+    box-shadow: 
+      0 5px 15px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .token-dropdown-trigger:hover {
-    border-color: var(--sell-primary);
-    box-shadow: 0 0 0 3px rgba(85, 51, 255, 0.1);
+    border-color: var(--neon-cyan);
+    background: linear-gradient(135deg, 
+      rgba(26, 28, 37, 0.98) 0%, 
+      rgba(15, 17, 26, 0.98) 100%);
+    box-shadow: 
+      0 0 0 3px rgba(0, 255, 255, 0.15),
+      0 8px 25px rgba(0, 0, 0, 0.3),
+      inset 0 0 15px rgba(0, 255, 255, 0.1);
 }
 
 .token-dropdown-trigger.open {
-    border-color: var(--sell-primary);
-    border-bottom-left-radius: 0;
-    border-bottom-right-radius: 0;
+    border-color: var(--neon-cyan);
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    background: linear-gradient(135deg, 
+      rgba(26, 28, 37, 1) 0%, 
+      rgba(15, 17, 26, 1) 100%);
+    box-shadow: 
+      0 0 0 2px rgba(0, 255, 255, 0.3),
+      0 10px 30px rgba(0, 0, 0, 0.4);
 }
 
 .selected-token {
@@ -2079,7 +2159,8 @@ button:disabled {
     height: 40px;
     border-radius: 8px;
     object-fit: cover;
-    border: 1px solid var(--sell-border);
+    border: 1px solid rgba(0, 255, 255, 0.3);
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
 }
 
 .token-info {
@@ -2090,29 +2171,34 @@ button:disabled {
 
 .token-name {
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(255, 255, 255, 0.95); /* Bright white text */
     font-size: 0.95rem;
     margin-bottom: 2px;
+    text-shadow: 0 0 3px rgba(0, 255, 255, 0.2);
 }
 
 .token-details {
     font-size: 0.8rem;
-    color: rgba(255, 255, 255, 0.6);
+    color: rgba(255, 255, 255, 0.7); /* Lighter but visible white */
+    text-shadow: 0 0 2px rgba(0, 255, 255, 0.1);
 }
 
 .placeholder {
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(255, 255, 255, 0.6); /* Visible white placeholder */
     font-style: italic;
+    text-shadow: 0 0 2px rgba(0, 255, 255, 0.1);
 }
 
 .dropdown-arrow {
-    color: rgba(255, 255, 255, 0.6);
-    transition: transform 0.3s ease;
+    color: rgba(0, 255, 255, 0.8); /* Cyan arrow for visibility */
+    transition: transform 0.3s ease, color 0.3s ease;
     font-size: 0.8rem;
+    filter: drop-shadow(0 0 3px rgba(0, 255, 255, 0.3));
 }
 
 .token-dropdown-trigger.open .dropdown-arrow {
     transform: rotate(180deg);
+    color: var(--neon-cyan);
 }
 
 .token-dropdown-menu {
@@ -2120,15 +2206,21 @@ button:disabled {
     top: 100%;
     left: 0;
     right: 0;
-    background: var(--sell-card-bg);
-    border: 1px solid var(--sell-primary);
+    background: linear-gradient(135deg, 
+      rgba(15, 17, 26, 0.98) 0%, 
+      rgba(26, 28, 37, 0.98) 100%);
+    border: 1px solid var(--neon-cyan);
     border-top: none;
     border-bottom-left-radius: 12px;
     border-bottom-right-radius: 12px;
     max-height: 300px;
     overflow-y: auto;
     z-index: 1000;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(20px);
+    box-shadow: 
+      0 10px 40px rgba(0, 0, 0, 0.5),
+      0 0 0 1px rgba(0, 255, 255, 0.2),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .token-option {
@@ -2138,7 +2230,9 @@ button:disabled {
     padding: 12px 16px;
     cursor: pointer;
     transition: all 0.2s ease;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.9); /* Bright white text */
+    background: transparent;
 }
 
 .token-option:last-child {
@@ -2146,15 +2240,49 @@ button:disabled {
 }
 
 .token-option:hover {
-    background: rgba(85, 51, 255, 0.1);
+    background: linear-gradient(90deg, 
+      rgba(0, 255, 255, 0.15) 0%, 
+      rgba(128, 0, 255, 0.1) 50%, 
+      rgba(0, 255, 255, 0.15) 100%);
+    color: rgba(255, 255, 255, 1); /* Brightest white on hover */
+    transform: translateX(4px);
+    text-shadow: 0 0 5px rgba(0, 255, 255, 0.3);
 }
 
 .token-option.selected {
-    background: rgba(85, 51, 255, 0.2);
+    background: linear-gradient(90deg, 
+      rgba(0, 255, 255, 0.2) 0%, 
+      rgba(128, 0, 255, 0.15) 50%, 
+      rgba(0, 255, 255, 0.2) 100%);
+    color: rgba(255, 255, 255, 1); /* Bright white for selected */
+    border-color: rgba(0, 255, 255, 0.4);
+    text-shadow: 
+      0 0 5px rgba(0, 255, 255, 0.4),
+      0 0 8px rgba(0, 255, 255, 0.2);
 }
 
 .token-option .token-info {
     flex: 1;
+}
+
+/* Enhanced contrast for token option text */
+.token-option .token-name {
+    color: rgba(255, 255, 255, 0.95) !important;
+    font-weight: 600;
+}
+
+.token-option .token-details {
+    color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.token-option:hover .token-name {
+    color: rgba(255, 255, 255, 1) !important;
+    text-shadow: 0 0 5px rgba(0, 255, 255, 0.3);
+}
+
+.token-option:hover .token-details {
+    color: rgba(255, 255, 255, 0.85) !important;
+    text-shadow: 0 0 3px rgba(0, 255, 255, 0.2);
 }
 
 .loading-tokens {

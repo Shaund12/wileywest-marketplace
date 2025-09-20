@@ -1,0 +1,302 @@
+/* Cyber Skeleton Component Styles */
+.cyber-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(135deg, 
+    rgba(26, 28, 37, 0.6) 0%, 
+    rgba(15, 17, 26, 0.8) 100%);
+  border-radius: 8px;
+  isolation: isolate;
+}
+
+.cyber-skeleton-animate {
+  animation: cyberPulse 2s ease-in-out infinite;
+}
+
+/* Base skeleton elements */
+.cyber-skeleton-line {
+  height: 1rem;
+  background: linear-gradient(90deg, 
+    rgba(0, 255, 255, 0.1) 0%,
+    rgba(128, 0, 255, 0.2) 50%,
+    rgba(0, 255, 255, 0.1) 100%);
+  background-size: 200% 100%;
+  border-radius: 4px;
+  margin-bottom: 0.75rem;
+  animation: cyberShimmer 2s ease-in-out infinite;
+}
+
+.cyber-skeleton-line-short {
+  width: 70% !important;
+}
+
+.cyber-skeleton-line:last-child {
+  margin-bottom: 0;
+}
+
+/* Text variant */
+.cyber-skeleton-text {
+  padding: 1rem;
+}
+
+/* Card variant */
+.cyber-skeleton-card {
+  padding: 1rem;
+  min-height: 200px;
+  border: 1px solid rgba(0, 255, 255, 0.2);
+}
+
+.cyber-skeleton-image {
+  width: 100%;
+  height: 120px;
+  background: linear-gradient(135deg, 
+    rgba(0, 255, 255, 0.1) 0%,
+    rgba(255, 0, 128, 0.1) 50%,
+    rgba(128, 0, 255, 0.1) 100%);
+  background-size: 400% 400%;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  animation: cyberGradient 3s ease-in-out infinite;
+}
+
+.cyber-skeleton-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Avatar variant */
+.cyber-skeleton-avatar {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: linear-gradient(45deg, 
+    rgba(0, 255, 255, 0.2) 0%,
+    rgba(128, 0, 255, 0.3) 50%,
+    rgba(255, 0, 128, 0.2) 100%);
+  background-size: 200% 200%;
+  border: 2px solid rgba(0, 255, 255, 0.3);
+  animation: cyberSpin 4s linear infinite;
+}
+
+/* Button variant */
+.cyber-skeleton-button {
+  height: 40px;
+  width: 120px;
+  background: linear-gradient(90deg, 
+    rgba(0, 255, 255, 0.1) 0%,
+    rgba(128, 0, 255, 0.2) 50%,
+    rgba(0, 255, 255, 0.1) 100%);
+  background-size: 200% 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  animation: cyberButtonPulse 1.5s ease-in-out infinite;
+}
+
+/* Table variant */
+.cyber-skeleton-table {
+  width: 100%;
+}
+
+.cyber-skeleton-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.1);
+}
+
+.cyber-skeleton-row:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.cyber-skeleton-cell {
+  height: 1.5rem;
+  background: linear-gradient(90deg, 
+    rgba(0, 255, 255, 0.08) 0%,
+    rgba(128, 0, 255, 0.15) 50%,
+    rgba(0, 255, 255, 0.08) 100%);
+  background-size: 200% 100%;
+  border-radius: 4px;
+  animation: cyberShimmer 2s ease-in-out infinite;
+}
+
+/* Glow effect */
+.cyber-skeleton-glow {
+  position: absolute;
+  inset: -2px;
+  background: linear-gradient(45deg, 
+    transparent 0%,
+    rgba(0, 255, 255, 0.1) 25%,
+    transparent 50%,
+    rgba(128, 0, 255, 0.1) 75%,
+    transparent 100%);
+  background-size: 400% 400%;
+  border-radius: inherit;
+  opacity: 0;
+  animation: cyberGlowPulse 3s ease-in-out infinite;
+  z-index: -1;
+}
+
+.cyber-skeleton-animate .cyber-skeleton-glow {
+  opacity: 0.6;
+}
+
+/* Particles effect */
+.cyber-skeleton-particles {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    radial-gradient(1px 1px at 20% 30%, rgba(0, 255, 255, 0.3) 0%, transparent 50%),
+    radial-gradient(1px 1px at 80% 70%, rgba(255, 0, 128, 0.3) 0%, transparent 50%),
+    radial-gradient(1px 1px at 40% 80%, rgba(128, 0, 255, 0.3) 0%, transparent 50%);
+  background-size: 100px 100px, 120px 120px, 90px 90px;
+  animation: cyberParticles 6s linear infinite;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Animations */
+@keyframes cyberPulse {
+  0%, 100% { 
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% { 
+    opacity: 1;
+    transform: scale(1.01);
+  }
+}
+
+@keyframes cyberShimmer {
+  0% {
+    background-position: -200% 0;
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    background-position: 200% 0;
+    opacity: 0.6;
+  }
+}
+
+@keyframes cyberGradient {
+  0%, 100% { 
+    background-position: 0% 50%;
+    filter: hue-rotate(0deg);
+  }
+  50% { 
+    background-position: 100% 50%;
+    filter: hue-rotate(90deg);
+  }
+}
+
+@keyframes cyberSpin {
+  0% { 
+    transform: rotate(0deg);
+    background-position: 0% 0%;
+  }
+  100% { 
+    transform: rotate(360deg);
+    background-position: 200% 200%;
+  }
+}
+
+@keyframes cyberButtonPulse {
+  0%, 100% { 
+    background-position: 0% 50%;
+    border-color: rgba(0, 255, 255, 0.3);
+    box-shadow: 0 0 0 rgba(0, 255, 255, 0.5);
+  }
+  50% { 
+    background-position: 100% 50%;
+    border-color: rgba(0, 255, 255, 0.6);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+  }
+}
+
+@keyframes cyberGlowPulse {
+  0%, 100% { 
+    background-position: 0% 50%;
+    opacity: 0.3;
+  }
+  50% { 
+    background-position: 100% 50%;
+    opacity: 0.8;
+  }
+}
+
+@keyframes cyberParticles {
+  0% { 
+    background-position: 0% 0%, 0% 0%, 0% 0%;
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.6;
+  }
+  100% { 
+    background-position: 100% 100%, -100% 100%, 50% -100%;
+    opacity: 0.2;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .cyber-skeleton-table {
+    overflow-x: auto;
+  }
+  
+  .cyber-skeleton-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  .cyber-skeleton-card {
+    padding: 0.75rem;
+    min-height: 150px;
+  }
+  
+  .cyber-skeleton-image {
+    height: 80px;
+  }
+}
+
+/* Motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .cyber-skeleton-animate,
+  .cyber-skeleton-line,
+  .cyber-skeleton-image,
+  .cyber-skeleton-avatar,
+  .cyber-skeleton-button,
+  .cyber-skeleton-cell,
+  .cyber-skeleton-glow,
+  .cyber-skeleton-particles {
+    animation: none !important;
+  }
+  
+  .cyber-skeleton {
+    opacity: 0.7;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .cyber-skeleton {
+    background: #333 !important;
+    border: 1px solid #fff !important;
+  }
+  
+  .cyber-skeleton-line,
+  .cyber-skeleton-image,
+  .cyber-skeleton-cell {
+    background: #666 !important;
+  }
+  
+  .cyber-skeleton-glow,
+  .cyber-skeleton-particles {
+    display: none !important;
+  }
+}
