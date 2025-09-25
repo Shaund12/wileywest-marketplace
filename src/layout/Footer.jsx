@@ -1,9 +1,11 @@
 ﻿import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import CacheStats from '../components/CacheStats';
+import HolidayThemeSelector from '../components/HolidayThemeSelector';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
+import { useHolidayTheme } from '../context/HolidayThemeContext';
 import logo from '../assets/blockdust-logo.png';
 
 /* ====== config (env-friendly, with sane fallbacks) ====== */
@@ -42,6 +44,7 @@ export default function Footer() {
     const { chainId: liveChainId } = useWallet();
     const { listings, marketplaceStats } = useMarketplace();
     const { isConnected: supaUp, cacheStats } = useSupabase();
+    const { holidayTheme, getHolidayConfig } = useHolidayTheme();
 
     const [theme, setTheme] = useState(
         (localStorage.getItem('theme') || document.documentElement.dataset.theme || 'dark')
@@ -155,6 +158,9 @@ export default function Footer() {
                         <button className="bd-btn bd-btn--ghost" onClick={toggleTheme} aria-pressed={theme === 'dark'}>
                             {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
                         </button>
+                        <div style={{ marginTop: '8px' }}>
+                            <HolidayThemeSelector />
+                        </div>
                     </div>
 
                     {/* cache widget you already had */}
