@@ -46,15 +46,18 @@
   height: 100%;
   overflow: hidden;
   pointer-events: none;
-  z-index: 1;
+  z-index: 9999; /* Much higher z-index to appear above content but below modals */
 }
 
 .falling-item {
   position: absolute;
   font-size: 20px;
-  opacity: 0.8;
+  opacity: 0.9;
   animation: fall-crazy 12s linear infinite;
   will-change: transform;
+  z-index: 9999;
+  display: block; /* Ensure items are visible */
+  color: inherit; /* Use inherited colors */
 }
 
 /* Create 10+ falling items with different delays and positions */
@@ -118,15 +121,15 @@
   width: 100%;
   height: 100%;
   pointer-events: none;
-  z-index: 2;
+  z-index: 9998; /* High z-index to be visible */
 }
 
 .corner {
   position: absolute;
-  font-size: 28px;
-  opacity: 0.4;
+  font-size: 32px;
+  opacity: 0.7;
   animation: corner-glow 4s ease-in-out infinite alternate;
-  filter: drop-shadow(0 0 10px currentColor);
+  filter: drop-shadow(0 0 15px currentColor);
 }
 
 .corner.top-left {
@@ -184,8 +187,8 @@
   background-size: 400% 400%;
   animation: spooky-pulse 3s ease-in-out infinite;
   pointer-events: none;
-  z-index: 3;
-  opacity: 0.6;
+  z-index: 9995; /* Higher z-index */
+  opacity: 0.8;
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: xor;
   -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
@@ -235,8 +238,8 @@
   background-size: 300% 300%;
   animation: harvest-shimmer 5s ease-in-out infinite;
   pointer-events: none;
-  z-index: 3;
-  opacity: 0.5;
+  z-index: 9995; /* Higher z-index */
+  opacity: 0.7;
   border-radius: 20px;
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: xor;
@@ -269,12 +272,13 @@
   --neon-pink: var(--holiday-accent);
 }
 
+/* Christmas lights hanging ON the navbar */
 .christmas-lights-border {
   position: fixed;
-  top: 0;
+  top: 60px; /* Position below navbar */
   left: 0;
   width: 100%;
-  height: 8px;
+  height: 12px;
   background: linear-gradient(
     90deg,
     #228B22 0%,
@@ -289,24 +293,38 @@
   background-size: 200% 100%;
   animation: christmas-lights-dance 2s ease-in-out infinite;
   pointer-events: none;
-  z-index: 10;
+  z-index: 9998; /* Below falling items but above content */
   box-shadow: 
     0 0 20px rgba(34, 139, 34, 0.5),
     0 0 40px rgba(220, 20, 60, 0.3),
     0 0 60px rgba(255, 215, 0, 0.4);
+  border-radius: 0 0 6px 6px; /* Rounded bottom to look like hanging lights */
+}
+
+/* Add hanging light bulbs effect */
+.christmas-lights-border::before {
+  content: '🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡';
+  position: absolute;
+  top: 12px;
+  left: 0;
+  width: 100%;
+  height: 20px;
+  font-size: 12px;
+  letter-spacing: 2px;
+  animation: christmas-bulbs-twinkle 3s ease-in-out infinite;
+  text-align: center;
+  overflow: hidden;
 }
 
 .christmas-lights-border::after {
   content: '';
   position: absolute;
-  bottom: -8px;
+  top: -2px;
   left: 0;
   width: 100%;
-  height: 8px;
-  background: inherit;
-  background-size: inherit;
-  animation: inherit;
-  animation-delay: 1s;
+  height: 4px;
+  background: linear-gradient(90deg, #1a4d1a, #4d1a1a, #4d4d1a, #1a4d1a);
+  border-radius: 2px;
 }
 
 @keyframes christmas-lights-dance {
@@ -332,39 +350,60 @@
   }
 }
 
+@keyframes christmas-bulbs-twinkle {
+  0%, 100% {
+    opacity: 0.8;
+    transform: translateY(0px);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(-1px);
+  }
+  75% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
 .wreaths {
   position: fixed;
   width: 100%;
   pointer-events: none;
-  z-index: 5;
+  z-index: 9997; /* Below lights but above content */
 }
 
 .wreath {
   position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 20px;
-  opacity: 0.7;
+  font-size: 24px;
+  opacity: 0.8;
   animation: wreath-sway 6s ease-in-out infinite;
   text-shadow: 0 0 10px #FFD700;
   filter: drop-shadow(0 0 15px rgba(255, 215, 0, 0.6));
 }
 
 .wreath.top {
-  top: 40px;
+  top: 20px; /* Position at navbar level */
+  left: 20px; /* Left side of navbar */
+  transform: none;
 }
 
 .wreath.bottom {
-  bottom: 40px;
+  top: 20px; /* Same level as top wreath */
+  right: 20px; /* Right side of navbar */
   animation-delay: 3s;
+  transform: none;
 }
 
 @keyframes wreath-sway {
   0%, 100% {
-    transform: translateX(-50%) rotate(-3deg) scale(1);
+    transform: rotate(-5deg) scale(1);
   }
   50% {
-    transform: translateX(-50%) rotate(3deg) scale(1.05);
+    transform: rotate(5deg) scale(1.05);
   }
 }
 
