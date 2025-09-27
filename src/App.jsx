@@ -1,4 +1,5 @@
 ﻿import './globals.css';
+import './styles/holiday-themes.css';
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
@@ -9,6 +10,7 @@ import { Analytics } from '@vercel/analytics/react';
 import Navigation from './components/Navigation';
 import Footer from './layout/Footer';
 import './layout/Footer.css';
+import HolidayDecorations from './components/HolidayDecorations';
 
 // Lazy-loaded pages (code-splitting)
 const HomePage = lazy(() => import('./pages/HomePage'));
@@ -37,6 +39,7 @@ import { PremiumWalletProvider } from './context/PremiumWalletContext';
 import { MarketplaceProvider } from './context/MarketplaceContext';
 import { SupabaseProvider } from './context/SupabaseContext';
 import { WebSocketProvider } from './context/WebSocketContext';
+import { HolidayThemeProvider } from './context/HolidayThemeContext';
 
 // Enhanced components
 import RealTimeNotifications from './components/RealTimeNotifications';
@@ -278,20 +281,22 @@ function App() {
     return (
         <WagmiProvider config={wagmiAdapter.wagmiConfig}>
             <QueryClientProvider client={queryClient}>
-                <SupabaseProvider>
-                    <WebSocketProvider>
-                        <PremiumWalletProvider>
-                            {/* Keep old WalletProvider for backward compatibility during transition */}
-                            <WalletProvider rpcUrl={rpcUrl}>
-                                {/* Pass ABI array, not the whole artifact */}
-                                <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi.abi}>
-                                    <BrowserRouter>
-                                        <RouteProgressBar />
-                                        <ScrollToTop />
-                                        <TitleSetter />
-                                        <OnlineStatusBanner />
-                                        <EnvWarningBanner />
-                                        <div className="app-container">
+                <HolidayThemeProvider>
+                    <SupabaseProvider>
+                        <WebSocketProvider>
+                            <PremiumWalletProvider>
+                                {/* Keep old WalletProvider for backward compatibility during transition */}
+                                <WalletProvider rpcUrl={rpcUrl}>
+                                    {/* Pass ABI array, not the whole artifact */}
+                                    <MarketplaceProvider marketplaceAddress={marketplaceAddress} abi={MarketplaceAbi.abi}>
+                                        <BrowserRouter>
+                                            <RouteProgressBar />
+                                            <ScrollToTop />
+                                            <TitleSetter />
+                                            <OnlineStatusBanner />
+                                            <EnvWarningBanner />
+                                            <HolidayDecorations />
+                                            <div className="app-container">
                                             <Navigation />
                                             <div className="main-content">
                                                 <RouteErrorBoundary>
@@ -366,6 +371,7 @@ function App() {
                         </PremiumWalletProvider>
                     </WebSocketProvider>
                 </SupabaseProvider>
+            </HolidayThemeProvider>
             </QueryClientProvider>
         </WagmiProvider>
     );
