@@ -23,7 +23,13 @@ const SellPage = lazy(() => import('./pages/SellPage'));
 const CollectionPage = lazy(() => import('./pages/CollectionPage'));
 const NFTDetailPage = lazy(() => import('./pages/NFTDetailPage'));
 
-
+// Compliance pages (lazy-loaded, feature-flagged)
+const DMCAPage = lazy(() => import('./pages/legal/DMCAPage'));
+const WISPPage = lazy(() => import('./pages/legal/WISPPage'));
+const SanctionsPage = lazy(() => import('./pages/legal/SanctionsPage'));
+const PricingTransparencyPage = lazy(() => import('./pages/legal/PricingTransparencyPage'));
+const DMCAAdminPage = lazy(() => import('./pages/admin/DMCAAdminPage'));
+const ComplianceAdminPage = lazy(() => import('./pages/admin/ComplianceAdminPage'));
 
 // Auction pages (lazy-loaded)
 const CreateAuctionPage = lazy(() => import('./pages/CreateAuctionPage'));
@@ -40,6 +46,9 @@ import { MarketplaceProvider } from './context/MarketplaceContext';
 import { SupabaseProvider } from './context/SupabaseContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { HolidayThemeProvider } from './context/HolidayThemeContext';
+
+// Compliance feature flags
+import { FLAGS } from './utils/compliance/featureFlags';
 
 // Enhanced components
 import RealTimeNotifications from './components/RealTimeNotifications';
@@ -320,6 +329,14 @@ function App() {
 
                                                             <Route path="/terms" element={<TermsPage />} />
                                                             <Route path="/privacy" element={<PrivacyPage />} />
+
+                                                            {/* Compliance routes (feature-flagged) */}
+                                                            {FLAGS.DMCA && <Route path="/legal/dmca" element={<DMCAPage />} />}
+                                                            {FLAGS.WISP && <Route path="/legal/wisp" element={<WISPPage />} />}
+                                                            {FLAGS.SANCTIONS && <Route path="/legal/sanctions" element={<SanctionsPage />} />}
+                                                            {FLAGS.TAX_SWITCH && <Route path="/legal/pricing" element={<PricingTransparencyPage />} />}
+                                                            {FLAGS.DMCA && <Route path="/admin/dmca" element={<DMCAAdminPage />} />}
+                                                            {(FLAGS.TAX_SWITCH || FLAGS.DMCA) && <Route path="/admin/compliance" element={<ComplianceAdminPage />} />}
 
                                                             {/* collections routes */}
                                                             <Route path="/collections" element={<div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>

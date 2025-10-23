@@ -1,0 +1,371 @@
+.compliance-admin-page {
+  min-height: 100vh;
+  padding: 2rem 1rem;
+  background: linear-gradient(135deg, #0a0e27 0%, #1a1a2e 100%);
+}
+
+.compliance-admin-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.page-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.page-header h1 {
+  font-size: 2.5rem;
+  color: #00ffff;
+  margin-bottom: 0.5rem;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+}
+
+.subtitle {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.1rem;
+}
+
+.loading {
+  text-align: center;
+  padding: 3rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.1rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.tab {
+  padding: 1rem 2rem;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.tab:hover {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.tab.active {
+  color: #00ffff;
+}
+
+.tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #00ffff;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+}
+
+.tab-content {
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.settings-section h2 {
+  color: #00ffff;
+  font-size: 1.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.setting-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+  transition: all 0.3s ease;
+}
+
+.setting-card:hover {
+  border-color: rgba(0, 255, 255, 0.3);
+}
+
+.setting-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.setting-info h3 {
+  color: #fff;
+  font-size: 1.25rem;
+  margin: 0 0 0.5rem 0;
+}
+
+.setting-info p {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.setting-value {
+  color: #00ffff;
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 1rem;
+}
+
+.toggle-btn {
+  padding: 0.75rem 2rem;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  min-width: 120px;
+}
+
+.toggle-btn.enabled {
+  background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(74, 222, 128, 0.4);
+}
+
+.toggle-btn.disabled {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.toggle-btn:hover {
+  transform: translateY(-2px);
+}
+
+.flag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.flag-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.flag-name {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+}
+
+.flag-status {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.flag-status.enabled {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+.flag-status.disabled {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.gmv-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.stat-label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.875rem;
+}
+
+.stat-value {
+  color: #00ffff;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.stat-value.above {
+  color: #4ade80;
+}
+
+.stat-value.below {
+  color: #ffaa33;
+}
+
+.btn-refresh {
+  margin-top: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #5533ff 0%, #ff3366 100%);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-refresh:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(85, 51, 255, 0.4);
+}
+
+.radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.radio-group label:hover {
+  background: rgba(0, 0, 0, 0.3);
+  border-color: rgba(0, 255, 255, 0.3);
+}
+
+.radio-group input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.radio-group span {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.input-field {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 1rem;
+  margin-top: 1rem;
+  transition: all 0.3s ease;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: #00ffff;
+  box-shadow: 0 0 0 3px rgba(0, 255, 255, 0.1);
+}
+
+.info-box {
+  background: rgba(0, 255, 255, 0.05);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.info-box h4 {
+  color: #00ffff;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.info-box p, .info-box ol {
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.6;
+  margin-bottom: 0.75rem;
+}
+
+.info-box ol {
+  margin-left: 1.5rem;
+}
+
+.info-box li {
+  margin-bottom: 0.5rem;
+}
+
+.info-box strong {
+  color: #fff;
+}
+
+.info-box a {
+  color: #00ffff;
+  text-decoration: none;
+}
+
+.info-box a:hover {
+  text-decoration: underline;
+}
+
+.note {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255, 170, 51, 0.1);
+  border-left: 3px solid #ffaa33;
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 768px) {
+  .tabs {
+    overflow-x: auto;
+  }
+
+  .tab {
+    padding: 0.75rem 1.5rem;
+    white-space: nowrap;
+  }
+
+  .setting-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .toggle-btn {
+    width: 100%;
+  }
+
+  .flag-grid,
+  .gmv-stats {
+    grid-template-columns: 1fr;
+  }
+}
