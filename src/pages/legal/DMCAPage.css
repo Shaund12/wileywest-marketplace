@@ -1,0 +1,192 @@
+.dmca-page {
+  min-height: 100vh;
+  padding: 2rem 1rem;
+  background: linear-gradient(135deg, #0a0e27 0%, #1a1a2e 100%);
+}
+
+.dmca-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.dmca-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.dmca-header h1 {
+  font-size: 2.5rem;
+  color: #00ffff;
+  margin-bottom: 0.5rem;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+}
+
+.dmca-subtitle {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.1rem;
+}
+
+.dmca-notice {
+  background: rgba(255, 170, 51, 0.1);
+  border: 1px solid rgba(255, 170, 51, 0.3);
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.dmca-notice h3 {
+  color: #ffaa33;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.dmca-notice ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.dmca-notice li {
+  color: rgba(255, 255, 255, 0.85);
+  padding-left: 1.5rem;
+  margin-bottom: 0.5rem;
+  position: relative;
+}
+
+.dmca-notice li:before {
+  content: '•';
+  position: absolute;
+  left: 0;
+  color: #ffaa33;
+}
+
+.dmca-form {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 2rem;
+}
+
+.form-section {
+  margin-bottom: 2.5rem;
+}
+
+.form-section h2 {
+  color: #00ffff;
+  font-size: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+}
+
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+.form-group label {
+  display: block;
+  color: rgba(255, 255, 255, 0.9);
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.form-group .required {
+  color: #ff3366;
+}
+
+.form-group input,
+.form-group textarea {
+  width: 100%;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #00ffff;
+  box-shadow: 0 0 0 3px rgba(0, 255, 255, 0.1);
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.form-group small {
+  display: block;
+  margin-top: 0.5rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.875rem;
+}
+
+.form-actions {
+  text-align: center;
+  padding-top: 1rem;
+}
+
+.btn-submit {
+  padding: 1rem 3rem;
+  background: linear-gradient(135deg, #5533ff 0%, #ff3366 100%);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(85, 51, 255, 0.4);
+}
+
+.btn-submit:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(85, 51, 255, 0.6);
+}
+
+.btn-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dmca-footer {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.dmca-footer p {
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+}
+
+.dmca-footer a {
+  color: #00ffff;
+  text-decoration: none;
+}
+
+.dmca-footer a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .dmca-header h1 {
+    font-size: 2rem;
+  }
+
+  .dmca-form {
+    padding: 1.5rem;
+  }
+
+  .btn-submit {
+    width: 100%;
+    padding: 1rem;
+  }
+}

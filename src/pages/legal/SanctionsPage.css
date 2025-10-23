@@ -1,0 +1,135 @@
+.sanctions-page {
+  min-height: 100vh;
+  padding: 2rem 1rem;
+  background: linear-gradient(135deg, #0a0e27 0%, #1a1a2e 100%);
+}
+
+.sanctions-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.sanctions-header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.sanctions-header h1 {
+  font-size: 2.5rem;
+  color: #00ffff;
+  margin-bottom: 0.5rem;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+}
+
+.subtitle {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.1rem;
+}
+
+.sanctions-content {
+  margin-bottom: 3rem;
+}
+
+.content-section {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.content-section h2 {
+  color: #00ffff;
+  font-size: 1.5rem;
+  margin-top: 0;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+}
+
+.content-section p {
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.8;
+  margin-bottom: 1rem;
+}
+
+.content-section ul, .content-section ol {
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.8;
+  margin-left: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.content-section li {
+  margin-bottom: 0.5rem;
+}
+
+.content-section strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.content-section a {
+  color: #00ffff;
+  text-decoration: none;
+}
+
+.content-section a:hover {
+  text-decoration: underline;
+}
+
+.sanctions-footer {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+  margin-top: 3rem;
+}
+
+.footer-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+}
+
+.footer-card:hover {
+  border-color: rgba(0, 255, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(0, 255, 255, 0.1);
+}
+
+.footer-card h3 {
+  color: #ffaa33;
+  font-size: 1.25rem;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.footer-card p {
+  color: rgba(255, 255, 255, 0.7);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.footer-card a {
+  color: #00ffff;
+  text-decoration: none;
+}
+
+.footer-card a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .sanctions-header h1 {
+    font-size: 2rem;
+  }
+
+  .content-section {
+    padding: 1.5rem;
+  }
+
+  .sanctions-footer {
+    grid-template-columns: 1fr;
+  }
+}
