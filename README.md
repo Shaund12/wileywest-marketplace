@@ -235,25 +235,62 @@ src/
 │   ├── Footer.jsx       # Site footer
 │   ├── ListingCard.jsx  # NFT listing display
 │   ├── LazyNftGrid.jsx  # Optimized NFT grid
-│   └── MarketplaceStats.jsx # Real-time statistics
+│   ├── MarketplaceStats.jsx # Real-time statistics
+│   └── compliance/      # Compliance components (feature-flagged)
+│       └── SanctionsModal.jsx # Sanctions warning modal
 ├── pages/               # Route components
 │   ├── HomePage.jsx     # Landing page
 │   ├── MarketplacePage.jsx # NFT marketplace
 │   ├── HotListingsPage.jsx # Trending NFTs
 │   ├── SellPage.jsx     # Create listings
-│   └── ProfilePage.jsx  # User profile
+│   ├── ProfilePage.jsx  # User profile
+│   ├── legal/           # Legal & compliance pages (feature-flagged)
+│   │   ├── DMCAPage.jsx          # DMCA takedown form
+│   │   ├── WISPPage.jsx          # Security program docs
+│   │   ├── SanctionsPage.jsx    # Sanctions policy
+│   │   └── PricingTransparencyPage.jsx # Pricing & tax info
+│   └── admin/           # Admin pages (feature-flagged)
+│       ├── DMCAAdminPage.jsx     # DMCA review interface
+│       └── ComplianceAdminPage.jsx # Compliance settings
 ├── context/             # React Context providers
 │   ├── WalletContext.jsx    # Web3 wallet management
 │   ├── MarketplaceContext.jsx # NFT marketplace state
 │   └── SupabaseContext.jsx   # Database integration
 ├── utils/               # Utility functions
 │   ├── tokenUtils.js    # Price fetching & token operations
-│   └── nftScanner.js    # Blockchain NFT discovery
+│   ├── nftScanner.js    # Blockchain NFT discovery
+│   └── compliance/      # Compliance utilities (feature-flagged)
+│       ├── featureFlags.js       # Feature flag management
+│       ├── sanctionsAdapter.js   # Sanctions screening
+│       └── taxCalculator.js      # Tax calculations
+├── hooks/               # Custom React hooks
+│   └── useSanctionsGate.js # Sanctions gate hook
 ├── abi/                 # Smart contract ABIs
 │   └── Marketplace.json # Marketplace contract ABI
 └── assets/             # Static assets
     └── blockdust-logo.png # Application logo
 ```
+
+### Application Routes
+
+**Main Routes:**
+- `/` - Homepage
+- `/marketplace` - NFT marketplace
+- `/hot-listings` - Trending NFTs
+- `/sell` - Create listings
+- `/profile` - User profile
+- `/terms` - Terms of service
+- `/privacy` - Privacy policy
+
+**Compliance Routes** (Feature-Flagged):
+- `/legal/dmca` - DMCA takedown form (Flag: `VITE_FLAG_DMCA`)
+- `/legal/wisp` - WISP documentation (Flag: `VITE_FLAG_WISP`)
+- `/legal/sanctions` - Sanctions policy (Flag: `VITE_FLAG_SANCTIONS`)
+- `/legal/pricing` - Pricing transparency (Flag: `VITE_FLAG_TAX_SWITCH`)
+- `/admin/dmca` - DMCA admin interface (Flag: `VITE_FLAG_DMCA`)
+- `/admin/compliance` - Compliance settings (Flag: Multiple)
+
+**Note**: Compliance routes only render when their respective feature flags are enabled. With all flags disabled (default), these routes return 404.
 
 ### Core Technologies
 
@@ -286,6 +323,15 @@ src/
 - **Network Management**: Automatic Vitruveo network configuration
 - **Transaction Handling**: Secure smart contract interactions
 
+### Compliance Features (Optional, Feature-Flagged)
+
+- **DMCA Takedown System**: Copyright infringement reporting and management
+- **WISP Documentation**: Written Information Security Program
+- **Sanctions Screening**: OFAC and sanctions list checking
+- **MA Tax Collection**: Massachusetts marketplace facilitator tax compliance
+
+**Note**: All compliance features are disabled by default and controlled by feature flags. See [Compliance Documentation](docs/compliance.md) for details.
+
 ### Performance Features
 
 - **Lazy Loading**: Optimized NFT grid with progressive loading
@@ -297,12 +343,31 @@ src/
 
 ### Environment Variables
 
+#### Core Configuration
+
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
 | `VITE_RPC_URL` | Vitruveo RPC endpoint | Yes | `https://rpc.vitruveo.xyz` |
 | `VITE_MARKETPLACE_ADDRESS` | Smart contract address | Yes | - |
 | `VITE_SUPABASE_URL` | Supabase project URL | No | - |
 | `VITE_SUPABASE_ANON_KEY` | Supabase anonymous key | No | - |
+
+#### Compliance Feature Flags (Default: OFF)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VITE_FLAG_DMCA` | Enable DMCA takedown system | `0` |
+| `VITE_FLAG_WISP` | Enable WISP documentation | `0` |
+| `VITE_FLAG_SANCTIONS` | Enable sanctions screening | `0` |
+| `VITE_FLAG_TAX_SWITCH` | Enable MA tax collection | `0` |
+
+#### Compliance Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `VITE_OFAC_PROVIDER` | Sanctions provider (local\|trm\|chainalysis) | `local` |
+| `VITE_TAX_GEO_MODE` | Tax geo mode (none\|ip\|self_declare) | `none` |
+| `VITE_DMCA_AGENT_EMAIL` | DMCA agent contact email | `legal@blockdust.xyz` |
 
 ### Smart Contract Integration
 
