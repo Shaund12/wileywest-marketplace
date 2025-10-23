@@ -6,6 +6,7 @@ import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { useHolidayTheme } from '../context/HolidayThemeContext';
+import { FLAGS } from '../utils/compliance/featureFlags';
 import logo from '../assets/blockdust-logo.png';
 
 /* ====== config (env-friendly, with sane fallbacks) ====== */
@@ -195,6 +196,10 @@ export default function Footer() {
                         <summary><h4>Legal</h4></summary>
                         <Link to="/terms">Terms of Service</Link>
                         <Link to="/privacy">Privacy Policy</Link>
+                        {FLAGS.DMCA && <Link to="/legal/dmca">DMCA Takedown</Link>}
+                        {FLAGS.WISP && <Link to="/legal/wisp">Security Program (WISP)</Link>}
+                        {FLAGS.SANCTIONS && <Link to="/legal/sanctions">Sanctions Policy</Link>}
+                        {FLAGS.TAX_SWITCH && <Link to="/legal/pricing">Pricing & Tax Info</Link>}
                     </details>
                 </nav>
             </div>
