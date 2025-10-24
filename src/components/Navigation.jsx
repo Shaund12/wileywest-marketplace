@@ -5,7 +5,7 @@ import { Copy, ExternalLink, Menu, X, Check, ChevronDown, ChevronUp, Activity } 
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { usePremiumWallet } from '../context/PremiumWalletContext';
-import { PremiumWalletButton } from './PremiumWalletButton';
+import { ComplianceWalletButton } from './ComplianceWalletButton';
 import { Button } from './ui/button';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { cn } from '../lib/utils';
@@ -442,8 +442,8 @@ export default function Navigation() {
                             </span>
                         </motion.div>
 
-                        {/* Premium Wallet Button */}
-                        <PremiumWalletButton />
+                        {/* Compliance-enabled Wallet Button (with sanctions checking) */}
+                        <ComplianceWalletButton />
 
                         {/* Mobile menu button */}
                         <Button
