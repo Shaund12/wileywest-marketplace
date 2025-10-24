@@ -279,7 +279,102 @@ CREATE INDEX IF NOT EXISTS idx_sanctions_logs_address ON sanctions_logs(address)
 CREATE INDEX IF NOT EXISTS idx_sanctions_logs_occurred ON sanctions_logs(occurred_at DESC);
 
 -- ============================================================================
--- 4. MA Tax Switch & Compliance Settings
+-- 4. NFT Contract Blocklist (Securities & Prohibited Collections)
+-- ============================================================================
+
+-- NFT contract blocklist (collections that may be securities or prohibited)
+CREATE TABLE IF NOT EXISTS nft_contract_blocklist (
+    id BIGSERIAL PRIMARY KEY,
+    contract_address TEXT NOT NULL UNIQUE,  -- NFT contract address (lowercase)
+    reason TEXT NOT NULL,                    -- securities | rev_share | prohibited | other
+    description TEXT,                        -- Details about why blocked
+    added_by TEXT,                          -- Admin who added it
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    active BOOLEAN NOT NULL DEFAULT true,
+    notes TEXT,
+    
+    CONSTRAINT contract_address_format CHECK (contract_address ~ '^0x[a-f0-9]{40}$')
+);
+
+-- NFT contract screening logs (audit trail)
+CREATE TABLE IF NOT EXISTS nft_contract_logs (
+    id BIGSERIAL PRIMARY KEY,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    action TEXT NOT NULL,                    -- list | buy | transfer
+    contract_address TEXT NOT NULL,          -- NFT contract being checked
+    user_address TEXT NOT NULL,              -- User attempting action
+    decision TEXT NOT NULL,                  -- allow | block
+    reason TEXT,                             -- Why blocked
+    context JSONB DEFAULT '{}',             -- Additional metadata
+    
+    CONSTRAINT valid_contract_action CHECK (action IN ('list', 'buy', 'transfer')),
+    CONSTRAINT valid_contract_decision CHECK (decision IN ('allow', 'block'))
+);
+
+-- Enable RLS for NFT contract tables
+ALTER TABLE nft_contract_blocklist ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nft_contract_logs ENABLE ROW LEVEL SECURITY;
+
+-- Admin-only access to NFT contract blocklist
+CREATE POLICY IF NOT EXISTS nft_contract_blocklist_admin ON nft_contract_blocklist
+    FOR ALL USING (
+        auth.jwt() ->> 'role' = 'admin' OR 
+        auth.jwt() ->> 'email' IN (
+            SELECT email FROM admin_users WHERE active = true
+        )
+    );
+
+CREATE POLICY IF NOT EXISTS nft_contract_logs_admin ON nft_contract_logs
+    FOR ALL USING (
+        auth.jwt() ->> 'role' = 'admin' OR 
+        auth.jwt() ->> 'email' IN (
+            SELECT email FROM admin_users WHERE active = true
+        )
+    );
+
+-- RPC function to check if NFT contract is blocked
+CREATE OR REPLACE FUNCTION rpc_check_nft_contract(contract_addr TEXT)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    is_blocked BOOLEAN;
+    block_reason TEXT;
+    block_description TEXT;
+BEGIN
+    SELECT 
+        EXISTS(
+            SELECT 1 FROM nft_contract_blocklist 
+            WHERE LOWER(contract_address) = LOWER(contract_addr)
+            AND active = true
+        ),
+        reason,
+        description
+    INTO is_blocked, block_reason, block_description
+    FROM nft_contract_blocklist 
+    WHERE LOWER(contract_address) = LOWER(contract_addr)
+    AND active = true
+    LIMIT 1;
+    
+    RETURN jsonb_build_object(
+        'blocked', COALESCE(is_blocked, false),
+        'reason', block_reason,
+        'description', block_description
+    );
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION rpc_check_nft_contract(TEXT) TO anon, authenticated;
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_nft_contract_address ON nft_contract_blocklist(LOWER(contract_address));
+CREATE INDEX IF NOT EXISTS idx_nft_contract_active ON nft_contract_blocklist(active) WHERE active = true;
+CREATE INDEX IF NOT EXISTS idx_nft_contract_logs_contract ON nft_contract_logs(contract_address);
+CREATE INDEX IF NOT EXISTS idx_nft_contract_logs_occurred ON nft_contract_logs(occurred_at DESC);
+
+-- ============================================================================
+-- 5. MA Tax Switch & Compliance Settings
 -- ============================================================================
 
 -- Compliance settings (singleton table)
@@ -440,6 +535,8 @@ END $$;
 -- 2. No need to drop tables; they will remain idle
 -- 3. If tables must be removed (not recommended):
 --    DROP MATERIALIZED VIEW IF EXISTS ma_gmv_trailing_365 CASCADE;
+--    DROP TABLE IF EXISTS nft_contract_logs CASCADE;
+--    DROP TABLE IF EXISTS nft_contract_blocklist CASCADE;
 --    DROP TABLE IF EXISTS sanctions_logs CASCADE;
 --    DROP TABLE IF EXISTS sanctions_blocklist CASCADE;
 --    DROP TABLE IF EXISTS nft_tax_profile CASCADE;

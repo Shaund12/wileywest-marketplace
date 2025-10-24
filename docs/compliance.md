@@ -232,6 +232,88 @@ function MyComponent() {
 
 ---
 
+## 3.1 NFT Contract Blocklist
+
+### Purpose
+Block specific NFT contracts that may be securities, offer revenue sharing, or are otherwise prohibited.
+
+### Database Tables
+```sql
+nft_contract_blocklist (
+  contract_address text UNIQUE,
+  reason text (securities|rev_share|prohibited|other),
+  description text,
+  active boolean
+)
+
+nft_contract_logs (
+  action text (list|buy|transfer),
+  contract_address text,
+  user_address text,
+  decision text (allow|block),
+  reason text
+)
+```
+
+### Screening Points
+When `VITE_FLAG_SANCTIONS=1` (piggybacks on sanctions flag):
+1. **List** - Blocks listing creation for blocked contracts
+2. **Buy** - Blocks purchase of blocked NFTs
+3. **Transfer** - Warns about blocked contracts
+
+### Common Block Reasons
+- **securities**: NFT may be classified as a security
+- **rev_share**: Collection offers revenue sharing
+- **prohibited**: Violates platform policy
+- **other**: Other compliance reasons
+
+### Usage Example
+```javascript
+import { useNFTContractGate } from '../hooks/useNFTContractGate';
+
+function ListNFTButton({ contractAddress }) {
+  const { checkBeforeList, modalState, closeModal } = useNFTContractGate();
+  
+  const handleList = async () => {
+    const allowed = await checkBeforeList(contractAddress);
+    if (!allowed) return; // Contract blocked
+    // Proceed with listing...
+  };
+  
+  return (
+    <>
+      <button onClick={handleList}>List NFT</button>
+      <NFTContractBlockedModal {...modalState} onClose={closeModal} />
+    </>
+  );
+}
+```
+
+### Admin Functions
+```javascript
+import { blockNFTContract, unblockNFTContract } from '../utils/compliance/nftContractAdapter';
+
+// Block a contract
+await blockNFTContract(
+  '0x1234...', 
+  'rev_share',
+  'Offers 20% revenue share to holders',
+  'admin@example.com',
+  supabase
+);
+
+// Unblock a contract
+await unblockNFTContract('0x1234...', supabase);
+```
+
+### Implementation Files
+- `src/components/compliance/NFTContractBlockedModal.jsx`
+- `src/hooks/useNFTContractGate.js`
+- `src/utils/compliance/nftContractAdapter.js`
+- `supabase-compliance-schema.sql` (NFT contract section)
+
+---
+
 ## 4. MA Tax Collection
 
 ### Purpose
