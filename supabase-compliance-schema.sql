@@ -373,6 +373,14 @@ CREATE INDEX IF NOT EXISTS idx_nft_contract_active ON nft_contract_blocklist(act
 CREATE INDEX IF NOT EXISTS idx_nft_contract_logs_contract ON nft_contract_logs(contract_address);
 CREATE INDEX IF NOT EXISTS idx_nft_contract_logs_occurred ON nft_contract_logs(occurred_at DESC);
 
+-- Seed initial blocked contracts (securities and revenue-sharing collections)
+INSERT INTO nft_contract_blocklist (contract_address, reason, description, added_by, active)
+VALUES 
+  ('0xc5d518d131738481947cfa4670f94eb7b948a1ac', 'rev_share', 'V-Share collection offers revenue sharing to NFT holders', 'system', true),
+  ('0x8e7c7f0df435be6773641f8cf62c590d7dde5a8a', 'securities', 'Vibe collection may be classified as a security', 'system', true),
+  ('0x72d2bfb14b3351d17a63cd4c8085e034e313c54c', 'securities', 'Verse collection may be classified as a security', 'system', true)
+ON CONFLICT (contract_address) DO NOTHING;
+
 -- ============================================================================
 -- 5. MA Tax Switch & Compliance Settings
 -- ============================================================================
