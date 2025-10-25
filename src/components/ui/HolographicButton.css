@@ -1,0 +1,262 @@
+/* Holographic Button Component Styles */
+.holo-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 600;
+  text-decoration: none;
+  outline: none;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  transform-style: preserve-3d;
+}
+
+/* Background layers */
+.holo-btn-background {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, 
+    var(--neon-cyan) 0%, 
+    var(--neon-purple) 25%, 
+    var(--neon-pink) 50%, 
+    var(--neon-green) 75%, 
+    var(--neon-cyan) 100%);
+  background-size: 400% 400%;
+  border-radius: inherit;
+  opacity: 0.8;
+  animation: holographicShift 4s ease-in-out infinite;
+  z-index: 1;
+}
+
+.holo-btn-border {
+  position: absolute;
+  inset: -2px;
+  background: linear-gradient(45deg, 
+    var(--neon-cyan), 
+    var(--neon-purple), 
+    var(--neon-pink), 
+    var(--neon-green), 
+    var(--neon-cyan));
+  background-size: 400% 400%;
+  border-radius: inherit;
+  animation: holographicShift 6s ease-in-out infinite reverse;
+  z-index: 0;
+}
+
+.holo-btn-content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  z-index: 3;
+  color: white;
+  text-shadow: 
+    0 0 5px currentColor,
+    0 0 10px currentColor,
+    0 0 15px currentColor;
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.3));
+}
+
+.holo-btn-glow {
+  position: absolute;
+  inset: -4px;
+  background: radial-gradient(circle at center, 
+    rgba(0, 255, 255, 0.4) 0%, 
+    rgba(128, 0, 255, 0.3) 25%, 
+    rgba(255, 0, 128, 0.2) 50%, 
+    transparent 70%);
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  animation: glowPulse 3s ease-in-out infinite;
+  z-index: -1;
+}
+
+/* Size variants */
+.holo-btn-sm {
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  border-radius: 0.5rem;
+  min-height: 2rem;
+}
+
+.holo-btn-md {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  border-radius: 0.75rem;
+  min-height: 2.5rem;
+}
+
+.holo-btn-lg {
+  padding: 1rem 2rem;
+  font-size: 1.125rem;
+  border-radius: 1rem;
+  min-height: 3rem;
+}
+
+.holo-btn-xl {
+  padding: 1.25rem 2.5rem;
+  font-size: 1.25rem;
+  border-radius: 1.25rem;
+  min-height: 3.5rem;
+}
+
+/* Color variants */
+.holo-btn-primary .holo-btn-background {
+  background: linear-gradient(135deg, 
+    var(--neon-cyan) 0%, 
+    var(--neon-purple) 50%, 
+    var(--neon-cyan) 100%);
+}
+
+.holo-btn-secondary .holo-btn-background {
+  background: linear-gradient(135deg, 
+    var(--neon-purple) 0%, 
+    var(--neon-pink) 50%, 
+    var(--neon-purple) 100%);
+}
+
+.holo-btn-accent .holo-btn-background {
+  background: linear-gradient(135deg, 
+    var(--neon-pink) 0%, 
+    var(--neon-green) 50%, 
+    var(--neon-pink) 100%);
+}
+
+.holo-btn-danger .holo-btn-background {
+  background: linear-gradient(135deg, 
+    #ff0066 0%, 
+    #ff3366 50%, 
+    #ff0066 100%);
+}
+
+.holo-btn-ghost .holo-btn-background {
+  background: transparent;
+  border: 2px solid var(--neon-cyan);
+}
+
+.holo-btn-ghost .holo-btn-border {
+  background: linear-gradient(45deg, 
+    var(--neon-cyan), 
+    transparent, 
+    var(--neon-cyan));
+}
+
+/* Hover effects */
+.holo-btn:hover .holo-btn-glow {
+  opacity: 1;
+}
+
+.holo-btn:hover .holo-btn-background {
+  animation-duration: 2s;
+  opacity: 0.9;
+}
+
+.holo-btn:hover .holo-btn-content {
+  text-shadow: 
+    0 0 5px currentColor,
+    0 0 10px currentColor,
+    0 0 15px currentColor,
+    0 0 20px currentColor;
+}
+
+/* Active state */
+.holo-btn:active .holo-btn-background {
+  opacity: 1;
+}
+
+/* Disabled state */
+.holo-btn-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.holo-btn-disabled .holo-btn-background {
+  animation: none;
+  background: linear-gradient(135deg, 
+    rgba(128, 128, 128, 0.3) 0%, 
+    rgba(96, 96, 96, 0.3) 100%);
+}
+
+/* Icon styles */
+.holo-btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.holo-btn-text {
+  display: flex;
+  align-items: center;
+  font-weight: inherit;
+}
+
+/* Animations */
+@keyframes holographicShift {
+  0%, 100% { 
+    background-position: 0% 50%;
+    filter: hue-rotate(0deg) brightness(1);
+  }
+  25% {
+    background-position: 100% 0%;
+    filter: hue-rotate(90deg) brightness(1.1);
+  }
+  50% { 
+    background-position: 100% 100%;
+    filter: hue-rotate(180deg) brightness(1.2);
+  }
+  75% {
+    background-position: 0% 100%;
+    filter: hue-rotate(270deg) brightness(1.1);
+  }
+}
+
+@keyframes glowPulse {
+  0%, 100% { 
+    opacity: 0;
+    transform: scale(1);
+  }
+  50% { 
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
+/* Focus accessibility */
+.holo-btn:focus-visible {
+  outline: 2px solid var(--neon-cyan);
+  outline-offset: 4px;
+}
+
+/* Motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .holo-btn-background,
+  .holo-btn-border,
+  .holo-btn-glow {
+    animation: none !important;
+  }
+  
+  .holo-btn {
+    transition: none !important;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .holo-btn-background {
+    background: var(--neon-cyan) !important;
+  }
+  
+  .holo-btn-content {
+    color: black !important;
+    text-shadow: none !important;
+  }
+}

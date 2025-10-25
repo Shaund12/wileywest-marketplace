@@ -1,0 +1,276 @@
+.dmca-admin-page {
+  min-height: 100vh;
+  padding: 2rem 1rem;
+  background: linear-gradient(135deg, #0a0e27 0%, #1a1a2e 100%);
+}
+
+.dmca-admin-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.dmca-admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.dmca-admin-header h1 {
+  font-size: 2rem;
+  color: #00ffff;
+  margin: 0;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+}
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.filters label {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.filter-select {
+  padding: 0.5rem 1rem;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: #fff;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.loading, .empty-state {
+  text-align: center;
+  padding: 3rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.1rem;
+}
+
+.takedowns-grid {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.takedown-card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+}
+
+.takedown-card:hover {
+  border-color: rgba(0, 255, 255, 0.3);
+  box-shadow: 0 4px 20px rgba(0, 255, 255, 0.1);
+}
+
+.takedown-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.takedown-header strong {
+  color: #fff;
+  font-size: 1.1rem;
+  margin-right: 1rem;
+}
+
+.takedown-header small {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.875rem;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.1);
+  margin-left: 0.5rem;
+}
+
+.takedown-body {
+  margin-bottom: 1rem;
+}
+
+.field {
+  margin-bottom: 1rem;
+}
+
+.field label {
+  display: block;
+  color: #00ffff;
+  font-size: 0.875rem;
+  margin-bottom: 0.25rem;
+  font-weight: 600;
+}
+
+.field span, .field p {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.field p.statement {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.75rem;
+  border-radius: 6px;
+  border-left: 3px solid rgba(0, 255, 255, 0.5);
+  margin: 0.5rem 0;
+}
+
+.field .signature {
+  font-style: italic;
+  color: #ffaa33;
+}
+
+.url-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0;
+}
+
+.url-list li {
+  padding: 0.25rem 0;
+}
+
+.url-list a {
+  color: #00ffff;
+  text-decoration: none;
+  word-break: break-all;
+  font-size: 0.9rem;
+}
+
+.url-list a:hover {
+  text-decoration: underline;
+}
+
+.admin-notes {
+  background: rgba(255, 170, 51, 0.1);
+  border: 1px solid rgba(255, 170, 51, 0.3);
+  padding: 0.75rem;
+  border-radius: 6px;
+}
+
+.takedown-actions {
+  display: flex;
+  gap: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-action {
+  padding: 0.5rem 1.5rem;
+  background: linear-gradient(135deg, #5533ff 0%, #ff3366 100%);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-action:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(85, 51, 255, 0.4);
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.modal {
+  background: linear-gradient(135deg, #1a1a2e 0%, #0a0e27 100%);
+  border: 1px solid rgba(0, 255, 255, 0.3);
+  border-radius: 12px;
+  padding: 2rem;
+  max-width: 500px;
+  width: 90%;
+}
+
+.modal h2 {
+  color: #00ffff;
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.modal p {
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 0.5rem;
+}
+
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.btn-status {
+  padding: 0.75rem;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: #fff;
+}
+
+.btn-actioned {
+  background: linear-gradient(135deg, #00ffff 0%, #33ccff 100%);
+}
+
+.btn-closed {
+  background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+}
+
+.btn-open {
+  background: linear-gradient(135deg, #ffaa33 0%, #ff8800 100%);
+}
+
+.btn-cancel {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.btn-status:hover, .btn-cancel:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+@media (max-width: 768px) {
+  .dmca-admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .takedown-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .takedown-actions {
+    flex-direction: column;
+  }
+}

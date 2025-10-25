@@ -1,0 +1,112 @@
+.empty-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 300px;
+    padding: 40px 20px;
+    border: 2px dashed var(--border-color);
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.02);
+    margin: 20px 0;
+}
+
+.empty-state-content {
+    text-align: center;
+    max-width: 400px;
+}
+
+.empty-state-icon {
+    font-size: 4rem;
+    margin-bottom: 20px;
+    opacity: 0.6;
+    animation: glow 2s ease-in-out infinite alternate;
+}
+
+.empty-state-title {
+    color: var(--text-light);
+    font-size: 1.5rem;
+    margin-bottom: 12px;
+    font-weight: 600;
+}
+
+.empty-state-description {
+    color: var(--text-muted);
+    font-size: 1rem;
+    line-height: 1.5;
+    margin-bottom: 24px;
+}
+
+.empty-state-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.empty-state-actions .primary-button,
+.empty-state-actions .secondary-button {
+    min-width: 120px;
+}
+
+/* Special variants */
+.empty-state.marketplace {
+    min-height: 400px;
+}
+
+.empty-state.profile {
+    min-height: 250px;
+}
+
+.empty-state.search {
+    background-color: rgba(255, 170, 51, 0.05);
+    border-color: rgba(255, 170, 51, 0.3);
+}
+
+.empty-state.error {
+    background-color: rgba(255, 51, 102, 0.05);
+    border-color: rgba(255, 51, 102, 0.3);
+}
+
+.empty-state.loading {
+    background-color: rgba(85, 51, 255, 0.05);
+    border-color: rgba(85, 51, 255, 0.3);
+}
+
+@keyframes glow {
+    0% { opacity: 0.4; transform: scale(1); }
+    100% { opacity: 0.8; transform: scale(1.05); }
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .empty-state {
+        min-height: 250px;
+        padding: 30px 15px;
+    }
+    
+    .empty-state-icon {
+        font-size: 3rem;
+        margin-bottom: 16px;
+    }
+    
+    .empty-state-title {
+        font-size: 1.3rem;
+        margin-bottom: 10px;
+    }
+    
+    .empty-state-description {
+        font-size: 0.9rem;
+        margin-bottom: 20px;
+    }
+    
+    .empty-state-actions {
+        flex-direction: column;
+        align-items: center;
+    }
+    
+    .empty-state-actions .primary-button,
+    .empty-state-actions .secondary-button {
+        width: 100%;
+        max-width: 200px;
+    }
+}

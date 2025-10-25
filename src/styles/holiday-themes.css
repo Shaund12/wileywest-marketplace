@@ -1,0 +1,536 @@
+/* Holiday Theme Styles - Enhanced with CRAZY Decorations! */
+
+/* ===== BASE HOLIDAY THEME VARIABLES ===== */
+:root[data-holiday-theme="halloween"] {
+  --holiday-primary: #ff6600;
+  --holiday-secondary: #8B4513;
+  --holiday-accent: #4B0082;
+  --holiday-bg-overlay: rgba(255, 102, 0, 0.08);
+}
+
+:root[data-holiday-theme="thanksgiving"] {
+  --holiday-primary: #D2691E;
+  --holiday-secondary: #DAA520;
+  --holiday-accent: #8B4513;
+  --holiday-bg-overlay: rgba(210, 105, 30, 0.08);
+}
+
+:root[data-holiday-theme="christmas"] {
+  --holiday-primary: #228B22;
+  --holiday-secondary: #DC143C;
+  --holiday-accent: #FFD700;
+  --holiday-bg-overlay: rgba(34, 139, 34, 0.08);
+}
+
+/* ===== HOLIDAY BACKGROUND OVERLAYS ===== */
+[data-holiday-theme]:not([data-holiday-theme="default"]) body::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--holiday-bg-overlay);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ===== SHARED FALLING ITEMS SYSTEM ===== */
+.falling-halloween-items,
+.falling-thanksgiving-items,
+.falling-christmas-items {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 9999; /* Much higher z-index to appear above content but below modals */
+}
+
+.falling-item {
+  position: absolute;
+  font-size: 20px;
+  opacity: 0.9;
+  animation: fall-crazy 12s linear infinite;
+  will-change: transform;
+  z-index: 9999;
+  display: block; /* Ensure items are visible */
+  color: inherit; /* Use inherited colors */
+}
+
+/* Create 10+ falling items with different delays and positions */
+.falling-halloween-items .falling-item:nth-child(1) { left: 5%; animation-delay: -1s; animation-duration: 8s; font-size: 24px; }
+.falling-halloween-items .falling-item:nth-child(2) { left: 15%; animation-delay: -2s; animation-duration: 10s; font-size: 18px; }
+.falling-halloween-items .falling-item:nth-child(3) { left: 25%; animation-delay: -3s; animation-duration: 12s; font-size: 22px; }
+.falling-halloween-items .falling-item:nth-child(4) { left: 35%; animation-delay: -4s; animation-duration: 9s; font-size: 16px; }
+.falling-halloween-items .falling-item:nth-child(5) { left: 45%; animation-delay: -5s; animation-duration: 11s; font-size: 20px; }
+.falling-halloween-items .falling-item:nth-child(6) { left: 55%; animation-delay: -6s; animation-duration: 7s; font-size: 26px; }
+.falling-halloween-items .falling-item:nth-child(7) { left: 65%; animation-delay: -7s; animation-duration: 13s; font-size: 19px; }
+.falling-halloween-items .falling-item:nth-child(8) { left: 75%; animation-delay: -8s; animation-duration: 8s; font-size: 21px; }
+.falling-halloween-items .falling-item:nth-child(9) { left: 85%; animation-delay: -9s; animation-duration: 10s; font-size: 17px; }
+.falling-halloween-items .falling-item:nth-child(10) { left: 95%; animation-delay: -10s; animation-duration: 14s; font-size: 23px; }
+
+.falling-thanksgiving-items .falling-item:nth-child(1) { left: 8%; animation-delay: -1s; animation-duration: 9s; font-size: 22px; }
+.falling-thanksgiving-items .falling-item:nth-child(2) { left: 18%; animation-delay: -2s; animation-duration: 11s; font-size: 20px; }
+.falling-thanksgiving-items .falling-item:nth-child(3) { left: 28%; animation-delay: -3s; animation-duration: 8s; font-size: 25px; }
+.falling-thanksgiving-items .falling-item:nth-child(4) { left: 38%; animation-delay: -4s; animation-duration: 12s; font-size: 18px; }
+.falling-thanksgiving-items .falling-item:nth-child(5) { left: 48%; animation-delay: -5s; animation-duration: 10s; font-size: 21px; }
+.falling-thanksgiving-items .falling-item:nth-child(6) { left: 58%; animation-delay: -6s; animation-duration: 13s; font-size: 19px; }
+.falling-thanksgiving-items .falling-item:nth-child(7) { left: 68%; animation-delay: -7s; animation-duration: 9s; font-size: 24px; }
+.falling-thanksgiving-items .falling-item:nth-child(8) { left: 78%; animation-delay: -8s; animation-duration: 11s; font-size: 16px; }
+.falling-thanksgiving-items .falling-item:nth-child(9) { left: 88%; animation-delay: -9s; animation-duration: 7s; font-size: 23px; }
+.falling-thanksgiving-items .falling-item:nth-child(10) { left: 98%; animation-delay: -10s; animation-duration: 14s; font-size: 20px; }
+
+.falling-christmas-items .falling-item:nth-child(1) { left: 3%; animation-delay: -1s; animation-duration: 15s; font-size: 18px; }
+.falling-christmas-items .falling-item:nth-child(2) { left: 12%; animation-delay: -2s; animation-duration: 12s; font-size: 22px; }
+.falling-christmas-items .falling-item:nth-child(3) { left: 21%; animation-delay: -3s; animation-duration: 9s; font-size: 20px; }
+.falling-christmas-items .falling-item:nth-child(4) { left: 30%; animation-delay: -4s; animation-duration: 13s; font-size: 24px; }
+.falling-christmas-items .falling-item:nth-child(5) { left: 39%; animation-delay: -5s; animation-duration: 10s; font-size: 16px; }
+.falling-christmas-items .falling-item:nth-child(6) { left: 48%; animation-delay: -6s; animation-duration: 11s; font-size: 25px; }
+.falling-christmas-items .falling-item:nth-child(7) { left: 57%; animation-delay: -7s; animation-duration: 8s; font-size: 19px; }
+.falling-christmas-items .falling-item:nth-child(8) { left: 66%; animation-delay: -8s; animation-duration: 14s; font-size: 21px; }
+.falling-christmas-items .falling-item:nth-child(9) { left: 75%; animation-delay: -9s; animation-duration: 12s; font-size: 17px; }
+.falling-christmas-items .falling-item:nth-child(10) { left: 84%; animation-delay: -10s; animation-duration: 16s; font-size: 23px; }
+.falling-christmas-items .falling-item:nth-child(11) { left: 93%; animation-delay: -11s; animation-duration: 9s; font-size: 20px; }
+.falling-christmas-items .falling-item:nth-child(12) { left: 6%; animation-delay: -12s; animation-duration: 11s; font-size: 18px; }
+
+@keyframes fall-crazy {
+  0% {
+    transform: translateY(-100vh) rotate(0deg) scale(1);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(720deg) scale(1.2);
+    opacity: 0;
+  }
+}
+
+/* ===== CORNER DECORATIONS ===== */
+.corner-decorations {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9998; /* High z-index to be visible */
+}
+
+.corner {
+  position: absolute;
+  font-size: 32px;
+  opacity: 0.7;
+  animation: corner-glow 4s ease-in-out infinite alternate;
+  filter: drop-shadow(0 0 15px currentColor);
+}
+
+.corner.top-left {
+  top: 20px;
+  left: 20px;
+}
+
+.corner.top-right {
+  top: 20px;
+  right: 20px;
+}
+
+.corner.bottom-left {
+  bottom: 80px;
+  left: 20px;
+}
+
+.corner.bottom-right {
+  bottom: 80px;
+  right: 20px;
+}
+
+@keyframes corner-glow {
+  0% {
+    opacity: 0.3;
+    transform: scale(1) rotate(-2deg);
+  }
+  100% {
+    opacity: 0.6;
+    transform: scale(1.1) rotate(2deg);
+  }
+}
+
+/* ===== HALLOWEEN THEME ENHANCEMENTS ===== */
+[data-holiday-theme="halloween"] {
+  --neon-cyan: var(--holiday-primary);
+  --neon-purple: var(--holiday-accent);
+}
+
+.spooky-lights-border {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  border: 4px solid transparent;
+  background: linear-gradient(
+    45deg,
+    #ff6600 0%,
+    #4B0082 25%,
+    #ff6600 50%,
+    #8B4513 75%,
+    #ff6600 100%
+  );
+  background-size: 400% 400%;
+  animation: spooky-pulse 3s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 9995; /* Higher z-index */
+  opacity: 0.8;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: xor;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+@keyframes spooky-pulse {
+  0%, 100% {
+    background-position: 0% 50%;
+    opacity: 0.4;
+  }
+  50% {
+    background-position: 100% 50%;
+    opacity: 0.8;
+  }
+}
+
+.corner-decorations.halloween .corner {
+  color: #ff6600;
+  text-shadow: 0 0 15px #ff6600;
+}
+
+/* ===== THANKSGIVING THEME ENHANCEMENTS ===== */
+[data-holiday-theme="thanksgiving"] {
+  --neon-cyan: var(--holiday-primary);
+  --neon-purple: var(--holiday-secondary);
+}
+
+.harvest-wreath-border {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  width: calc(100% - 20px);
+  height: calc(100% - 20px);
+  border: 6px solid transparent;
+  background: linear-gradient(
+    90deg,
+    #D2691E 0%,
+    #DAA520 20%,
+    #8B4513 40%,
+    #D2691E 60%,
+    #DAA520 80%,
+    #8B4513 100%
+  );
+  background-size: 300% 300%;
+  animation: harvest-shimmer 5s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 9995; /* Higher z-index */
+  opacity: 0.7;
+  border-radius: 20px;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: xor;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+@keyframes harvest-shimmer {
+  0%, 100% {
+    background-position: 0% 50%;
+    opacity: 0.3;
+  }
+  50% {
+    background-position: 100% 50%;
+    opacity: 0.7;
+  }
+}
+
+.corner-decorations.thanksgiving .corner {
+  color: #D2691E;
+  text-shadow: 0 0 15px #D2691E;
+}
+
+/* ===== CHRISTMAS THEME ENHANCEMENTS ===== */
+[data-holiday-theme="christmas"] {
+  --neon-cyan: var(--holiday-primary);
+  --neon-purple: var(--holiday-secondary);
+  --neon-pink: var(--holiday-accent);
+}
+
+/* Christmas lights hanging ON the navbar */
+.christmas-lights-border {
+  position: fixed;
+  top: 60px; /* Position below navbar */
+  left: 0;
+  width: 100%;
+  height: 12px;
+  background: linear-gradient(
+    90deg,
+    #228B22 0%,
+    #DC143C 14%,
+    #FFD700 28%,
+    #228B22 42%,
+    #DC143C 56%,
+    #FFD700 70%,
+    #228B22 84%,
+    #DC143C 100%
+  );
+  background-size: 200% 100%;
+  animation: christmas-lights-dance 2s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 9998; /* Below falling items but above content */
+  box-shadow: 
+    0 0 20px rgba(34, 139, 34, 0.5),
+    0 0 40px rgba(220, 20, 60, 0.3),
+    0 0 60px rgba(255, 215, 0, 0.4);
+  border-radius: 0 0 6px 6px; /* Rounded bottom to look like hanging lights */
+}
+
+/* Add hanging light bulbs effect */
+.christmas-lights-border::before {
+  content: '🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡🔴🟢🟡';
+  position: absolute;
+  top: 12px;
+  left: 0;
+  width: 100%;
+  height: 20px;
+  font-size: 12px;
+  letter-spacing: 2px;
+  animation: christmas-bulbs-twinkle 3s ease-in-out infinite;
+  text-align: center;
+  overflow: hidden;
+}
+
+.christmas-lights-border::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(90deg, #1a4d1a, #4d1a1a, #4d4d1a, #1a4d1a);
+  border-radius: 2px;
+}
+
+@keyframes christmas-lights-dance {
+  0%, 100% {
+    background-position: 0% 50%;
+    opacity: 0.8;
+    filter: brightness(1);
+  }
+  25% {
+    background-position: 50% 50%;
+    opacity: 1;
+    filter: brightness(1.3);
+  }
+  50% {
+    background-position: 100% 50%;
+    opacity: 0.9;
+    filter: brightness(1.1);
+  }
+  75% {
+    background-position: -50% 50%;
+    opacity: 1;
+    filter: brightness(1.2);
+  }
+}
+
+@keyframes christmas-bulbs-twinkle {
+  0%, 100% {
+    opacity: 0.8;
+    transform: translateY(0px);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translateY(-1px);
+  }
+  75% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.wreaths {
+  position: fixed;
+  width: 100%;
+  pointer-events: none;
+  z-index: 9997; /* Below lights but above content */
+}
+
+.wreath {
+  position: absolute;
+  font-size: 24px;
+  opacity: 0.8;
+  animation: wreath-sway 6s ease-in-out infinite;
+  text-shadow: 0 0 10px #FFD700;
+  filter: drop-shadow(0 0 15px rgba(255, 215, 0, 0.6));
+}
+
+.wreath.top {
+  top: 20px; /* Position at navbar level */
+  left: 20px; /* Left side of navbar */
+  transform: none;
+}
+
+.wreath.bottom {
+  top: 20px; /* Same level as top wreath */
+  right: 20px; /* Right side of navbar */
+  animation-delay: 3s;
+  transform: none;
+}
+
+@keyframes wreath-sway {
+  0%, 100% {
+    transform: rotate(-5deg) scale(1);
+  }
+  50% {
+    transform: rotate(5deg) scale(1.05);
+  }
+}
+
+.corner-decorations.christmas .corner {
+  color: #228B22;
+  text-shadow: 0 0 15px #228B22, 0 0 30px #DC143C;
+}
+
+/* ===== HOLIDAY THEME BUTTON STYLES ===== */
+.holiday-theme-selector {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.holiday-theme-btn {
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  color: var(--foreground);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(10px);
+}
+
+.holiday-theme-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+}
+
+.holiday-theme-btn.active {
+  background: var(--neon-cyan);
+  color: var(--cyber-dark);
+  border-color: var(--neon-cyan);
+  box-shadow: 0 0 15px var(--neon-cyan);
+}
+
+/* Halloween button */
+.holiday-theme-btn[data-theme="halloween"]:hover,
+.holiday-theme-btn[data-theme="halloween"].active {
+  background: #ff6600;
+  border-color: #ff6600;
+  box-shadow: 0 0 15px #ff6600;
+  color: white;
+}
+
+/* Thanksgiving button */
+.holiday-theme-btn[data-theme="thanksgiving"]:hover,
+.holiday-theme-btn[data-theme="thanksgiving"].active {
+  background: #D2691E;
+  border-color: #D2691E;
+  box-shadow: 0 0 15px #D2691E;
+  color: white;
+}
+
+/* Christmas button */
+.holiday-theme-btn[data-theme="christmas"]:hover,
+.holiday-theme-btn[data-theme="christmas"].active {
+  background: #228B22;
+  border-color: #228B22;
+  box-shadow: 0 0 15px #228B22;
+  color: white;
+}
+
+/* ===== RESPONSIVE DESIGN ===== */
+@media (max-width: 768px) {
+  .falling-halloween-items,
+  .falling-thanksgiving-items,
+  .falling-christmas-items,
+  .corner-decorations,
+  .spooky-lights-border,
+  .harvest-wreath-border,
+  .christmas-lights-border,
+  .wreaths {
+    display: none; /* Hide elaborate decorations on mobile for performance */
+  }
+  
+  .holiday-theme-selector {
+    gap: 4px;
+  }
+  
+  .holiday-theme-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+}
+
+/* ===== REDUCED MOTION SUPPORT ===== */
+@media (prefers-reduced-motion: reduce) {
+  .falling-item {
+    animation: none;
+    opacity: 0.3;
+    position: static;
+    display: none;
+  }
+  
+  .corner {
+    animation: none;
+  }
+  
+  .spooky-lights-border,
+  .harvest-wreath-border,
+  .christmas-lights-border {
+    animation: none;
+    opacity: 0.3;
+  }
+  
+  .wreath {
+    animation: none;
+  }
+}
+
+/* ===== PRINT STYLES ===== */
+@media print {
+  .falling-halloween-items,
+  .falling-thanksgiving-items,
+  .falling-christmas-items,
+  .corner-decorations,
+  .spooky-lights-border,
+  .harvest-wreath-border,
+  .christmas-lights-border,
+  .wreaths,
+  .holiday-theme-selector {
+    display: none !important;
+  }
+}

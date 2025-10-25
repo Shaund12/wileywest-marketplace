@@ -1,0 +1,148 @@
+.wisp-page {
+  min-height: 100vh;
+  padding: 2rem 1rem;
+  background: linear-gradient(135deg, #0a0e27 0%, #1a1a2e 100%);
+}
+
+.wisp-container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.wisp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.wisp-header h1 {
+  font-size: 2rem;
+  color: #00ffff;
+  margin: 0;
+  text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+}
+
+.btn-download {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #5533ff 0%, #ff3366 100%);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 15px rgba(85, 51, 255, 0.4);
+}
+
+.btn-download:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(85, 51, 255, 0.6);
+}
+
+.btn-download:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.loading {
+  text-align: center;
+  padding: 3rem;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 1.1rem;
+}
+
+.wisp-content {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 2rem;
+  line-height: 1.8;
+}
+
+.wisp-content h1 {
+  color: #00ffff;
+  font-size: 2rem;
+  margin-top: 0;
+  margin-bottom: 1rem;
+  text-shadow: 0 0 15px rgba(0, 255, 255, 0.3);
+}
+
+.wisp-content h2 {
+  color: #00ffff;
+  font-size: 1.5rem;
+  margin-top: 2rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(0, 255, 255, 0.3);
+}
+
+.wisp-content h3 {
+  color: #ffaa33;
+  font-size: 1.25rem;
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.wisp-content p {
+  color: rgba(255, 255, 255, 0.85);
+  margin-bottom: 1rem;
+}
+
+.wisp-content li {
+  color: rgba(255, 255, 255, 0.85);
+  margin-bottom: 0.5rem;
+  margin-left: 1.5rem;
+}
+
+.wisp-content strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.wisp-footer {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.wisp-footer p {
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0;
+}
+
+.wisp-footer a {
+  color: #00ffff;
+  text-decoration: none;
+}
+
+.wisp-footer a:hover {
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .wisp-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .btn-download {
+    width: 100%;
+  }
+
+  .wisp-content {
+    padding: 1.5rem;
+  }
+
+  .wisp-content h1 {
+    font-size: 1.5rem;
+  }
+
+  .wisp-content h2 {
+    font-size: 1.25rem;
+  }
+}

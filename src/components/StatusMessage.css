@@ -1,0 +1,293 @@
+/* ===========================
+   StatusMessage — Enhanced Styles
+   =========================== */
+
+/* Theme tokens (override if you have a global theme system) */
+:root {
+    --sm-text: #e9ecf6;
+    --sm-muted: rgba(233,236,246,0.75);
+    --sm-surface: rgba(16, 18, 28, 0.75);
+    --sm-surface-strong: rgba(16, 18, 28, 0.9);
+    --sm-border: rgba(255,255,255,0.12);
+    --sm-shadow: 0 8px 28px rgba(0,0,0,0.35);
+    --sm-info: #3b82f6;
+    --sm-success: #10b981;
+    --sm-warning: #f59e0b;
+    --sm-error: #ef4444;
+    --sm-accent: #00ff88;
+    --sm-bg-info: rgba(59, 130, 246, 0.12);
+    --sm-bg-success: rgba(16, 185, 129, 0.12);
+    --sm-bg-warning: rgba(245, 158, 11, 0.12);
+    --sm-bg-error: rgba(239, 68, 68, 0.12);
+    --sm-ring: 0 0 0 3px rgba(59,130,246,0.25);
+}
+
+    :root[data-theme="light"] {
+        --sm-text: #0d1117;
+        --sm-muted: rgba(13,17,23,0.7);
+        --sm-surface: rgba(255,255,255,0.75);
+        --sm-surface-strong: rgba(255,255,255,0.92);
+        --sm-border: rgba(0,0,0,0.12);
+        --sm-shadow: 0 8px 28px rgba(0,0,0,0.12);
+        --sm-bg-info: rgba(59, 130, 246, 0.10);
+        --sm-bg-success: rgba(16, 185, 129, 0.10);
+        --sm-bg-warning: rgba(245, 158, 11, 0.10);
+        --sm-bg-error: rgba(239, 68, 68, 0.10);
+        --sm-ring: 0 0 0 3px rgba(59,130,246,0.18);
+    }
+
+/* Container (kept identical class name) */
+.StatusMessage__status-container {
+    position: relative;
+    z-index: 10;
+}
+
+/* Base card styles */
+.StatusMessage__status-message,
+.StatusMessage__persistent-message {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+    padding: .85rem 1rem;
+    border-radius: 10px;
+    font-size: .92rem;
+    line-height: 1.4;
+    margin-bottom: .6rem;
+    animation: statusSlideIn .25s ease-out;
+    color: var(--sm-text);
+    background: linear-gradient(180deg, var(--sm-surface) 0%, var(--sm-surface-strong) 100%);
+    border: 1px solid var(--sm-border);
+    box-shadow: var(--sm-shadow);
+    backdrop-filter: blur(8px);
+}
+
+    /* Compact variant (added) */
+    .StatusMessage__status-message.is-compact {
+        padding: .55rem .75rem;
+        border-radius: 8px;
+        font-size: .85rem;
+    }
+
+/* Persistent (sticky) notice */
+.StatusMessage__persistent-message {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    animation: persistentPulse 2.2s ease-in-out infinite;
+}
+
+/* Type accents */
+.StatusMessage__status-info {
+    border-left: 4px solid var(--sm-info);
+    background: linear-gradient(180deg, var(--sm-bg-info), transparent);
+    color: var(--sm-text);
+}
+
+.StatusMessage__status-success {
+    border-left: 4px solid var(--sm-success);
+    background: linear-gradient(180deg, var(--sm-bg-success), transparent);
+    color: var(--sm-text);
+}
+
+.StatusMessage__status-warning {
+    border-left: 4px solid var(--sm-warning);
+    background: linear-gradient(180deg, var(--sm-bg-warning), transparent);
+    color: var(--sm-text);
+}
+
+.StatusMessage__status-error {
+    border-left: 4px solid var(--sm-error);
+    background: linear-gradient(180deg, var(--sm-bg-error), transparent);
+    color: var(--sm-text);
+}
+
+/* Icon + text */
+.StatusMessage__status-icon {
+    flex-shrink: 0;
+    font-size: 1rem;
+    filter: drop-shadow(0 1px 0 rgba(0,0,0,.15));
+}
+
+.StatusMessage__status-text {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Close button */
+.StatusMessage__clear-button {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--sm-border);
+    color: inherit;
+    cursor: pointer;
+    padding: .3rem .45rem;
+    border-radius: 6px;
+    transition: transform .12s ease, background .15s ease, border-color .15s ease, opacity .15s;
+    flex-shrink: 0;
+    font-size: .85rem;
+    opacity: .85;
+}
+
+    .StatusMessage__clear-button:hover {
+        background: rgba(255,255,255,0.06);
+        border-color: rgba(255,255,255,0.22);
+        transform: translateY(-1px);
+        opacity: 1;
+    }
+
+    .StatusMessage__clear-button:focus-visible {
+        outline: none;
+        box-shadow: var(--sm-ring);
+    }
+
+/* Actions row (NEW) */
+.StatusMessage__actions {
+    display: flex;
+    gap: .5rem;
+    flex-wrap: wrap;
+    margin-top: .35rem;
+}
+
+.StatusMessage__action-btn {
+    appearance: none;
+    border-radius: 8px;
+    padding: .35rem .6rem;
+    font-weight: 700;
+    font-size: .85rem;
+    cursor: pointer;
+    transition: transform .12s ease, box-shadow .15s ease, background .15s ease, border-color .15s ease;
+    border: 1px solid var(--sm-border);
+    background: transparent;
+    color: inherit;
+}
+
+    .StatusMessage__action-btn:hover {
+        transform: translateY(-1px);
+        background: rgba(255,255,255,0.06);
+        border-color: rgba(255,255,255,0.22);
+    }
+
+.StatusMessage__action-btn--primary {
+    background: currentColor;
+    color: #0b0f14;
+    border-color: currentColor;
+}
+
+.StatusMessage__action-btn--ghost {
+    background: transparent;
+}
+
+/* Progress bar (NEW) — optional if you prefer not to inline styles */
+.StatusMessage__progress {
+    position: relative;
+    height: 4px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    overflow: hidden;
+    margin-top: 8px;
+}
+
+.StatusMessage__progress-inner {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--sm-info), #60a5fa);
+    transition: width .15s linear;
+}
+
+/* Inline chip */
+.StatusMessage__inline-status {
+    display: inline-flex;
+    align-items: center;
+    gap: .25rem;
+    font-size: .85rem;
+    padding: .25rem .5rem;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--sm-border);
+    color: var(--sm-text);
+}
+
+.StatusMessage__inline-icon {
+    font-size: .8rem;
+}
+
+.StatusMessage__inline-info {
+    color: var(--sm-info);
+}
+
+.StatusMessage__inline-success {
+    color: var(--sm-success);
+}
+
+.StatusMessage__inline-warning {
+    color: var(--sm-warning);
+}
+
+.StatusMessage__inline-error {
+    color: var(--sm-error);
+}
+
+.StatusMessage__inline-loading {
+    color: var(--sm-accent);
+}
+
+    .StatusMessage__inline-loading .StatusMessage__inline-icon {
+        animation: spin 1s linear infinite;
+    }
+
+/* Hover lift for non-sticky cards */
+.StatusMessage__status-message:hover {
+    transform: translateY(-1px);
+}
+
+/* Animations */
+@keyframes statusSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes persistentPulse {
+    0%, 100% {
+        box-shadow: var(--sm-shadow);
+    }
+
+    50% {
+        box-shadow: 0 10px 34px rgba(59,130,246,0.25);
+    }
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0);
+    }
+
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* High contrast */
+@media (prefers-contrast: high) {
+    .StatusMessage__status-message,
+    .StatusMessage__persistent-message {
+        border: 2px solid currentColor;
+        box-shadow: none;
+    }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .StatusMessage__status-message,
+    .StatusMessage__persistent-message,
+    .StatusMessage__inline-loading .StatusMessage__inline-icon {
+        animation: none !important;
+        transition: none !important;
+    }
+}
