@@ -10,6 +10,7 @@ import ListingCard from '../components/ListingCard';
 import { formatPriceWithUSDC, convertToUSDCValue, getTokenDecimals } from '../utils/tokenUtils';
 import { batchLoadMetadata } from '../utils/metadataLoader';
 import { normalizeNFTMetadata } from '../utils/nftUtils';
+import { filterBlockedListings } from '../utils/compliance/blockedContracts';
 import './CollectionPage.css';
 
 const ERC721_METADATA_ABI = [
@@ -95,19 +96,22 @@ export default function CollectionPage() {
             const collectionItems = listings.filter((l) => 
                 (l?.nftContract || '').toLowerCase() === addr.toLowerCase()
             );
+            
+            // Filter out blocked contracts (if sanctions flag is enabled)
+            const collectionItemsAfterCompliance = filterBlockedListings(collectionItems);
 
-            if (collectionItems.length === 0) {
+            if (collectionItemsAfterCompliance.length === 0) {
                 setCollectionListings([]);
                 setMetadataLoaded(true);
                 return;
             }
 
-            console.log(`🔍 [COLLECTION] Loading metadata for ${collectionItems.length} items in collection ${addr}`);
+            console.log(`🔍 [COLLECTION] Loading metadata for ${collectionItemsAfterCompliance.length} items in collection ${addr}`);
             setMetadataLoading(true);
 
             try {
                 // Prepare NFT objects for batch metadata loading
-                const nftsForMetadata = collectionItems.map(listing => ({
+                const nftsForMetadata = collectionItemsAfterCompliance.map(listing => ({
                     contractAddress: listing.nftContract,
                     tokenId: listing.tokenId,
                     metadata: listing.metadata, // Pass existing metadata if any
@@ -132,7 +136,7 @@ export default function CollectionPage() {
                 if (cancelled) return;
 
                 // Merge the loaded metadata back into the listings
-                const processedListings = collectionItems.map(listing => {
+                const processedListings = collectionItemsAfterCompliance.map(listing => {
                     // Use contractAddress + tokenId for more reliable matching instead of ID
                     const nftWithMetadata = nftsWithMetadata.find(nft => 
                         nft.contractAddress && listing.nftContract &&
@@ -159,7 +163,7 @@ export default function CollectionPage() {
                 console.error(`❌ [COLLECTION] Error loading collection metadata:`, error);
                 if (!cancelled) {
                     // Fallback to original listings with basic normalization
-                    const fallbackListings = collectionItems.map(listing => ({
+                    const fallbackListings = collectionItemsAfterCompliance.map(listing => ({
                         ...listing,
                         metadata: normalizeNFTMetadata(listing.metadata, listing.nftContract, listing.tokenId)
                     }));

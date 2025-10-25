@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from './debugUtils';
+import { filterBlockedAddresses } from './compliance/blockedContracts';
 
 // Add ERC20 ABI for detection
 const ERC20_ABI = [
@@ -573,6 +574,10 @@ export class NFTScanner {
             contractsToScan = contractsToScan.filter(addr => 
                 !this.knownErc20s.has(addr.toLowerCase())
             );
+            
+            // Filter out blocked contracts (if sanctions flag is enabled)
+            contractsToScan = filterBlockedAddresses(contractsToScan);
+            
             // Update total for progress tracking
             this.updateProgress({ total: contractsToScan.length });
             

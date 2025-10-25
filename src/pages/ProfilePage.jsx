@@ -18,6 +18,7 @@ import { loadNFTMetadata, batchLoadMetadata } from '../utils/metadataLoader';
 import { getCachedMetadata, getProxyImageUrl, batchPrewarm } from '../utils/edgeCacheUtils';
 import { VSHARE_ADDRESS, vShareLpSvgDataUrl, vShareDefaultDescription, isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
 import { generateFallbackImage } from '../utils/nftUtils';
+import { filterBlockedNFTs } from '../utils/compliance/blockedContracts';
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -2573,8 +2574,11 @@ function ProfilePage() {
 
     // Filter and sort NFTs
     const processNfts = useCallback(() => {
-        // Apply filters
-        let filteredNfts = userNfts.filter(nft => {
+        // First, filter out blocked contracts (if sanctions flag is enabled)
+        let nftsAfterComplianceFilter = filterBlockedNFTs(userNfts);
+        
+        // Apply user filters
+        let filteredNfts = nftsAfterComplianceFilter.filter(nft => {
             // Text search filter
             if (nftFilter) {
                 const key = `${nft.contractAddress.toLowerCase()}-${nft.tokenId}`;
