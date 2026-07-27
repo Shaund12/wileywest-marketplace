@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 import { useAccount, useConnect, useDisconnect, useChainId, useSwitchChain } from 'wagmi'
 import { ethers } from 'ethers'
 import { vitruveo } from '../config/wagmi'
+import { activeChain, CHAINS } from '../config/chains.js'
 
 const PremiumWalletContext = createContext()
 
@@ -33,9 +34,17 @@ export function PremiumWalletProvider({ children }) {
           setEthersSigner(null)
         }
       } else {
-        // Create read-only provider for when not connected
+        // Read-only provider for the ACTIVE chain (Hyve or Vitruveo).
         try {
-          const readOnlyProvider = new ethers.JsonRpcProvider(vitruveo.rpcUrls.default.http[0])
+          // staticNetwork + polling: the /api/rpc proxy rejects eth_newFilter,
+          // which otherwise breaks provider startup. See makeReadonlyProvider
+          // in WalletContext for the full explanation.
+          const chain = activeChain()
+          const readOnlyProvider = new ethers.JsonRpcProvider(
+            chain.rpcUrl,
+            chain.id,
+            { staticNetwork: true, polling: true }
+          )
           setEthersProvider(readOnlyProvider)
           setEthersSigner(null)
         } catch (error) {
@@ -47,25 +56,30 @@ export function PremiumWalletProvider({ children }) {
     setupEthers()
   }, [isConnected, address])
 
-  // Network utilities
-  const isCorrectNetwork = chainId === vitruveo.id
-  
-  const switchToVitruveo = useCallback(async () => {
+  // The connected wallet must match the chain selected in ChainSwitcher.
+  const targetChainId = activeChain().id
+  const isCorrectNetwork = Number(chainId) === targetChainId
+
+  // Switch the wallet to a specific supported chain (defaults to active).
+  const switchToChain = useCallback(async (id = targetChainId) => {
     try {
-      await switchChain({ chainId: vitruveo.id })
+      await switchChain({ chainId: id })
       return true
     } catch (error) {
-      console.error('Failed to switch to Vitruveo:', error)
+      console.error(`Failed to switch to chain ${id}:`, error)
       setConnectionError(error.message)
       return false
     }
-  }, [switchChain])
+  }, [switchChain, targetChainId])
+
+  // Back-compat alias (older callers): switch to the active chain.
+  const switchToVitruveo = useCallback(() => switchToChain(targetChainId), [switchToChain, targetChainId])
 
   const ensureCorrectNetwork = useCallback(async (force = false) => {
-    if (chainId === vitruveo.id) return true
+    if (Number(chainId) === targetChainId) return true
     if (!force) return false
-    return await switchToVitruveo()
-  }, [chainId, switchToVitruveo])
+    return await switchToChain(targetChainId)
+  }, [chainId, switchToChain, targetChainId])
 
   // Wallet connection methods
   const connectWallet = useCallback(async (connectorId) => {
@@ -150,9 +164,11 @@ export function PremiumWalletProvider({ children }) {
     provider: ethersProvider,
     signer: ethersSigner,
     
-    // Network utilities
+    // Network utilities (multichain)
     isCorrectNetwork,
-    switchToVitruveo,
+    targetChainId,
+    switchToChain,
+    switchToVitruveo, // back-compat alias → switches to active chain
     ensureCorrectNetwork,
     
     // Connection methods

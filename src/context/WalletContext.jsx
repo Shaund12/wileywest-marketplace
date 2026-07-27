@@ -2,17 +2,21 @@
 import React, { createContext, useState, useContext, useEffect, useCallback, useRef } from 'react';
 import { ethers } from 'ethers';
 import { usePremiumWallet } from './PremiumWalletContext';
+import { activeChain } from '../config/chains.js';
 
 const WalletContext = createContext();
 
-// ======= ENV / CONFIG =========
-const RPC_URL = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
-const RAW_CHAIN_ID = import.meta.env.VITE_CHAIN_ID || '0x5d2'; // accepts "0x.." or decimal string
-const CHAIN_NAME = import.meta.env.VITE_CHAIN_NAME || 'Vitruveo';
-const NATIVE_NAME = import.meta.env.VITE_NATIVE_NAME || 'VTRU';
-const NATIVE_SYMBOL = import.meta.env.VITE_NATIVE_SYMBOL || 'VTRU';
-const NATIVE_DECIMALS = Number(import.meta.env.VITE_NATIVE_DECIMALS || 18);
-const EXPLORER_URL = import.meta.env.VITE_BLOCK_EXPLORER_URL || 'https://explorer.vitruveo.xyz';
+// ======= ACTIVE-CHAIN CONFIG (from the multichain registry) =========
+// These resolve to whichever chain is active (Hyve or Vitruveo). Switching
+// chains reloads the app, so reading once at module load is sufficient.
+const _chain = activeChain();
+const RPC_URL = _chain.rpcUrl;
+const RAW_CHAIN_ID = String(_chain.id);      // decimal string; normalizeChainId handles it
+const CHAIN_NAME = _chain.name;
+const NATIVE_NAME = _chain.symbol;
+const NATIVE_SYMBOL = _chain.symbol;
+const NATIVE_DECIMALS = 18;
+const EXPLORER_URL = _chain.explorer;
 
 // Parse chain ID from env (decimal/hex) → { num, hex }
 function normalizeChainId(id) {
@@ -49,7 +53,15 @@ async function makeBrowserProvider() {
 }
 
 async function makeReadonlyProvider() {
-    const provider = new ethers.JsonRpcProvider(RPC_URL);
+    // `polling: true` is required, not a preference. By default ethers v6 sets
+    // up event subscriptions with eth_newFilter, which /api/rpc/:chain does not
+    // allow — filters are per-node state and would break the moment a request
+    // failed over to the explorer fallback. A rejected eth_newFilter makes the
+    // provider fail network detection entirely ("failed to detect network and
+    // cannot start up"), so every contract.on() listener silently dies.
+    // Polling makes ethers use eth_getLogs instead, which is allowlisted.
+    const provider = new ethers.JsonRpcProvider(RPC_URL, undefined, { polling: true });
+    provider.pollingInterval = 12_000;
     // probe to surface misconfig early
     await provider.getNetwork().catch(() => { });
     return provider;
@@ -424,6 +436,9 @@ export function WalletProvider({ children }) {
     );
 
     const isConnected = !!wallet && !!signer;
+    // The wallet must match the marketplace selected in ChainSwitcher.
+    // Merely being on either supported chain is not enough: the active
+    // marketplace address, RPC and explorer all belong to TARGET.num.
     const isCorrectNetwork = TARGET.num ? chainId === TARGET.num : true;
 
     return (
