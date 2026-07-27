@@ -4,7 +4,6 @@ import React, { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { Toaster } from 'sonner';
 import MarketplaceAbi from './abi/VTRUNFTMarketplace.json';
-import { Analytics } from '@vercel/analytics/react';
 
 // Components
 import Navigation from './components/Navigation';
@@ -16,11 +15,11 @@ import HolidayDecorations from './components/HolidayDecorations';
 const HomePage = lazy(() => import('./pages/HomePage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const MarketplacePage = lazy(() => import('./pages/MarketplacePage'));
-const HotListingsPage = lazy(() => import('./pages/HotListingsPage'));
 const TermsPage = lazy(() => import('./pages/TermsPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const SellPage = lazy(() => import('./pages/SellPage'));
 const CollectionPage = lazy(() => import('./pages/CollectionPage'));
+const ExploreChainPage = lazy(() => import('./pages/ExploreChainPage'));
 const NFTDetailPage = lazy(() => import('./pages/NFTDetailPage'));
 
 // Compliance pages (lazy-loaded, feature-flagged)
@@ -28,14 +27,11 @@ const DMCAPage = lazy(() => import('./pages/legal/DMCAPage'));
 const WISPPage = lazy(() => import('./pages/legal/WISPPage'));
 const SanctionsPage = lazy(() => import('./pages/legal/SanctionsPage'));
 const PricingTransparencyPage = lazy(() => import('./pages/legal/PricingTransparencyPage'));
-const DMCAAdminPage = lazy(() => import('./pages/admin/DMCAAdminPage'));
-const ComplianceAdminPage = lazy(() => import('./pages/admin/ComplianceAdminPage'));
 
 // Auction pages (lazy-loaded)
 const CreateAuctionPage = lazy(() => import('./pages/CreateAuctionPage'));
 const AuctionDetailPage = lazy(() => import('./pages/AuctionDetailPage'));
 const MyAuctionsPage = lazy(() => import('./pages/MyAuctionsPage'));
-const AdminPathsPage = lazy(() => import('./pages/AdminPathsPage'));
 const VibeDashboardPage = lazy(() => import('./pages/VibeDashboardPage'));
 
 
@@ -46,6 +42,7 @@ import { MarketplaceProvider } from './context/MarketplaceContext';
 import { SupabaseProvider } from './context/SupabaseContext';
 import { WebSocketProvider } from './context/WebSocketContext';
 import { HolidayThemeProvider } from './context/HolidayThemeContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 // Compliance feature flags
 import { FLAGS } from './utils/compliance/featureFlags';
@@ -58,9 +55,11 @@ import PerformanceMonitor from './components/PerformanceMonitor';
 import { WagmiProvider } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { wagmiAdapter } from './config/appkit';
+import { activeChain, chainHasFeature } from './config/chains.js';
 
-const rpcUrl = import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
-const marketplaceAddress = import.meta.env.VITE_MARKETPLACE_ADDRESS || '';
+const _activeChain = activeChain();
+const rpcUrl = _activeChain.rpcUrl;
+const marketplaceAddress = _activeChain.marketplaceAddress || '';
 
 // Alias so /collection/:address also works
 function CollectionAliasRedirect() {
@@ -218,11 +217,11 @@ function TitleSetter() {
         const map = [
             { test: /^\/$/, title: `${siteName} ✦ Neon NFT Marketplace` },
             { test: /^\/marketplace/, title: `Marketplace • ${siteName} ✦` },
-            { test: /^\/hot-listings/, title: `🔥 Hot Listings • ${siteName}` },
             { test: /^\/sell/, title: `List & Sell • ${siteName}` },
 
             { test: /^\/profile/, title: `Your Profile • ${siteName}` },
 
+            { test: /^\/explore/, title: `Explore NFTs • ${siteName}` },
             { test: /^\/collections\/[0-9a-zA-Z]+/, title: `Collection • ${siteName}` },
             { test: /^\/my-auctions/, title: `My Auctions • ${siteName}` },
             { test: /^\/auctions\/create/, title: `Create Auction • ${siteName}` },
@@ -244,7 +243,6 @@ function useIdleRoutePrefetch() {
     useEffect(() => {
         const preloaders = [
             () => import('./pages/MarketplacePage'),
-            () => import('./pages/HotListingsPage'),
             () => import('./pages/SellPage'),
 
             () => import('./pages/ProfilePage'),
@@ -291,6 +289,7 @@ function App() {
         <WagmiProvider config={wagmiAdapter.wagmiConfig}>
             <QueryClientProvider client={queryClient}>
                 <HolidayThemeProvider>
+                  <ThemeProvider>
                     <SupabaseProvider>
                         <WebSocketProvider>
                             <PremiumWalletProvider>
@@ -323,7 +322,8 @@ function App() {
                                                             <Route path="/" element={<HomePage />} />
                                                             <Route path="/profile" element={<ProfilePage />} />
                                                             <Route path="/marketplace" element={<MarketplacePage />} />
-                                                            <Route path="/hot-listings" element={<HotListingsPage />} />
+                                                            {/* Hot Listings removed — old links land on the marketplace */}
+                                                            <Route path="/hot-listings" element={<Navigate to="/marketplace" replace />} />
                                                             <Route path="/sell" element={<SellPage />} />
                         
 
@@ -335,14 +335,15 @@ function App() {
                                                             {FLAGS.WISP && <Route path="/legal/wisp" element={<WISPPage />} />}
                                                             {FLAGS.SANCTIONS && <Route path="/legal/sanctions" element={<SanctionsPage />} />}
                                                             {FLAGS.TAX_SWITCH && <Route path="/legal/pricing" element={<PricingTransparencyPage />} />}
-                                                            {FLAGS.DMCA && <Route path="/admin/dmca" element={<DMCAAdminPage />} />}
-                                                            {(FLAGS.TAX_SWITCH || FLAGS.DMCA) && <Route path="/admin/compliance" element={<ComplianceAdminPage />} />}
+                                                            <Route path="/admin/dmca" element={<Navigate to="/" replace />} />
+                                                            <Route path="/admin/compliance" element={<Navigate to="/" replace />} />
 
                                                             {/* collections routes */}
-                                                            <Route path="/collections" element={<div className="hp" style={{ maxWidth: 1200, margin: '2rem auto', padding: '0 1.25rem' }}>
-                                                                <div className="hp-section__head"><h2>Collections</h2></div>
-                                                                <p style={{ color: 'var(--hp-muted)' }}>Pick a collection from the homepage or marketplace.</p>
-                                                            </div>} />
+                                                            {/* Chain-wide NFT explorer: every collection on the active
+                                                                chain. Distinct from /collections/:address, which is the
+                                                                marketplace detail view for one collection. */}
+                                                            <Route path="/explore" element={<ExploreChainPage />} />
+                                                            <Route path="/collections" element={<Navigate to="/explore" replace />} />
                                                             <Route path="/collections/:address" element={<CollectionPage />} />
                                                             <Route path="/collection/:address" element={<CollectionAliasRedirect />} />
 
@@ -353,8 +354,9 @@ function App() {
                                                             <Route path="/auctions/create" element={<CreateAuctionPage />} />
                                                             <Route path="/auctions/:id" element={<AuctionDetailPage />} />
                                                             <Route path="/my-auctions" element={<MyAuctionsRedirect />} />
-                                                            <Route path="/admin/paths" element={<AdminPathsPage />} />
-                                                            <Route path="/vibe-dashboard" element={<VibeDashboardPage />} />
+                                                            <Route path="/admin/paths" element={<Navigate to="/" replace />} />
+                                                            {/* VIBE is Vitruveo-only — on chains without it (Hyve), redirect home */}
+                                                            <Route path="/vibe-dashboard" element={chainHasFeature('vibe') ? <VibeDashboardPage /> : <Navigate to="/" replace />} />
                         
 
                                                             {/* Fallback */}
@@ -370,14 +372,13 @@ function App() {
                                         <RealTimeNotifications />
                                         <PerformanceMonitor isVisible={showPerformanceMonitor} />
                                         
-                                        {import.meta.env.PROD && <Analytics />}
                                         <Toaster 
                                             position="top-right"
                                             toastOptions={{
                                                 style: {
-                                                    background: 'rgba(17, 25, 40, 0.95)',
-                                                    border: '1px solid rgba(0, 255, 255, 0.3)',
-                                                    color: '#00ffff',
+                                                    background: 'hsl(var(--popover) / 0.96)',
+                                                    border: '1px solid hsl(var(--border))',
+                                                    color: 'hsl(var(--popover-foreground))',
                                                     backdropFilter: 'blur(16px)',
                                                 },
                                             }}
@@ -388,6 +389,7 @@ function App() {
                         </PremiumWalletProvider>
                     </WebSocketProvider>
                 </SupabaseProvider>
+                  </ThemeProvider>
             </HolidayThemeProvider>
             </QueryClientProvider>
         </WagmiProvider>

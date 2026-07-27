@@ -1,14 +1,17 @@
 ﻿import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { NavLink, Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Copy, ExternalLink, Menu, X, Check, ChevronDown, ChevronUp, Activity } from 'lucide-react';
+import { Copy, ExternalLink, Menu, X, Check, ChevronDown, ChevronUp, Activity, Sun, Moon } from 'lucide-react';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { usePremiumWallet } from '../context/PremiumWalletContext';
 import { ComplianceWalletButton } from './ComplianceWalletButton';
+import ChainSwitcher from './ChainSwitcher';
 import { Button } from './ui/button';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { cn } from '../lib/utils';
+import { chainHasFeature, activeChain } from '../config/chains.js';
+import { useTheme } from '../context/ThemeContext';
 import logo from '../assets/blockdust-logo.png';
 import {
     fetchTokenPriceInUSDC,
@@ -18,13 +21,15 @@ import {
     fetchTokenDetails
 } from '../utils/tokenUtils';
 
+// wallet_addEthereumChain params for the ACTIVE chain (Hyve or Vitruveo).
+const _navChain = activeChain();
 const VITRUVEO = {
-    chainIdHex: '0x5d2', // 1490
-    chainIdDec: 1490,
-    chainName: 'Vitruveo',
-    rpcUrls: ['https://rpc.vitruveo.xyz'],
-    blockExplorerUrls: ['https://explorer.vitruveo.xyz'],
-    nativeCurrency: { name: 'Vitruveo', symbol: 'VTRU', decimals: 18 },
+    chainIdHex: '0x' + _navChain.id.toString(16),
+    chainIdDec: _navChain.id,
+    chainName: _navChain.name,
+    rpcUrls: [_navChain.rpcUrl],
+    blockExplorerUrls: [_navChain.explorer],
+    nativeCurrency: { name: _navChain.name, symbol: _navChain.symbol, decimals: 18 },
 };
 
 const UNISWAP_V3_FACTORY_ABI = [
@@ -86,6 +91,7 @@ function formatAmount(num, isUSDC) {
 
 export default function Navigation() {
     const { wallet, chainId, connectionError, provider } = useWallet();
+    const { isDark, toggleTheme } = useTheme();
     const { address: premiumAddress, isConnected: premiumConnected, isCorrectNetwork } = usePremiumWallet();
     const [menuOpen, setMenuOpen] = useState(false);
     const [copied, setCopied] = useState(false);
@@ -131,7 +137,8 @@ export default function Navigation() {
         };
     }, []);
 
-    // Fetch VTRU price using tokenUtils (on-chain via pool tick)
+    // Active-chain price: HYVE uses the configured launch estimate; VTRU uses
+    // the live BSC DexScreener feed implemented by tokenUtils.
     useEffect(() => {
         async function fetchTokenPrice() {
             if (!provider) return;
@@ -141,7 +148,7 @@ export default function Navigation() {
                 const price = await fetchTokenPriceInUSDC(ethers.ZeroAddress, provider);
                 setTokenPrice(price);
             } catch (error) {
-                console.error('Failed to fetch VTRU price:', error);
+                console.error(`Failed to fetch ${_navChain.symbol} price:`, error);
             } finally {
                 setIsLoadingPrice(false);
             }
@@ -224,10 +231,11 @@ export default function Navigation() {
 
     const navLinks = [
         { to: "/marketplace", label: "Marketplace" },
-        { to: "/hot-listings", label: "Hot Listings" },
+        { to: "/explore", label: "Explore NFTs" },
         { to: "/sell", label: "Sell NFT" },
         { to: "/auctions/create", label: "Create Auction" },
-        { to: "/vibe-dashboard", label: "VIBE" },
+        // VIBE is a Vitruveo-only feature — hide it on chains without it (Hyve).
+        ...(chainHasFeature('vibe') ? [{ to: "/vibe-dashboard", label: "VIBE" }] : []),
     ];
 
     return (
@@ -297,22 +305,36 @@ export default function Navigation() {
 
                     {/* Right side actions */}
                     <div className="flex items-center space-x-3">
-                        {/* Token Price Display with Dropdown */}
+                        {/* Chain switcher (Hyve ⇄ Vitruveo) */}
+                        <ChainSwitcher />
+                        {/* Theme toggle */}
+                        <button
+                            type="button"
+                            onClick={toggleTheme}
+                            aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+                            aria-pressed={isDark}
+                            title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+                            className="inline-flex items-center justify-center h-9 w-9 rounded-full border border-white/10 bg-white/5 text-foreground hover:bg-white/10 transition-colors"
+                        >
+                            {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                        </button>
+                        {/* Active-chain price. Retired Vitruveo pool details are
+                            intentionally not exposed; VTRU uses the BSC feed. */}
                         <div className="hidden sm:block relative" ref={lpDetailsRef}>
                             <motion.div
                                 className={cn(
-                                    "flex items-center px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer",
-                                    showLPDetails
-                                        ? "bg-neon-green/20 text-neon-green border-neon-green/50"
-                                        : "bg-neon-green/10 text-neon-green border-neon-green/30"
+                                    "flex items-center px-3 py-1.5 rounded-full text-xs font-medium border",
+                                    "bg-neon-green/10 text-neon-green border-neon-green/30"
                                 )}
                                 initial={{ scale: 0 }}
                                 animate={{ scale: 1 }}
                                 transition={{ delay: 0.3 }}
-                                onClick={() => setShowLPDetails(!showLPDetails)}
+                                title={_navChain.key === 'vitruveo'
+                                    ? 'Live VTRU/USD market price from the BSC DexScreener feed'
+                                    : 'Estimated HYVE launch price'}
                             >
                                 <div className="flex items-center">
-                                    <span className="mr-1">VTRU:</span>
+                                    <span className="mr-1">{_navChain.symbol}:</span>
                                     {isLoadingPrice ? (
                                         <span className="animate-pulse">Loading...</span>
                                     ) : tokenPrice ? (
@@ -320,19 +342,15 @@ export default function Navigation() {
                                     ) : (
                                         <span>$--.--</span>
                                     )}
-                                    <span className="ml-1">
-                                        {showLPDetails ? (
-                                            <ChevronUp className="h-3 w-3" />
-                                        ) : (
-                                            <ChevronDown className="h-3 w-3" />
-                                        )}
+                                    <span className="ml-1 opacity-70">
+                                        {_navChain.key === 'vitruveo' ? 'BSC live' : 'est.'}
                                     </span>
                                 </div>
                             </motion.div>
 
-                            {/* LP Details Dropdown */}
+                            {/* Retired WVTRU/USDC pool dropdown intentionally disabled. */}
                             <AnimatePresence>
-                                {showLPDetails && (
+                                {false && showLPDetails && (
                                     <motion.div
                                         initial={{ opacity: 0, y: -10 }}
                                         animate={{ opacity: 1, y: 0 }}
@@ -438,7 +456,7 @@ export default function Navigation() {
                                 )}
                             />
                             <span>
-                                {!isWalletConnected ? 'No wallet' : isOnCorrectNetwork ? 'Vitruveo' : 'Wrong network'}
+                                {!isWalletConnected ? 'No wallet' : isOnCorrectNetwork ? _navChain.name : 'Wrong network'}
                             </span>
                         </motion.div>
 
@@ -499,7 +517,7 @@ export default function Navigation() {
                                     </motion.div>
                                 ))}
 
-                                {/* Token Price in mobile menu with toggle for details */}
+                                {/* Active-chain price in mobile menu */}
                                 <motion.div
                                     initial={{ x: -50, opacity: 0 }}
                                     animate={{ x: 0, opacity: 1 }}
@@ -508,10 +526,12 @@ export default function Navigation() {
                                 >
                                     <div
                                         className="flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium bg-neon-green/10 text-neon-green border border-neon-green/30"
-                                        onClick={() => setShowLPDetails(!showLPDetails)}
+                                        title={_navChain.key === 'vitruveo'
+                                            ? 'Live VTRU/USD market price from BSC'
+                                            : 'Estimated HYVE launch price'}
                                     >
                                         <div className="flex items-center">
-                                            <span className="mr-1">VTRU:</span>
+                                            <span className="mr-1">{_navChain.symbol}:</span>
                                             {isLoadingPrice ? (
                                                 <span className="animate-pulse">Loading...</span>
                                             ) : tokenPrice ? (
@@ -520,18 +540,14 @@ export default function Navigation() {
                                                 <span>$--.--</span>
                                             )}
                                         </div>
-                                        <span>
-                                            {showLPDetails ? (
-                                                <ChevronUp className="h-3 w-3" />
-                                            ) : (
-                                                <ChevronDown className="h-3 w-3" />
-                                            )}
+                                        <span className="opacity-70">
+                                            {_navChain.key === 'vitruveo' ? 'BSC live' : 'est.'}
                                         </span>
                                     </div>
 
-                                    {/* Mobile LP Details */}
+                                    {/* Retired pool details intentionally disabled. */}
                                     <AnimatePresence>
-                                        {showLPDetails && (
+                                        {false && showLPDetails && (
                                             <motion.div
                                                 initial={{ opacity: 0, height: 0 }}
                                                 animate={{ opacity: 1, height: "auto" }}
