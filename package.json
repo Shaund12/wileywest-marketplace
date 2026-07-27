@@ -48,7 +48,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "npm run build && npm run deploy:copy",
-    "deploy:copy": "cp -a dist/. ${BLOCKDUST_WEBROOT:-/var/www/blockdust}/",
+    "deploy:copy": "rsync -a --delete --exclude '.ipfs-cache/' dist/ ${BLOCKDUST_WEBROOT:-/var/www/blockdust}/",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
