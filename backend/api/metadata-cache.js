@@ -14,6 +14,23 @@ const IPFS_GATEWAYS = ['https://ipfs.io/ipfs/', 'https://dweb.link/ipfs/', 'http
 const ERC721_ABI = ['function tokenURI(uint256 tokenId) view returns (string)'];
 const ERC1155_ABI = ['function uri(uint256 tokenId) view returns (string)'];
 
+// A contract lives on exactly one chain, and this endpoint is called for both.
+// Resolving against a single RPC (VITE_RPC_URL, which is Hyve in production)
+// meant every Vitruveo NFT returned "No URI method" — the address has no code
+// on Hyve, so tokenURI() and uri() both come back empty '0x'. Try each chain.
+const CHAIN_RPCS = [
+    process.env.VITE_RPC_URL,
+    process.env.HYVE_RPC_URL || 'https://rpc.hyvechain.com',
+    process.env.VITRUVEO_RPC_URL || 'https://rpc.vitruveo.ai',
+].filter(Boolean).filter((url, i, all) => all.indexOf(url) === i);
+
+// Explorer RPCs as a second attempt: the public upstreams (Hyve especially)
+// return 504s under load, and a failed read here becomes a placeholder image.
+const CHAIN_RPC_FALLBACKS = [
+    'https://explorer.hyvechain.com/api/eth-rpc',
+    'https://explorer.vitruveo.ai/api/eth-rpc',
+];
+
 module.exports = async (req, res) => {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
     const { contract, tokenId, refresh } = req.query;
@@ -49,14 +66,33 @@ module.exports = async (req, res) => {
     }
 };
 
+/** Read tokenURI/uri from one RPC, or null if the contract isn't there. */
+async function readTokenUri(rpcUrl, contractAddress, tokenId) {
+    const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: true });
+    try {
+        // A contract with no code returns empty '0x', which ethers reports as a
+        // BAD_DATA decode failure — indistinguishable here from a real revert,
+        // so both simply mean "not on this chain, try the next one".
+        try {
+            return await new ethers.Contract(contractAddress, ERC721_ABI, provider).tokenURI(tokenId);
+        } catch {
+            return await new ethers.Contract(contractAddress, ERC1155_ABI, provider).uri(tokenId);
+        }
+    } catch {
+        return null;
+    } finally {
+        provider.destroy?.();
+    }
+}
+
 async function fetchMetadataFromContract(contractAddress, tokenId) {
     try {
-        const rpcUrl = process.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
-        const provider = new ethers.JsonRpcProvider(rpcUrl);
-        let tokenURI;
-        try { tokenURI = await new ethers.Contract(contractAddress, ERC721_ABI, provider).tokenURI(tokenId); }
-        catch { try { tokenURI = await new ethers.Contract(contractAddress, ERC1155_ABI, provider).uri(tokenId); } catch (e) { return { success: false, error: `No URI method: ${e.message}` }; } }
-        if (!tokenURI) return { success: false, error: 'Empty tokenURI' };
+        let tokenURI = null;
+        for (const rpcUrl of [...CHAIN_RPCS, ...CHAIN_RPC_FALLBACKS]) {
+            tokenURI = await readTokenUri(rpcUrl, contractAddress, tokenId);
+            if (tokenURI) break;
+        }
+        if (!tokenURI) return { success: false, error: 'No URI method on any configured chain' };
         return { success: true, data: await fetchMetadataFromURI(tokenURI), tokenUri: tokenURI };
     } catch (error) { return { success: false, error: error.message }; }
 }
@@ -77,14 +113,37 @@ async function fetchMetadataFromURI(tokenURI) {
     throw new Error(`Unsupported URI format: ${tokenURI}`);
 }
 
+/**
+ * Rewrite ipfs:// (and bare-CID) image URIs to the same-origin gateway.
+ * A browser cannot load an ipfs:// URL, so returning one verbatim rendered
+ * a broken image on every NFT whose metadata used the canonical scheme.
+ */
+function resolveImageUri(uri) {
+    if (!uri || typeof uri !== 'string') return null;
+    if (uri.startsWith('ipfs://')) {
+        return `/api/ipfs/ipfs/${uri.replace(/^ipfs:\/\/(ipfs\/)?/, '')}`;
+    }
+    if (uri.includes('/ipfs/')) {
+        return `/api/ipfs/ipfs/${uri.split('/ipfs/')[1]}`;
+    }
+    // Bare CIDv0/CIDv1 with no scheme.
+    if (/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z0-9]{50,})/.test(uri)) {
+        return `/api/ipfs/ipfs/${uri}`;
+    }
+    return uri;
+}
+
 function normalizeMetadata(m, contractAddress, tokenId) {
+    const rawImage = m?.image || m?.imageUrl;
+    const image = resolveImageUri(rawImage) || CACHE_CONFIG.DEFAULT_PLACEHOLDER;
     return {
         name: m?.name || `NFT #${tokenId}`, description: m?.description || '',
-        image: m?.image || m?.imageUrl || CACHE_CONFIG.DEFAULT_PLACEHOLDER,
-        imageUrl: m?.image || m?.imageUrl || CACHE_CONFIG.DEFAULT_PLACEHOLDER,
+        image,
+        imageUrl: image,
         attributes: m?.attributes || m?.traits || [], contractAddress: contractAddress.toLowerCase(),
         tokenId: tokenId.toString(), collection: m?.collection || null,
-        externalUrl: m?.external_url || m?.externalUrl || null, animationUrl: m?.animation_url || m?.animationUrl || null,
+        externalUrl: m?.external_url || m?.externalUrl || null,
+        animationUrl: resolveImageUri(m?.animation_url || m?.animationUrl),
         backgroundColor: m?.background_color || m?.backgroundColor || null,
         loaded: true, loading: false, error: null, timestamp: Date.now(), loadingStrategy: 'cache_api',
     };
