@@ -8,6 +8,7 @@ import { getTokenDecimals } from '../utils/tokenUtils';
 import MarketplaceStats from '../components/MarketplaceStats';
 import { motion } from 'framer-motion';
 import { explorerTx } from '../config/chains.js';
+import { getReadProvider } from '../utils/networkUtils';
 
 function VibeDashboardPage() {
     const { provider } = useWallet();
@@ -73,9 +74,11 @@ function VibeDashboardPage() {
             }
 
             debugLog('🚀 Fetching vibe fee data directly from blockchain events...');
-            const marketplace = new ethers.Contract(marketplaceAddress, MarketplaceAbi.abi, provider);
+            // Genesis-to-head scan — must not go through the wallet provider.
+            const readProvider = getReadProvider();
+            const marketplace = new ethers.Contract(marketplaceAddress, MarketplaceAbi.abi, readProvider);
 
-            const currentBlock = await provider.getBlockNumber();
+            const currentBlock = await readProvider.getBlockNumber();
             const GENESIS_BLOCK = 11635620; // Contract genesis block for all-time VIBE stats
             const fromBlock = GENESIS_BLOCK;
 

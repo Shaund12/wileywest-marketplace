@@ -13,6 +13,7 @@ import { isAuctionsEnabled } from '../utils/featureFlags';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 import { activeChain, explorerAddress, explorerToken } from '../config/chains.js';
+import { getReadProvider } from '../utils/networkUtils';
 import { nftThumbnailUrl } from '../utils/mediaUrl';
 import { NFTScanner } from '../utils/nftScanner';
 import { verifyNFTOwnership, filterOwnedNFTs } from '../utils/nftOwnershipUtils';
@@ -781,10 +782,12 @@ function ProfilePage() {
                     const abi = VTRUNFTMarketplaceABI.default?.abi || VTRUNFTMarketplaceABI.abi;
                     
                     if (abi && Array.isArray(abi)) {
-                        const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, provider);
-                        
+                        // Log scans go through the RPC proxy, never the wallet.
+                        const readProvider = getReadProvider();
+                        const marketplaceContract = new ethers.Contract(marketplaceAddress, abi, readProvider);
+
                         // Get recent auction creation events
-                        const currentBlock = await provider.getBlockNumber();
+                        const currentBlock = await readProvider.getBlockNumber();
                         const fromBlock = Math.max(0, currentBlock - 50000); // Last 50k blocks
                         
                         const auctionCreatedEvents = await marketplaceContract.queryFilter(

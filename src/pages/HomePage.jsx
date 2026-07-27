@@ -20,6 +20,7 @@ import { cn } from '../lib/utils';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import './HomePage.css';
 import { activeChain } from '../config/chains.js';
+import { getReadProvider } from '../utils/networkUtils';
 import { nftThumbnailUrl } from '../utils/mediaUrl';
 
 /* =========================
@@ -415,8 +416,10 @@ function HomePage() {
             // If no auctions from Supabase, try on-chain (limited scan)
             if (auctions.length === 0) {
                 try {
-                    const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, provider);
-                    const current = await provider.getBlockNumber();
+                    // Log scans go through the RPC proxy, never the wallet.
+                    const readProvider = getReadProvider();
+                    const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, readProvider);
+                    const current = await readProvider.getBlockNumber();
                     const fromBlock = Math.max(0, current - 10000); // Last 10k blocks only for homepage
 
                     const created = await contract.queryFilter(contract.filters.AuctionCreated(), fromBlock, current);

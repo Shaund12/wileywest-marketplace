@@ -2,7 +2,43 @@
  * Network utilities for CORS-safe requests and improved error handling
  */
 
+import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from './debugUtils';
+import { activeChain } from '../config/chains.js';
+
+/**
+ * A provider for historical reads (eth_getLogs / queryFilter).
+ *
+ * Never use the wallet's BrowserProvider for log scans. MetaMask forwards
+ * eth_getLogs to whatever RPC the user's network is configured with — for
+ * Hyve that is the upstream that regularly returns 504/timeouts — and
+ * surfaces the failure as an opaque 'Internal JSON-RPC error' (-32603) with
+ * no retry. A wide scan through the wallet is therefore both unreliable and
+ * outside our control.
+ *
+ * /api/rpc/:chain allowlists eth_getLogs, caches it, coalesces concurrent
+ * identical requests, and fails over to the chain explorer's RPC, so reads
+ * routed here succeed where the wallet path does not.
+ *
+ * Writes must still go through the wallet — this is for reads only.
+ *
+ * staticNetwork avoids a redundant chainId round-trip; polling avoids
+ * eth_newFilter, which the proxy does not allow (see WalletContext).
+ */
+let readProviderCache = null;
+let readProviderChainId = null;
+
+export function getReadProvider() {
+    const chain = activeChain();
+    if (readProviderCache && readProviderChainId === chain.id) return readProviderCache;
+
+    readProviderCache = new ethers.JsonRpcProvider(chain.rpcUrl, chain.id, {
+        staticNetwork: true,
+        polling: true,
+    });
+    readProviderChainId = chain.id;
+    return readProviderCache;
+}
 
 /**
  * CORS-safe fetch with automatic fallbacks and better error handling

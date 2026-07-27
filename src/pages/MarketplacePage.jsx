@@ -22,6 +22,7 @@ import blockdustLogo from '../assets/blockdust-logo.png';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { activeChain } from '../config/chains.js';
+import { getReadProvider } from '../utils/networkUtils';
 import { nftThumbnailUrl } from '../utils/mediaUrl';
 
 /* =========================
@@ -845,10 +846,14 @@ function MarketplacePage() {
             }));
 
             // 2) Conservative on-chain scan for AuctionCreated events (recent 50k blocks)
-            const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, provider);
+            // Read through our RPC proxy, not the wallet: MetaMask forwards a
+            // scan this wide to Hyve's upstream, which times out and surfaces
+            // as an opaque -32603. See getReadProvider.
+            const readProvider = getReadProvider();
+            const contract = new ethers.Contract(marketplaceAddress, VtruMarketplaceArtifact.abi, readProvider);
             let chainAuctions = [];
             try {
-                const current = await provider.getBlockNumber();
+                const current = await readProvider.getBlockNumber();
                 const fromBlock = Math.max(0, current - 50000);
                 if (showStatus) setStatus?.(`Scanning recent auctions ${fromBlock}-${current}...`);
                 const created = await contract.queryFilter(contract.filters.AuctionCreated(), fromBlock, current);
