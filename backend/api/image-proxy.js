@@ -59,9 +59,17 @@ async function fetchImageWithFallback(url) {
 }
 
 function extractIPFSHash(url) {
-    if (url.startsWith('ipfs://')) return url.replace('ipfs://', '');
-    if (url.includes('/ipfs/')) return url.split('/ipfs/')[1]?.split('/')[0];
-    return null;
+    if (!url || typeof url !== 'string') return null;
+    // Strip any ipfs:// scheme and every leading path/gateway segment, then
+    // take the first CID-shaped component. Splitting on '/ipfs/' is not
+    // enough on its own: '/api/ipfs/ipfs/<cid>' splits into
+    // ['/api', 'ipfs/<cid>'] because matches do not overlap, so the naive
+    // result is the literal string "ipfs" and every lookup 404s.
+    const cleaned = url.replace(/^ipfs:\/\//, '');
+    const cid = cleaned
+        .split('/')
+        .find((part) => /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z0-9]{20,})/.test(part));
+    return cid || null;
 }
 async function generatePlaceholder(imageBuffer, contentType) {
     try {

@@ -114,21 +114,30 @@ async function fetchMetadataFromURI(tokenURI) {
 }
 
 /**
- * Rewrite ipfs:// (and bare-CID) image URIs to the same-origin gateway.
- * A browser cannot load an ipfs:// URL, so returning one verbatim rendered
- * a broken image on every NFT whose metadata used the canonical scheme.
+ * Normalize an IPFS image URI to the canonical `ipfs://<cid>` form.
+ *
+ * Deliberately NOT rewritten to a same-origin `/api/ipfs/...` path: the
+ * frontend feeds this value to /api/image-proxy, whose extractIPFSHash()
+ * does `url.split('/ipfs/')[1]`. A path like `/api/ipfs/ipfs/<cid>` contains
+ * two `/ipfs/` segments, so that split yields the literal string "ipfs"
+ * rather than the CID and every lookup 404s.
+ *
+ * `ipfs://` is the one form every consumer already handles — image-proxy,
+ * the frontend gateway rotation, and NFTImage all special-case it.
  */
 function resolveImageUri(uri) {
     if (!uri || typeof uri !== 'string') return null;
     if (uri.startsWith('ipfs://')) {
-        return `/api/ipfs/ipfs/${uri.replace(/^ipfs:\/\/(ipfs\/)?/, '')}`;
+        return `ipfs://${uri.replace(/^ipfs:\/\/(ipfs\/)?/, '')}`;
     }
     if (uri.includes('/ipfs/')) {
-        return `/api/ipfs/ipfs/${uri.split('/ipfs/')[1]}`;
+        // Keep only the CID (and any sub-path), dropping whichever gateway
+        // host the metadata happened to hard-code.
+        return `ipfs://${uri.split('/ipfs/').pop()}`;
     }
     // Bare CIDv0/CIDv1 with no scheme.
     if (/^(Qm[1-9A-HJ-NP-Za-km-z]{44}|baf[a-z0-9]{50,})/.test(uri)) {
-        return `/api/ipfs/ipfs/${uri}`;
+        return `ipfs://${uri}`;
     }
     return uri;
 }
