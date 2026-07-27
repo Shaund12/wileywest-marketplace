@@ -10,11 +10,10 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar'
 import { cn } from '../lib/utils'
 import blockies from 'ethereum-blockies-base64'
 import { Link } from 'react-router-dom'
-import { activeChain, CHAINS, explorerAddress, chainHasFeature } from '../config/chains.js'
+import { activeChain, CHAINS, explorerAddress } from '../config/chains.js'
 
 const ACTIVE_CHAIN = activeChain()
 const ACTIVE_CHAIN_NAME = ACTIVE_CHAIN.name
-const SHOW_VITRUVEO_TOKENS = chainHasFeature('wvtru')
 
 // Shorten address utility
 function shortenAddress(address) {
@@ -209,25 +208,11 @@ export function PremiumWalletButton() {
               </div>
               
               <div className="space-y-1">
-                <TokenBalance 
+                <TokenBalance
                   symbol={ACTIVE_CHAIN.symbol}
-                  balance={balances.vtru} 
-                  icon="⚡" 
+                  balance={balances.vtru}
+                  icon="⚡"
                 />
-                {SHOW_VITRUVEO_TOKENS && (
-                  <>
-                    <TokenBalance
-                      symbol="USDC"
-                      balance={balances.usdc}
-                      icon="💵"
-                    />
-                    <TokenBalance
-                      symbol="wVTRU"
-                      balance={balances.wvtru}
-                      icon="🔄"
-                    />
-                  </>
-                )}
               </div>
               
               {/* Total Portfolio Value */}

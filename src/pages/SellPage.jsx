@@ -399,9 +399,6 @@ function SellPage() {
     const [tokenList, setTokenList] = useState({});
     const [paymentOptions, setPaymentOptions] = useState([]);
     const [loadingPrices, setLoadingPrices] = useState(false);
-    const [showAddTokenForm, setShowAddTokenForm] = useState(false);
-    const [customTokenData, setCustomTokenData] = useState({ address: '', symbol: '', name: '', decimals: '18', price: '' });
-    const [customTokenError, setCustomTokenError] = useState('');
 
     const [livePrice, setLivePrice] = useState({});
     const [priceChange, setPriceChange] = useState({});
@@ -1058,60 +1055,6 @@ function SellPage() {
         if (Object.keys(tokenList).length > 0) buildPaymentOptions();
     }, [tokenList, livePrice, priceSources, priceErrors]);
 
-    const handleCustomTokenChange = (e) => {
-        const { id, value } = e.target;
-        setCustomTokenData({ ...customTokenData, [id]: value });
-    };
-
-    const addCustomToken = async () => {
-        setCustomTokenError('');
-
-        if (!ethers.isAddress(customTokenData.address)) {
-            setCustomTokenError('Invalid address format');
-            return;
-        }
-
-        try {
-            const checksum = ethers.getAddress(customTokenData.address);
-            if (tokenList[checksum]) {
-                setCustomTokenError('Token already added');
-                return;
-            }
-
-            setLoadingPrices(true);
-            const c = new ethers.Contract(checksum, ERC20_ABI, provider);
-
-            let symbol, name, decimals;
-            try {
-                symbol = await c.symbol();
-                name = await c.name();
-                decimals = await c.decimals();
-            } catch {
-                symbol = customTokenData.symbol || 'UNKNOWN';
-                name = customTokenData.name || 'Custom Token';
-                decimals = parseInt(customTokenData.decimals) || 18;
-            }
-
-            const newToken = { address: checksum, symbol, name, decimals };
-            setTokenList((prev) => ({ ...prev, [checksum]: newToken }));
-
-            if (customTokenData.price) {
-                const manual = parseFloat(customTokenData.price);
-                setLivePrice((prev) => ({ ...prev, [checksum]: manual }));
-                setPriceSources((prev) => ({ ...prev, [checksum]: 'Manually entered' }));
-            } else {
-                setPriceSources((prev) => ({ ...prev, [checksum]: 'Fetching from Uniswap...' }));
-            }
-
-            setCustomTokenData({ address: '', symbol: '', name: '', decimals: '18', price: '' });
-            setShowAddTokenForm(false);
-        } catch (error) {
-            setCustomTokenError(`Error adding token: ${error.message}`);
-        } finally {
-            setLoadingPrices(false);
-        }
-    };
-
     /* =========================
        NFT metadata (robust + tolerant)
        ========================= */
@@ -1690,104 +1633,9 @@ function SellPage() {
                                     <div className="form-group">
                                         <div className="payment-header">
                                             <label>Payment Token</label>
-                                            <button
-                                                type="button"
-                                                className="add-token-button"
-                                                onClick={() => setShowAddTokenForm(!showAddTokenForm)}
-                                            >
-                                                {showAddTokenForm ? 'Cancel' : '+ Add Custom Token'}
-                                            </button>
                                         </div>
 
-                                        {showAddTokenForm && (
-                                            <div className="custom-token-form">
-                                                <h4>Add Custom Token</h4>
-
-                                                <div className="form-group">
-                                                    <label htmlFor="address">Token Address *</label>
-                                                    <input
-                                                        type="text"
-                                                        id="address"
-                                                        className="input"
-                                                        value={customTokenData.address}
-                                                        onChange={handleCustomTokenChange}
-                                                        placeholder="0x..."
-                                                        required
-                                                    />
-                                                </div>
-
-                                                <div className="form-row">
-                                                    <div className="form-group">
-                                                        <label htmlFor="symbol">Symbol</label>
-                                                        <input
-                                                            type="text"
-                                                            id="symbol"
-                                                            className="input"
-                                                            value={customTokenData.symbol}
-                                                            onChange={handleCustomTokenChange}
-                                                            placeholder="Auto-detect if available"
-                                                        />
-                                                    </div>
-                                                    <div className="form-group">
-                                                        <label htmlFor="decimals">Decimals</label>
-                                                        <input
-                                                            type="number"
-                                                            id="decimals"
-                                                            className="input"
-                                                            value={customTokenData.decimals}
-                                                            onChange={handleCustomTokenChange}
-                                                            placeholder="18"
-                                                        />
-                                                    </div>
-                                                </div>
-
-                                                <div className="form-group">
-                                                    <label htmlFor="name">Token Name</label>
-                                                    <input
-                                                        type="text"
-                                                        id="name"
-                                                        className="input"
-                                                        value={customTokenData.name}
-                                                        onChange={handleCustomTokenChange}
-                                                        placeholder="Auto-detect if available"
-                                                    />
-                                                </div>
-
-                                                <div className="form-group">
-                                                    <label htmlFor="price">USD Price (optional)</label>
-                                                    <div className="input-with-info">
-                                                        <input
-                                                            type="number"
-                                                            id="price"
-                                                            className="input"
-                                                            value={customTokenData.price}
-                                                            onChange={handleCustomTokenChange}
-                                                            placeholder="Token USD price"
-                                                            step="0.000001"
-                                                        />
-                                                        <div className="input-info">Will try to find Uniswap pool if left empty</div>
-                                                    </div>
-                                                </div>
-
-                                                {customTokenError && <div className="error-message">{customTokenError}</div>}
-
-                                                <div className="form-actions token-actions">
-                                                    <button type="button" className="secondary-button" onClick={() => setShowAddTokenForm(false)}>
-                                                        Cancel
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="primary-button"
-                                                        onClick={addCustomToken}
-                                                        disabled={!customTokenData.address || loadingPrices}
-                                                    >
-                                                        {loadingPrices ? 'Adding...' : 'Add Token'}
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {loadingPrices && !showAddTokenForm ? (
+                                        {loadingPrices ? (
                                             <div className="loading-tokens">
                                                 <div className="loader"></div>
                                                 <p>Loading token information from Uniswap...</p>

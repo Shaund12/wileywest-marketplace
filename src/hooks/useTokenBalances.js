@@ -3,23 +3,23 @@ import { ethers } from 'ethers'
 import { usePremiumWallet } from '../context/PremiumWalletContext'
 import ERC20ABI from '../abi/ERC20.json'
 import { convertToUSDCValue } from '../utils/tokenUtils'
-import { chainAddress, chainHasFeature, activeChain } from '../config/chains.js'
+import { activeChain } from '../config/chains.js'
 
-// Token addresses from the active chain's registry. Empty '' on chains
-// (Hyve) that don't have these Vitruveo DeFi tokens.
-const USDC_ADDRESS = chainAddress('usdc')
-const WVTRU_ADDRESS = chainAddress('wvtru')
 const activeSymbol = activeChain().symbol
-// Whether this chain has the wrapped-native/USDC token pair at all.
-const HAS_WVTRU = chainHasFeature('wvtru') && !!WVTRU_ADDRESS
+
+// Only the native balance is shown. The USDC and wVTRU tiles were removed:
+// their addresses come from VITE_USDC_ADDRESS / VITE_WVTRU_ADDRESS, which are
+// unset in production, so chainAddress() fell back to the zero address.
+// balanceOf() against a non-contract returns empty '0x', which ethers cannot
+// decode — every load logged a BAD_DATA error and rendered an empty tile.
+// (The old HAS_WVTRU guard could not catch this: it tested the address for
+// truthiness, and the zero-address string is truthy.)
 
 // Custom hook for fetching token balances
 export function useTokenBalances() {
   const { address, provider, isConnected } = usePremiumWallet()
   const [balances, setBalances] = useState({
     vtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: true, error: null },
-    usdc: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: true, error: null },
-    wvtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: true, error: null },
   })
   const [isLoading, setIsLoading] = useState(false)
   
@@ -108,40 +108,26 @@ export function useTokenBalances() {
     if (!isConnected || !address || !provider) {
       setBalances({
         vtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: 'Not connected' },
-        usdc: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: 'Not connected' },
-        wvtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: 'Not connected' },
       })
       return
     }
 
     setIsLoading(true)
-    
+
     try {
-      // Native balance always; WVTRU/USDC only on chains that have them (Vitruveo).
-      const ZERO_BAL = { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: null }
-      const [vtruResult, usdcResult, wvtruResult] = await Promise.allSettled([
+      const [vtruResult] = await Promise.allSettled([
         fetchBalance('native', 18, activeSymbol),
-        HAS_WVTRU ? fetchBalance(USDC_ADDRESS, 6, 'USDC') : Promise.resolve(ZERO_BAL),
-        HAS_WVTRU ? fetchBalance(WVTRU_ADDRESS, 18, 'wVTRU') : Promise.resolve(ZERO_BAL),
       ])
 
       setBalances({
         vtru: vtruResult.status === 'fulfilled' ? vtruResult.value : {
           value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: vtruResult.reason?.message || 'Failed to fetch'
         },
-        usdc: usdcResult.status === 'fulfilled' ? usdcResult.value : {
-          value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: usdcResult.reason?.message || 'Failed to fetch'
-        },
-        wvtru: wvtruResult.status === 'fulfilled' ? wvtruResult.value : {
-          value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: wvtruResult.reason?.message || 'Failed to fetch'
-        },
       })
     } catch (error) {
       console.error('Error fetching balances:', error)
       setBalances({
         vtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: error.message },
-        usdc: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: error.message },
-        wvtru: { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: error.message },
       })
     } finally {
       setIsLoading(false)
@@ -169,12 +155,3 @@ export function useVTRUBalance() {
   return balances.vtru
 }
 
-export function useUSDCBalance() {
-  const { balances } = useTokenBalances()
-  return balances.usdc
-}
-
-export function useWVTRUBalance() {
-  const { balances } = useTokenBalances()
-  return balances.wvtru
-}
