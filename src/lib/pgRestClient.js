@@ -32,57 +32,81 @@ function makeError(message, code) {
 }
 
 /**
- * Concurrency gate + 429 retry for /api/db.
+ * Client-side rate limiter + 429 retry for /api/db.
  *
- * nginx rate-limits this endpoint per IP (rate=5r/s burst=15). Pages that
- * fan out with Promise.all over a list of listings blow straight through the
- * burst and take back a wall of 429s — the requests are not individually
- * excessive, they just all leave at once. Serializing to a small window keeps
- * bursts under the limit while staying fast enough for normal page loads.
+ * nginx limits this endpoint per IP to `rate=5r/s burst=15` (see
+ * blockdust-cache.conf). That is a *sustained rate*, not a parallelism cap:
+ * the burst bucket absorbs the first ~15 requests and then refills at only
+ * 5/s. Pages that fan out over a listing set drain the bucket in the first
+ * second and every request after that comes back 429 until traffic stops.
+ *
+ * So capping concurrency alone does not help — 8 simultaneous requests pass
+ * fine, while a steady 6-at-a-time stream starts failing on the third round.
+ * What is needed is a token bucket that mirrors the server's, pacing requests
+ * to just under the refill rate.
  *
  * Kept here rather than at each call site so every consumer of the shim is
  * covered without touching ~20 files.
  */
-const MAX_CONCURRENT_DB = 6;
-const MAX_RETRIES = 3;
+const REQUESTS_PER_SECOND = 4;      // just under nginx's 5r/s refill
+const BUCKET_CAPACITY = 8;          // well under nginx's burst=15
+const MIN_SPACING_MS = 1000 / REQUESTS_PER_SECOND;
+const MAX_RETRIES = 4;
 
-let activeRequests = 0;
-const pendingQueue = [];
+let tokens = BUCKET_CAPACITY;
+let lastRefill = Date.now();
+let queueTail = Promise.resolve();
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function acquireSlot() {
-    if (activeRequests < MAX_CONCURRENT_DB) {
-        activeRequests += 1;
-        return Promise.resolve();
+function refill() {
+    const now = Date.now();
+    const gained = ((now - lastRefill) / 1000) * REQUESTS_PER_SECOND;
+    if (gained > 0) {
+        tokens = Math.min(BUCKET_CAPACITY, tokens + gained);
+        lastRefill = now;
     }
-    return new Promise((resolve) => pendingQueue.push(resolve));
 }
 
-function releaseSlot() {
-    const next = pendingQueue.shift();
-    if (next) next();
-    else activeRequests -= 1;
+/**
+ * Resolves when a token is available. Calls are serialized through a promise
+ * chain so concurrent callers queue in order instead of all racing the same
+ * token and stampeding once it appears.
+ */
+function acquireToken() {
+    const wait = queueTail.then(async () => {
+        for (;;) {
+            refill();
+            if (tokens >= 1) {
+                tokens -= 1;
+                return;
+            }
+            // Sleep for exactly as long as the next token needs.
+            await sleep(Math.max(MIN_SPACING_MS, ((1 - tokens) / REQUESTS_PER_SECOND) * 1000));
+        }
+    });
+    queueTail = wait.catch(() => undefined);
+    return wait;
 }
 
 async function gatedFetch(url, options) {
-    await acquireSlot();
-    try {
-        for (let attempt = 0; ; attempt += 1) {
-            const res = await fetch(url, options);
-            if (res.status !== 429 || attempt >= MAX_RETRIES) return res;
+    for (let attempt = 0; ; attempt += 1) {
+        await acquireToken();
+        const res = await fetch(url, options);
+        if (res.status !== 429 || attempt >= MAX_RETRIES) return res;
 
-            // Respect Retry-After when nginx sends it; otherwise back off
-            // exponentially with jitter so retries don't resynchronize into
-            // another burst.
-            const retryAfter = Number.parseFloat(res.headers.get('retry-after') || '');
-            const backoff = Number.isFinite(retryAfter)
-                ? retryAfter * 1000
-                : 250 * 2 ** attempt + Math.random() * 250;
-            await sleep(backoff);
-        }
-    } finally {
-        releaseSlot();
+        // A 429 means the bucket is emptier than we modelled (another tab, or
+        // the backend cron sharing this IP). Drop our own tokens so the whole
+        // queue backs off together rather than each request retrying into the
+        // same wall.
+        tokens = 0;
+        lastRefill = Date.now();
+
+        const retryAfter = Number.parseFloat(res.headers.get('retry-after') || '');
+        const backoff = Number.isFinite(retryAfter)
+            ? retryAfter * 1000
+            : 500 * 2 ** attempt + Math.random() * 400;
+        await sleep(backoff);
     }
 }
 
