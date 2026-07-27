@@ -1,0 +1,19 @@
+{
+  "name": "blockdust-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted backend for BlockDust marketplace: PostgreSQL data API + ported Vercel serverless routes + internal crons.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "schema": "psql \"${DATABASE_URL:-postgresql://USER:PASSWORD@127.0.0.1:5432/blockdust}\" -f db/schema.sql"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "ethers": "^6.9.0",
+    "express": "^4.19.2",
+    "pg": "^8.11.0",
+    "sharp": "^0.35.3"
+  }
+}

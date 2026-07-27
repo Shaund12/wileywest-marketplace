@@ -1,0 +1,33 @@
+# systemd unit for the BlockDust backend.
+# Install (needs root — NOT done automatically):
+#   sudo cp backend/blockdust-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now blockdust-backend
+#   sudo journalctl -u blockdust-backend -f
+#
+# Adjust User=, WorkingDirectory=, and the Environment= lines for your host.
+
+[Unit]
+Description=BlockDust marketplace backend (PostgreSQL API + crons)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=shaun
+WorkingDirectory=/home/shaun/workspace/wileywest-marketplace/backend
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+
+# --- Configuration (edit these) ---
+Environment=PORT=8787
+Environment=DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/blockdust
+Environment=VITE_RPC_URL=https://rpc.hyvechain.com
+# Default production chain: Hyve (7847).
+Environment=VITE_MARKETPLACE_ADDRESS=0x89610b27E8f5685681666edf901Ad5c69d89DfB6
+# Set to false to disable the internal 5-min / 2-min cron loops:
+# Environment=ENABLE_CRONS=false
+
+[Install]
+WantedBy=multi-user.target
