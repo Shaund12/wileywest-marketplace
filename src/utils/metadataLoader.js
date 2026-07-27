@@ -6,6 +6,7 @@
 import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from './debugUtils';
 import { fetchMetadataWithFallback, normalizeNFTMetadata, MARKETPLACE_CONFIG } from './nftUtils';
+import { getReadProvider } from './networkUtils';
 
 // Global metadata cache to prevent duplicate fetches
 const metadataLoadingCache = new Map();
@@ -144,8 +145,15 @@ const fetchMetadataFromContract = async (contractAddress, tokenId, provider) => 
     ];
 
     try {
-        const contract = new ethers.Contract(contractAddress, ERC721_ABI, provider);
-        
+        // Always read tokenURI through the RPC proxy, never the caller's wallet
+        // provider. MetaMask relays eth_call to whatever RPC its network is
+        // configured with, which times out often enough that tokenURI failed
+        // and every affected NFT rendered the generated SVG placeholder
+        // instead of its real image. The proxy caches and coalesces these
+        // calls and fails over to the explorer RPC.
+        const readProvider = getReadProvider() || provider;
+        const contract = new ethers.Contract(contractAddress, ERC721_ABI, readProvider);
+
         // Optimized token URI fetch with Vitruveo-appropriate timeout
         let tokenURI;
         try {
