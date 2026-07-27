@@ -6,17 +6,16 @@ import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { activeChain } from '../config/chains.js';
+import { nftThumbnailUrl } from '../utils/mediaUrl';
 
 /* =========================================================
    SmartMedia utilities (simplified version for auctions)
    ========================================================= */
 const IPFS_GATEWAYS = [
+    '/api/ipfs/ipfs/',
     'https://ipfs.io/ipfs/',              // Official gateway - most reliable
     'https://dweb.link/ipfs/',            // Protocol Labs gateway
-    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
-    'https://w3s.link/ipfs/',             // Web3.Storage gateway
-    'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
-    'https://4everland.io/ipfs/',         // 4everland gateway
 ];
 
 const isString = (v) => typeof v === 'string' && v.trim().length > 0;
@@ -61,6 +60,7 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
         const tryNext = () => {
             if (i >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[i++];
+            const displayUrl = nftThumbnailUrl(test, 400);
             const img = new Image();
             const timer = setTimeout(() => {
                 img.onload = img.onerror = null;
@@ -68,13 +68,13 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
             }, timeoutMs);
             img.onload = () => {
                 clearTimeout(timer);
-                resolve(test);
+                resolve(displayUrl);
             };
             img.onerror = () => {
                 clearTimeout(timer);
                 tryNext();
             };
-            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+            img.src = displayUrl;
         };
         tryNext();
     });
@@ -191,6 +191,7 @@ function SmartMedia({ srcList = [], alt = '', width = 200, height = 200, seed = 
             width={width}
             height={height}
             loading="lazy"
+            decoding="async"
             onError={() => setFailed(true)}
             style={{ display: 'block', borderRadius: 8, maxWidth: '100%', objectFit: 'cover' }}
         />
@@ -730,7 +731,7 @@ function MyAuctionsPage() {
                         <div style={{ marginBottom: '1rem', padding: '1rem', background: '#1e293b', borderRadius: '8px', border: '1px solid #334155' }}>
                             <h4 style={{ color: '#f1f5f9', margin: '0 0 0.5rem 0' }}>How to create an auction:</h4>
                             <ol style={{ color: '#94a3b8', margin: 0, paddingLeft: '1.5rem' }}>
-                                <li>Make sure you own an NFT on the Vitruveo network</li>
+                                <li>Make sure you own an NFT on the {activeChain().name} network</li>
                                 <li>Click "Create New Auction" below</li>
                                 <li>Select your NFT and set auction parameters</li>
                                 <li>Approve the transaction to start your auction</li>

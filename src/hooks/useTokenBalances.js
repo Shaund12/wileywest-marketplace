@@ -3,10 +3,15 @@ import { ethers } from 'ethers'
 import { usePremiumWallet } from '../context/PremiumWalletContext'
 import ERC20ABI from '../abi/ERC20.json'
 import { convertToUSDCValue } from '../utils/tokenUtils'
+import { chainAddress, chainHasFeature, activeChain } from '../config/chains.js'
 
-// Token addresses from environment
-const USDC_ADDRESS = import.meta.env.VITE_USDC_ADDRESS || '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF'
-const WVTRU_ADDRESS = import.meta.env.VITE_WVTRU_ADDRESS || '0x3ccc3F22462cAe34766820894D04a40381201ef9'
+// Token addresses from the active chain's registry. Empty '' on chains
+// (Hyve) that don't have these Vitruveo DeFi tokens.
+const USDC_ADDRESS = chainAddress('usdc')
+const WVTRU_ADDRESS = chainAddress('wvtru')
+const activeSymbol = activeChain().symbol
+// Whether this chain has the wrapped-native/USDC token pair at all.
+const HAS_WVTRU = chainHasFeature('wvtru') && !!WVTRU_ADDRESS
 
 // Custom hook for fetching token balances
 export function useTokenBalances() {
@@ -112,11 +117,12 @@ export function useTokenBalances() {
     setIsLoading(true)
     
     try {
-      // Fetch all balances concurrently
+      // Native balance always; WVTRU/USDC only on chains that have them (Vitruveo).
+      const ZERO_BAL = { value: '0', formatted: '0.000', usdcValue: '0.00', loading: false, error: null }
       const [vtruResult, usdcResult, wvtruResult] = await Promise.allSettled([
-        fetchBalance('native', 18, 'VTRU'),
-        fetchBalance(USDC_ADDRESS, 6, 'USDC'), // USDC typically has 6 decimals
-        fetchBalance(WVTRU_ADDRESS, 18, 'wVTRU'),
+        fetchBalance('native', 18, activeSymbol),
+        HAS_WVTRU ? fetchBalance(USDC_ADDRESS, 6, 'USDC') : Promise.resolve(ZERO_BAL),
+        HAS_WVTRU ? fetchBalance(WVTRU_ADDRESS, 18, 'wVTRU') : Promise.resolve(ZERO_BAL),
       ])
 
       setBalances({

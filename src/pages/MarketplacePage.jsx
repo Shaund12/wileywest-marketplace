@@ -21,6 +21,8 @@ import blockdustLogo from '../assets/blockdust-logo.png';
 // IMPORTANT: use on-chain ABI with auction events/functions
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { activeChain } from '../config/chains.js';
+import { nftThumbnailUrl } from '../utils/mediaUrl';
 
 /* =========================
    On-chain collection name resolver
@@ -90,20 +92,14 @@ function useCollectionNames(addresses = [], provider) {
    Smart IPFS Image + SVG fallback
    ========================= */
 const IPFS_GATEWAYS = [
+    '/api/ipfs/ipfs/',
     'https://ipfs.io/ipfs/',              // Official gateway - most reliable
     'https://dweb.link/ipfs/',            // Protocol Labs gateway
-    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
-    'https://w3s.link/ipfs/',             // Web3.Storage gateway
-    'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
-    'https://4everland.io/ipfs/',         // 4everland gateway
 ];
 const IPNS_GATEWAYS = [
+    '/api/ipfs/ipns/',
     'https://ipfs.io/ipns/',              // Official gateway - most reliable
     'https://dweb.link/ipns/',            // Protocol Labs gateway
-    'https://gateway.pinata.cloud/ipns/', // Pinata gateway - good CORS support
-    'https://w3s.link/ipns/',             // Web3.Storage gateway
-    'https://nftstorage.link/ipns/',      // NFT.Storage gateway
-    'https://4everland.io/ipns/',         // 4everland gateway
 ];
 
 const smartImageCache = new Map(); // key -> working URL
@@ -132,7 +128,7 @@ function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '
     const hue2 = (hue + 180) % 360;
     const gradId = `g${(h % 1e9).toString(36)}`;
     const blobs = (h % 7) + 3;
-    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
+    const label = title ? title.slice(0, 22) : `${activeChain().name} NFT`;
     const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
   <defs>
@@ -209,11 +205,12 @@ function findFirstWorkingImage(candidates, timeoutMs = 6000) {
             if (settled) return;
             if (idx >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[idx++];
+            const displayUrl = nftThumbnailUrl(test, 400);
             const img = new Image();
             const timer = setTimeout(() => { img.onload = img.onerror = null; tryNext(); }, timeoutMs);
-            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(test); };
+            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(displayUrl); };
             img.onerror = () => { clearTimeout(timer); tryNext(); };
-            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+            img.src = displayUrl;
         };
         tryNext();
     });
@@ -263,6 +260,7 @@ function SmartImage({
             width={width}
             height={height}
             loading="lazy"
+            decoding="async"
             crossOrigin="anonymous"
             onError={() => { if (!failed) setFailed(true); }}
             style={{ objectFit: 'cover', display: 'block', borderRadius: 8 }}
@@ -1239,8 +1237,8 @@ function MarketplacePage() {
                 setFeaturedNFTPriceDisplay(priceInfo);
             } catch {
                 const tokenSymbol = featuredNFT.paymentToken
-                    ? (featuredNFT.paymentToken === ethers.ZeroAddress ? 'VTRU' : 'TOKEN')
-                    : 'VTRU';
+                    ? (featuredNFT.paymentToken === ethers.ZeroAddress ? activeChain().symbol : 'TOKEN')
+                    : activeChain().symbol;
                 const tokenAmount = formatPrice(featuredNFT.pricePerUnit);
                 setFeaturedNFTPriceDisplay({
                     tokenAmount,
@@ -1474,7 +1472,7 @@ function MarketplacePage() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.8, delay: 0.6 }}
                     >
-                        Explore the most sought-after digital assets in the Vitruveo ecosystem
+                        Explore the most sought-after digital assets in the {activeChain().name} ecosystem
                     </motion.p>
                     <motion.div 
                         className="hero-cta"
@@ -1672,7 +1670,7 @@ function MarketplacePage() {
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <div className="text-center p-2 bg-accent/30 rounded-lg">
                                                         <div className="text-xs text-muted-foreground">{hasBid ? 'Highest Bid' : 'Start Price'}</div>
-                                                        <div className="font-bold text-neon-green">{formatPrice(price)} VTRU</div>
+                                                        <div className="font-bold text-neon-green">{formatPrice(price)} {activeChain().symbol}</div>
                                                     </div>
                                                     <div className="text-center p-2 bg-accent/30 rounded-lg">
                                                         <div className="text-xs text-muted-foreground">Ends In</div>
@@ -2173,7 +2171,7 @@ function MarketplacePage() {
                             </div>
 
                             <div className="filter-group">
-                                <h3>Price Range (VTRU)</h3>
+                                <h3>Price Range ({activeChain().symbol})</h3>
                                 <div className="price-inputs">
                                     <input
                                         type="number"
@@ -2324,7 +2322,7 @@ function MarketplacePage() {
                         Ready to list your NFTs?
                     </motion.h2>
                     <p className="text-lg text-muted-foreground mb-8 max-w-2xl mx-auto">
-                        Join creators and collectors in the vibrant Vitruveo marketplace
+                        Join creators and collectors in the vibrant {activeChain().name} marketplace
                     </p>
                     <div className="flex flex-wrap items-center justify-center gap-4">
                         {wallet ? (

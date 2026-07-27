@@ -31,12 +31,9 @@ export const MARKETPLACE_CONFIG = {
     // Fallback settings - Updated with working gateways  
     DEFAULT_NFT_PLACEHOLDER: 'https://picsum.photos/seed/default/300/300',
     IPFS_GATEWAYS: [
+        '/api/ipfs/ipfs/',
         'https://ipfs.io/ipfs/',              // Official gateway - most reliable
         'https://dweb.link/ipfs/',            // Protocol Labs gateway
-        'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
-        'https://w3s.link/ipfs/',             // Web3.Storage gateway
-        'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
-        'https://4everland.io/ipfs/',         // 4everland gateway
     ]
 };
 

@@ -11,6 +11,7 @@ import { formatPriceWithUSDC, convertToUSDCValue, getTokenDecimals } from '../ut
 import { batchLoadMetadata } from '../utils/metadataLoader';
 import { normalizeNFTMetadata } from '../utils/nftUtils';
 import { filterBlockedListings } from '../utils/compliance/blockedContracts';
+import { activeChain } from '../config/chains.js';
 import './CollectionPage.css';
 
 const ERC721_METADATA_ABI = [
@@ -538,9 +539,9 @@ export default function CollectionPage() {
                         className="filter-select"
                     >
                         <option value="all">All Prices</option>
-                        <option value="under1">Under 1 VTRU</option>
-                        <option value="1to10">1-10 VTRU</option>
-                        <option value="over10">Over 10 VTRU</option>
+                        <option value="under1">Under 1 {activeChain().symbol}</option>
+                        <option value="1to10">1-10 {activeChain().symbol}</option>
+                        <option value="over10">Over 10 {activeChain().symbol}</option>
                     </select>
                 </div>
             </div>

@@ -844,10 +844,7 @@ button:disabled {
   border: 1px solid var(--sell-border);
   box-shadow: 0 30px 60px rgba(0, 0, 0, 0.3),
               0 0 30px rgba(85, 51, 255, 0.2);
-  transform-style: preserve-3d;
-  perspective: 1000px;
-  transform: translateZ(0);
-  transition: all 0.5s cubic-bezier(0.165, 0.84, 0.44, 1);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .premium-preview:hover {
@@ -913,12 +910,11 @@ button:disabled {
   max-height: 100%;
   object-fit: contain;
   transition: all 0.5s cubic-bezier(0.165, 0.84, 0.44, 1);
-  transform: translateZ(0);
   filter: drop-shadow(0 10px 20px rgba(0, 0, 0, 0.3));
 }
 
 .premium-image-wrapper:hover .premium-image {
-  transform: scale(1.05) translateZ(30px);
+  transform: scale(1.025);
 }
 
 .image-overlay {
@@ -1554,47 +1550,7 @@ button:disabled {
     --noise-opacity: .035;
 }
 
-/* ---- 1) Gradient Border Glow (utility) --------------------------------- */
-.glow-card {
-    position: relative;
-    border-radius: 20px;
-    isolation: isolate; /* keep effects contained */
-}
-
-    .glow-card::before,
-    .glow-card::after {
-        content: "";
-        position: absolute;
-        inset: -1px; /* border thickness */
-        border-radius: inherit;
-        background: conic-gradient( from 0deg, var(--sell-primary), var(--sell-secondary), var(--sell-accent), var(--sell-primary) );
-        z-index: -1;
-        animation: glow-rotate 10s linear infinite;
-    }
-
-    .glow-card::after {
-        filter: blur(14px);
-        opacity: .35;
-    }
-
-@keyframes glow-rotate {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-/* Convert the conic fill into a thin border (modern mask technique) */
-@supports (-webkit-mask: none) or (mask: none) {
-    .glow-card::before {
-        padding: 1px; /* border width */
-        background-clip: padding-box;
-        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-        -webkit-mask-composite: xor;
-        mask-composite: exclude;
-    }
-}
-
-/* ---- 2) Ambient Film-Grain Noise (super subtle depth) ------------------ */
+/* ---- Ambient Film-Grain Noise (super subtle depth) --------------------- */
 /* Uses an inline SVG feTurbulence noise texture, blended softly. */
 .sell-container::after {
     content: "";
@@ -1613,7 +1569,7 @@ button:disabled {
     background-size: 280px 280px;
 }
 
-/* ---- 3) Cursor-Parallax Background (override base gradient) ------------- */
+/* ---- Stable Ambient Background (override base gradient) ----------------- */
 /* If you already set .sell-container::before earlier, this will override it. */
 /* It reacts to CSS vars --mx/--my (0..1). Without JS, fallbacks keep it pretty. */
 .sell-container::before {
@@ -1626,25 +1582,7 @@ button:disabled {
     transition: background-position 120ms ease-out;
 }
 
-/* ---- 4) Subtle 3D tilt (apply to cards/images you want) ----------------- */
-.tilt-3d {
-    transform-style: preserve-3d;
-    perspective: 1000px;
-    transition: transform .5s cubic-bezier(.165,.84,.44,1), box-shadow .5s;
-}
-
-    .tilt-3d:hover {
-        transform: rotateX(4deg) rotateY(-4deg) translateZ(0);
-        box-shadow: 0 30px 60px rgba(0,0,0,.35), 0 0 30px rgba(85,51,255,.25);
-    }
-
-@media (pointer: coarse) {
-    .tilt-3d:hover {
-        transform: none;
-    }
-}
-
-/* ---- 5) Sparkle sweep + magnetic hover for primary CTA ------------------ */
+/* ---- Sparkle sweep + magnetic hover for primary CTA -------------------- */
 .primary-button {
     position: relative;
     overflow: hidden;
@@ -1830,8 +1768,6 @@ button:disabled {
 
 /* ---- 12) Reduced Motion respect (keep motion tasteful) ----------------- */
 @media (prefers-reduced-motion: reduce) {
-    .glow-card::before,
-    .glow-card::after,
     .primary-button::after,
     .skeleton,
     .progress-fill {
@@ -1847,9 +1783,6 @@ button:disabled {
         transform: none !important;
     }
 
-    .tilt-3d:hover {
-        transform: none !important;
-    }
 }
 
 /* ===== NFT COLLECTION DROPDOWN STYLES ===== */
@@ -2348,4 +2281,3 @@ button:disabled {
         padding: 10px 14px;
     }
 }
-

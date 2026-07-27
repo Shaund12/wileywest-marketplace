@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { explorerAddress, activeChain } from '../config/chains.js';
 import { ethers } from 'ethers';
 import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
@@ -7,6 +8,7 @@ import { useSupabase } from '../context/SupabaseContext';
 import { fetchTokenPriceInUSDC, getTokenSymbol, formatTokenAmount, getTokenDecimals } from '../utils/tokenUtils';
 import { loadNFTMetadata as loadMetadata } from '../utils/metadataLoader';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { nftThumbnailUrl } from '../utils/mediaUrl';
 import './AuctionStyles.css';
 import './SellPage.css';
 
@@ -14,21 +16,15 @@ import './SellPage.css';
    IPFS/IPNS/Arweave + SmartMedia (self-contained utilities)
    ========================================================= */
 const IPFS_GATEWAYS = [
+    '/api/ipfs/ipfs/',
     'https://ipfs.io/ipfs/',              // Official gateway - most reliable
     'https://dweb.link/ipfs/',            // Protocol Labs gateway
-    'https://gateway.pinata.cloud/ipfs/', // Pinata gateway - good CORS support
-    'https://w3s.link/ipfs/',             // Web3.Storage gateway
-    'https://nftstorage.link/ipfs/',      // NFT.Storage gateway
-    'https://4everland.io/ipfs/',         // 4everland gateway
 ];
 
 const IPNS_GATEWAYS = [
+    '/api/ipfs/ipns/',
     'https://ipfs.io/ipns/',              // Official gateway - most reliable
     'https://dweb.link/ipns/',            // Protocol Labs gateway
-    'https://gateway.pinata.cloud/ipns/', // Pinata gateway - good CORS support
-    'https://w3s.link/ipns/',             // Web3.Storage gateway
-    'https://nftstorage.link/ipns/',      // NFT.Storage gateway
-    'https://4everland.io/ipns/',         // 4everland gateway
 ];
 
 const isString = (v) => typeof v === 'string' && v.trim().length > 0;
@@ -87,6 +83,7 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
         const tryNext = () => {
             if (i >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[i++];
+            const displayUrl = nftThumbnailUrl(test, 960);
             const img = new Image();
             const timer = setTimeout(() => {
                 img.onload = img.onerror = null;
@@ -94,13 +91,13 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
             }, timeoutMs);
             img.onload = () => {
                 clearTimeout(timer);
-                resolve(test);
+                resolve(displayUrl);
             };
             img.onerror = () => {
                 clearTimeout(timer);
                 tryNext();
             };
-            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+            img.src = displayUrl;
         };
         tryNext();
     });
@@ -463,7 +460,7 @@ function AuctionDetailPage() {
             const decimals = isNativeToken ? 18 : getTokenDecimals(auction.paymentToken);
             const bidAmountWei = ethers.parseUnits(bidAmount.toString(), decimals);
 
-            debugLog(`🔨 Placing bid for auction ${auctionId} with amount ${bidAmount} ${isNativeToken ? 'VTRU' : getTokenSymbol(auction.paymentToken)}`);
+            debugLog(`🔨 Placing bid for auction ${auctionId} with amount ${bidAmount} ${isNativeToken ? activeChain().symbol : getTokenSymbol(auction.paymentToken)}`);
             debugLog(`💰 Payment token: ${auction.paymentToken}, isNative: ${isNativeToken}`);
 
             // For ERC20 tokens, ensure approval before bidding
@@ -723,7 +720,7 @@ function AuctionDetailPage() {
                                         <div className="detail-row">
                                             <span className="detail-label">Contract</span>
                                             <span className="detail-value">
-                                                <a href={`https://explorer.vitruveo.xyz/address/${auction.nftContract}`} target="_blank" rel="noopener noreferrer">
+                                                <a href={explorerAddress(auction.nftContract)} target="_blank" rel="noopener noreferrer">
                                                     {`${auction.nftContract.slice(0, 6)}...${auction.nftContract.slice(-4)}`}
                                                 </a>
                                             </span>

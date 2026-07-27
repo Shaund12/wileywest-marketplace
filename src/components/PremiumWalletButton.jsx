@@ -10,6 +10,11 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar'
 import { cn } from '../lib/utils'
 import blockies from 'ethereum-blockies-base64'
 import { Link } from 'react-router-dom'
+import { activeChain, CHAINS, explorerAddress, chainHasFeature } from '../config/chains.js'
+
+const ACTIVE_CHAIN = activeChain()
+const ACTIVE_CHAIN_NAME = ACTIVE_CHAIN.name
+const SHOW_VITRUVEO_TOKENS = chainHasFeature('wvtru')
 
 // Shorten address utility
 function shortenAddress(address) {
@@ -49,7 +54,9 @@ function TokenBalance({ symbol, balance, icon = '🪙', className = '' }) {
 
 export function PremiumWalletButton() {
   const { open } = useAppKit()
-  const { address, isConnected, isConnecting, disconnect, isCorrectNetwork, switchToVitruveo } = usePremiumWallet()
+  const { address, isConnected, isConnecting, disconnect, isCorrectNetwork, switchToVitruveo, chainId } = usePremiumWallet()
+  // Name of the chain the wallet is actually on (Hyve/Vitruveo), else the active one.
+  const connectedChainName = (CHAINS[chainId]?.name) || ACTIVE_CHAIN_NAME
   const { balances, isLoading: balancesLoading, totalUsdcValue, refetch: refetchBalances } = useTokenBalances()
   const [copied, setCopied] = useState(false)
 
@@ -70,7 +77,7 @@ export function PremiumWalletButton() {
 
   const handleViewOnExplorer = () => {
     if (address) {
-      window.open(`https://explorer.vitruveo.xyz/address/${address}`, '_blank')
+      window.open(explorerAddress(address), '_blank')
     }
   }
 
@@ -113,7 +120,7 @@ export function PremiumWalletButton() {
           size="sm"
           className="text-xs"
         >
-          Switch to Vitruveo
+          Switch to {ACTIVE_CHAIN_NAME}
         </Button>
       )}
 
@@ -173,7 +180,7 @@ export function PremiumWalletButton() {
                   "text-xs mt-1",
                   isCorrectNetwork ? "text-neon-green" : "text-neon-pink"
                 )}>
-                  {isCorrectNetwork ? "Connected to Vitruveo" : "Wrong Network"}
+                  {isCorrectNetwork ? `Connected to ${connectedChainName}` : "Wrong Network"}
                 </p>
               </div>
             </div>
@@ -203,20 +210,24 @@ export function PremiumWalletButton() {
               
               <div className="space-y-1">
                 <TokenBalance 
-                  symbol="VTRU" 
+                  symbol={ACTIVE_CHAIN.symbol}
                   balance={balances.vtru} 
                   icon="⚡" 
                 />
-                <TokenBalance 
-                  symbol="USDC" 
-                  balance={balances.usdc} 
-                  icon="💵" 
-                />
-                <TokenBalance 
-                  symbol="wVTRU" 
-                  balance={balances.wvtru} 
-                  icon="🔄" 
-                />
+                {SHOW_VITRUVEO_TOKENS && (
+                  <>
+                    <TokenBalance
+                      symbol="USDC"
+                      balance={balances.usdc}
+                      icon="💵"
+                    />
+                    <TokenBalance
+                      symbol="wVTRU"
+                      balance={balances.wvtru}
+                      icon="🔄"
+                    />
+                  </>
+                )}
               </div>
               
               {/* Total Portfolio Value */}
@@ -269,7 +280,7 @@ export function PremiumWalletButton() {
                 className="flex items-center space-x-2 cursor-pointer text-neon-pink"
               >
                 <div className="h-4 w-4 rounded-full bg-neon-pink" />
-                <span>Switch to Vitruveo</span>
+                <span>Switch to {ACTIVE_CHAIN_NAME}</span>
               </DropdownMenuItem>
             )}
           </div>

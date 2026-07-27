@@ -1,6 +1,7 @@
 // utils/tokenUtils.js
 import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from './debugUtils';
+import { activeChain } from '../config/chains.js';
 
 /* ================================
    Minimal ABIs
@@ -30,12 +31,8 @@ export const USDC_POL_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
 // Wrapped VTRU (for pricing native VTRU)
 export const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
 
-// Other ERC20s you support
-export const VUSD_ADDRESS = '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA';
-export const SEVO_ADDRESS = '0x2A34059DF3D60B1864f10F10492746bd26d3D24a';
-export const WSEVO_ADDRESS = '0x43a36604B6Ad9A4cf8EF600241E90b3DD97E145d';
-export const VITEX_ADDRESS = '0x4Ed92A1d95d2092973007197794542A5D51FF5a6';
-export const VTRO_ADDRESS = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
+// (Legacy Vitruveo ERC20s — VUSD/SEVO/wSEVO/VITEX/VTRO — died in the chain
+// redo and were removed. The marketplace is native-token only now.)
 
 /* ================================
    Uniswap V3 on Vitruveo
@@ -65,9 +62,9 @@ const isUSDCishSymbol = (sym) =>
    Token metadata
 =================================== */
 export async function fetchTokenDetails(tokenAddress, provider) {
-    // Native VTRU (zero address or falsy)
+    // Native token (zero address or falsy)
     if (!tokenAddress || tokenAddress === ethers.ZeroAddress || !isHexAddress(tokenAddress)) {
-        return { symbol: 'VTRU', decimals: 18 };
+        return { symbol: activeChain().symbol, decimals: 18 };
     }
 
     const addr = tokenAddress.toLowerCase();
@@ -89,21 +86,16 @@ export async function fetchTokenDetails(tokenAddress, provider) {
 }
 
 export function getTokenSymbol(tokenAddress) {
-    // native
-    if (!tokenAddress || tokenAddress === ethers.ZeroAddress) return 'VTRU';
+    // native → the active chain's symbol (VTRU on Vitruveo, HYVE on Hyve)
+    if (!tokenAddress || tokenAddress === ethers.ZeroAddress) return activeChain().symbol;
 
     // If not an address, assume it's a symbol
     if (!isHexAddress(tokenAddress)) return tokenAddress;
 
     const addr = tokenAddress.toLowerCase();
-    if (addr === ethers.ZeroAddress.toLowerCase()) return 'VTRU';
+    if (addr === ethers.ZeroAddress.toLowerCase()) return activeChain().symbol;
     if (addr === USDC_POL_ADDRESS.toLowerCase()) return 'USDC.pol';
     if (addr === WVTRU_ADDRESS.toLowerCase()) return 'WVTRU';
-    if (addr === VUSD_ADDRESS.toLowerCase()) return 'VUSD';
-    if (addr === SEVO_ADDRESS.toLowerCase()) return 'SEVO';
-    if (addr === WSEVO_ADDRESS.toLowerCase()) return 'WSEVO';
-    if (addr === VITEX_ADDRESS.toLowerCase()) return 'VITEX';
-    if (addr === VTRO_ADDRESS.toLowerCase()) return 'VTRO';
 
     if (tokenDetailsCache[addr]?.symbol) return tokenDetailsCache[addr].symbol;
     return 'TOKEN';
@@ -118,11 +110,6 @@ export function getTokenDecimals(tokenAddress) {
         if (addr === ethers.ZeroAddress.toLowerCase()) return 18;
         if (addr === USDC_POL_ADDRESS.toLowerCase()) return 6;
         if (addr === WVTRU_ADDRESS.toLowerCase()) return 18;
-        if (addr === VUSD_ADDRESS.toLowerCase()) return 6;
-        if (addr === SEVO_ADDRESS.toLowerCase()) return 18;
-        if (addr === WSEVO_ADDRESS.toLowerCase()) return 18;
-        if (addr === VITEX_ADDRESS.toLowerCase()) return 18;
-        if (addr === VTRO_ADDRESS.toLowerCase()) return 18;
         if (tokenDetailsCache[addr]?.decimals !== undefined) {
             return tokenDetailsCache[addr].decimals;
         }
@@ -256,21 +243,30 @@ async function getUniswapPool(tokenA, tokenB, provider) {
 }
 
 /* ================================
-   Pricing in USDC
+   Pricing in USD
+   The old Uniswap WVTRU/USDC pool died when Vitruveo was redone, so
+   pricing now comes from the live DexScreener market feed:
+     • VTRU (Vitruveo native / WVTRU) → live price from the BSC pair
+     • HYVE (Hyve native)            → provisional launch rate from the
+                                        chain registry (not listed yet)
+   Signature is unchanged (provider arg kept but unused) so no callers
+   need editing.
 =================================== */
-export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
+async function fetchLiveVtruUsd() {
+    const res = await fetch('https://api.dexscreener.com/latest/dex/search?q=VTRU');
+    const data = await res.json();
+    const pair = (data.pairs || []).find(p => p.chainId === 'bsc' && p.priceUsd);
+    if (!pair) throw new Error('No live VTRU pair found on DexScreener');
+    return Number(pair.priceUsd);
+}
+
+export async function fetchTokenPriceInUSDC(tokenAddress, _provider) {
     const now = Date.now();
-    
-    // Validate token address first
+
     if (!tokenAddress || tokenAddress === 'undefined' || tokenAddress === 'null') {
-        throw new Error(`No USDC pool for token ${tokenAddress}`);
+        throw new Error(`No price source for token ${tokenAddress}`);
     }
-    
-    // Validate token address first
-    if (!tokenAddress || tokenAddress === 'undefined' || tokenAddress === 'null') {
-        throw new Error(`No USDC pool for token ${tokenAddress}`);
-    }
-    
+
     const normalized = String(tokenAddress).toLowerCase();
 
     if (priceCache[normalized] && (now - priceCache[normalized].timestamp) < PRICE_CACHE_DURATION) {
@@ -285,38 +281,24 @@ export async function fetchTokenPriceInUSDC(tokenAddress, provider) {
             return price;
         }
 
-        // For native VTRU, price WVTRU against USDC
-        const actualToken =
-            normalized === ethers.ZeroAddress.toLowerCase()
-                ? WVTRU_ADDRESS
-                : tokenAddress;
+        const isNative = normalized === ethers.ZeroAddress.toLowerCase();
+        const isWvtru = normalized === WVTRU_ADDRESS.toLowerCase();
+        if (!isNative && !isWvtru) {
+            throw new Error(`No price source for token ${tokenAddress}`);
+        }
 
-        const { poolAddress } = await getUniswapPool(actualToken, USDC_POL_ADDRESS, provider);
-        if (!poolAddress) throw new Error(`No USDC pool for token ${tokenAddress}`);
-
-        const pool = new ethers.Contract(poolAddress, UNISWAP_V3_POOL_ABI, provider);
-        const [token0, token1, slot0] = await Promise.all([
-            pool.token0(),
-            pool.token1(),
-            pool.slot0()
-        ]);
-
-        const [t0, t1] = await Promise.all([
-            fetchTokenDetails(token0, provider),
-            fetchTokenDetails(token1, provider)
-        ]);
-
-        // Price math using tick
-        const tickNum = Number(slot0.tick);
-        const price1Per0 = Math.pow(1.0001, tickNum) * Math.pow(10, t0.decimals - t1.decimals);
-
+        const chain = activeChain();
         let priceInUSDC;
-        if (actualToken.toLowerCase() === token0.toLowerCase()) {
-            // 1 token0 = price1Per0 token1(USDC)
-            priceInUSDC = price1Per0;
+        if (isWvtru || chain.key === 'vitruveo') {
+            // VTRU: live market price, registry rate as fallback
+            try {
+                priceInUSDC = await fetchLiveVtruUsd();
+            } catch {
+                priceInUSDC = chain.key === 'vitruveo' ? chain.usdRate : 0.0036;
+            }
         } else {
-            // 1 token1 = 1/price1Per0 token0(USDC)
-            priceInUSDC = 1 / price1Per0;
+            // HYVE (or any chain without a live listing): provisional rate
+            priceInUSDC = chain.usdRate;
         }
 
         priceCache[normalized] = { price: priceInUSDC, timestamp: now };
@@ -421,11 +403,6 @@ const TokenUtils = {
     ERC20_ABI,
     USDC_POL_ADDRESS,
     WVTRU_ADDRESS,
-    VUSD_ADDRESS,
-    SEVO_ADDRESS,
-    WSEVO_ADDRESS,
-    VITEX_ADDRESS,
-    VTRO_ADDRESS,
     UNISWAP_V3_FACTORY_ADDRESS,
     fetchTokenDetails,
     getTokenSymbol,

@@ -7,6 +7,7 @@ import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { getTokenDecimals } from '../utils/tokenUtils';
 import MarketplaceStats from '../components/MarketplaceStats';
 import { motion } from 'framer-motion';
+import { explorerTx } from '../config/chains.js';
 
 function VibeDashboardPage() {
     const { provider } = useWallet();
@@ -602,7 +603,7 @@ function VibeDashboardPage() {
                                             <span className="text-indigo-300">
                                                 {event.hash ? (
                                                     <a
-                                                        href={`https://explorer.vitruveo.xyz/tx/${event.hash}`}
+                                                        href={explorerTx(event.hash)}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
                                                         className="hover:underline"

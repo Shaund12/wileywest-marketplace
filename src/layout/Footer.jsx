@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useCallback } from 'react';
+﻿import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import CacheStats from '../components/CacheStats';
 import HolidayThemeSelector from '../components/HolidayThemeSelector';
@@ -6,14 +6,16 @@ import { useWallet } from '../context/WalletContext';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useSupabase } from '../context/SupabaseContext';
 import { useHolidayTheme } from '../context/HolidayThemeContext';
+import { useTheme } from '../context/ThemeContext';
 import { FLAGS } from '../utils/compliance/featureFlags';
+import { activeChain } from '../config/chains.js';
 import logo from '../assets/blockdust-logo.png';
 
-/* ====== config (env-friendly, with sane fallbacks) ====== */
-const EXPLORER_URL = import.meta.env.VITE_BLOCK_EXPLORER_URL || 'https://explorer.vitruveo.xyz';
-const CHAIN_NAME = import.meta.env.VITE_CHAIN_NAME || 'Vitruveo';
-const RAW_CHAIN_ID = (import.meta.env.VITE_CHAIN_ID || '0x5d2').toLowerCase(); // 1490
-const NEWSLETTER_ENDPOINT = import.meta.env.VITE_NEWSLETTER_ENDPOINT || '';     // optional
+/* ====== config (from the active chain in the multichain registry) ====== */
+const _chain = activeChain();
+const EXPLORER_URL = _chain.explorer;
+const CHAIN_NAME = _chain.name;
+const RAW_CHAIN_ID = '0x' + _chain.id.toString(16); // active chain id as hex
 
 /* ====== tiny helpers ====== */
 const toDec = (id) => {
@@ -47,11 +49,7 @@ export default function Footer() {
     const { isConnected: supaUp, cacheStats } = useSupabase();
     const { holidayTheme, getHolidayConfig } = useHolidayTheme();
 
-    const [theme, setTheme] = useState(
-        (localStorage.getItem('theme') || document.documentElement.dataset.theme || 'dark')
-    );
-    const [email, setEmail] = useState('');
-    const [nlState, setNlState] = useState({ status: 'idle', message: '' });
+    const { theme, toggleTheme } = useTheme();
 
     const totalListings = listings?.length || 0;
     const vol24h = marketplaceStats?.volume24h ?? null;
@@ -61,44 +59,6 @@ export default function Footer() {
         const got = toDec(liveChainId);
         return want && got && want === got;
     }, [liveChainId]);
-
-    /* theme toggle */
-    useEffect(() => {
-        document.documentElement.dataset.theme = theme;
-        localStorage.setItem('theme', theme);
-    }, [theme]);
-
-    const toggleTheme = useCallback(() => {
-        setTheme((t) => (t === 'dark' ? 'light' : 'dark'));
-    }, []);
-
-    /* newsletter submit */
-    const onNewsletterSubmit = async (e) => {
-        e.preventDefault();
-        if (!email || !/.+@.+\..+/.test(email)) {
-            setNlState({ status: 'error', message: 'Enter a valid email.' });
-            return;
-        }
-        try {
-            setNlState({ status: 'loading', message: 'Subscribing…' });
-            if (NEWSLETTER_ENDPOINT) {
-                const res = await fetch(NEWSLETTER_ENDPOINT, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email }),
-                });
-                if (!res.ok) throw new Error('Subscription failed');
-                setNlState({ status: 'done', message: 'Subscribed! Check your inbox.' });
-                setEmail('');
-            } else {
-                // no backend → graceful fallback
-                window.location.href = `mailto:support@blockdust.xyz?subject=Subscribe%20me&body=${encodeURIComponent(email)}`;
-                setNlState({ status: 'done', message: 'Opening your mail app…' });
-            }
-        } catch (err) {
-            setNlState({ status: 'error', message: 'Could not subscribe. Try again.' });
-        }
-    };
 
     const scrollTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
 
@@ -149,7 +109,7 @@ export default function Footer() {
                         </div>
                         <div className="bd-stat">
                             <span className="bd-stat__label">Cache</span>
-                            <span className={`bd-stat__value ${supaUp ? 'ok' : 'warn'}`} title="Supabase cache status">
+                            <span className={`bd-stat__value ${supaUp ? 'ok' : 'warn'}`} title="BlockDust API cache status">
                                 {supaUp ? 'online' : 'offline'}
                             </span>
                         </div>
@@ -159,7 +119,7 @@ export default function Footer() {
                         <button className="bd-btn bd-btn--ghost" onClick={toggleTheme} aria-pressed={theme === 'dark'}>
                             {theme === 'dark' ? '🌙 Dark' : '☀️ Light'}
                         </button>
-                        <div style={{ marginTop: '8px' }}>
+                        <div className="bd-holiday-theme">
                             <HolidayThemeSelector />
                         </div>
                     </div>
@@ -175,7 +135,6 @@ export default function Footer() {
                     <details className="bd-col" open>
                         <summary><h4>Marketplace</h4></summary>
                         <Link to="/marketplace">All NFTs</Link>
-                        <Link to="/hot-listings">Hot Listings</Link>
                         <Link to="/sell">Sell NFT</Link>
                     </details>
 
@@ -188,8 +147,8 @@ export default function Footer() {
 
                     <details className="bd-col" open>
                         <summary><h4>Resources</h4></summary>
-                        <a href={EXPLORER_URL} target="_blank" rel="noopener noreferrer">Vitruveo Explorer <ExternalIcon /></a>
-                        <a href="https://status.supabase.com" target="_blank" rel="noopener noreferrer">Supabase Status <ExternalIcon /></a>
+                        <a href={EXPLORER_URL} target="_blank" rel="noopener noreferrer">{CHAIN_NAME} Explorer <ExternalIcon /></a>
+                        <a href="/api/health" target="_blank" rel="noopener noreferrer">BlockDust API Status <ExternalIcon /></a>
                     </details>
 
                     <details className="bd-col" open>

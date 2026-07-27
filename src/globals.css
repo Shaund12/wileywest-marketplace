@@ -4,6 +4,7 @@
 
 @layer base {
   :root {
+    color-scheme: dark;
     --background: 223 6% 4%;
     --foreground: 244 10% 90%;
     --card: 223 6% 8%;
@@ -37,6 +38,33 @@
     --cyber-blue: #16213e;
   }
 
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --background: 225 33% 97%;
+    --foreground: 229 28% 13%;
+    --card: 0 0% 100%;
+    --card-foreground: 229 28% 13%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 229 28% 13%;
+    --primary: 262 72% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 346 76% 48%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 226 24% 92%;
+    --muted-foreground: 228 14% 40%;
+    --accent: 262 72% 50%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 46%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 226 20% 83%;
+    --input: 226 20% 83%;
+    --ring: 262 72% 50%;
+    --cyber-dark: #e8ebf4;
+    --cyber-darker: #f4f6fb;
+    --cyber-gray: #dce1ed;
+    --cyber-blue: #d8e1f2;
+  }
+
   * {
     border-color: hsl(var(--border));
   }
@@ -49,6 +77,8 @@
     background: linear-gradient(135deg, hsl(var(--background)), hsl(var(--card)), hsl(var(--background)));
     background-size: 200% 200%;
     animation: subtleGradient 20s ease infinite;
+    min-width: 320px;
+    min-height: 100vh;
   }
 
   @keyframes subtleGradient {

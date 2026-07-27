@@ -19,25 +19,21 @@ import { showToast } from '../components/ui/toast';
 import { cn } from '../lib/utils';
 import VtruMarketplaceArtifact from '../abi/VTRUNFTMarketplace.json';
 import './HomePage.css';
+import { activeChain } from '../config/chains.js';
+import { nftThumbnailUrl } from '../utils/mediaUrl';
 
 /* =========================
    EXACT SmartImage used by Marketplace (inlined here)
    ========================= */
 const IPFS_GATEWAYS = [
+    '/api/ipfs/ipfs/',
     'https://ipfs.io/ipfs/',
     'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/',
-    'https://4everland.io/ipfs/',
 ];
 const IPNS_GATEWAYS = [
+    '/api/ipfs/ipns/',
     'https://ipfs.io/ipns/',
     'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/',
-    'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/',
-    'https://4everland.io/ipns/',
 ];
 const smartImageCache = new Map();
 const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
@@ -59,7 +55,7 @@ function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '
     const hue2 = (hue + 180) % 360;
     const gradId = `g${(h % 1e9).toString(36)}`;
     const blobs = (h % 7) + 3;
-    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
+    const label = title ? title.slice(0, 22) : `${activeChain().name} NFT`;
     const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
   <defs>
@@ -133,11 +129,12 @@ function findFirstWorkingImage(candidates, timeoutMs = 6000) {
             if (settled) return;
             if (idx >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[idx++];
+            const displayUrl = nftThumbnailUrl(test, 400);
             const img = new Image();
             const timer = setTimeout(() => { img.onload = img.onerror = null; tryNext(); }, timeoutMs);
-            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(test); };
+            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(displayUrl); };
             img.onerror = () => { clearTimeout(timer); tryNext(); };
-            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+            img.src = displayUrl;
         };
         tryNext();
     });
@@ -1012,7 +1009,7 @@ function HomePage() {
                             animate={{ opacity: 1 }}
                             transition={{ delay: 0.6, duration: 0.6 }}
                         >
-                            BlockDust is a fast, gas-light NFT marketplace on Vitruveo. Discover rare mints,
+                            BlockDust is a fast, gas-light NFT marketplace on {activeChain().name}. Discover rare mints,
                             support creators, and flip collectibles—safely and in style.
                         </motion.p>
 
@@ -1146,8 +1143,8 @@ function HomePage() {
                     >
                         Featured Listings
                     </motion.h2>
-                    <Link 
-                        to="/hot-listings" 
+                    <Link
+                        to="/marketplace"
                         className="group flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-all duration-200 hover:bg-accent/50 rounded-lg"
                     >
                         View all 
@@ -1255,7 +1252,7 @@ function HomePage() {
                                                         {hasBid ? 'Highest Bid' : 'Starting Bid'}
                                                     </p>
                                                     <p className="font-semibold text-neon-green">
-                                                        {fmtToken(parseFloat(ethers.formatEther(price)))} VTRU
+                                                        {fmtToken(parseFloat(ethers.formatEther(price)))} {activeChain().symbol}
                                                     </p>
                                                 </div>
                                                 <div className="text-right space-y-1">
@@ -1513,7 +1510,7 @@ function HomePage() {
                     <div className="hp-step">
                         <div className="hp-step__num">1</div>
                         <h3>Connect Wallet</h3>
-                        <p>Link MetaMask (Vitruveo 1490 / 0x5d2) or a compatible wallet.</p>
+                        <p>Link MetaMask to {activeChain().name} ({activeChain().id}) or use a compatible wallet.</p>
                     </div>
                     <div className="hp-step">
                         <div className="hp-step__num">2</div>

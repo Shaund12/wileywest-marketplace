@@ -1,10 +1,21 @@
 /**
- * Feature flags and safety utilities for auction functionality
+ * Feature flags and safety utilities.
+ *
+ * Config is now multichain: it resolves from the active chain in the
+ * chain registry (src/config/chains.js) instead of single VITE_* vars.
+ * Legacy VITE_* env vars are still honored as fallbacks inside the
+ * registry, so an existing .env keeps working for Vitruveo.
  */
+import {
+    activeChain,
+    getActiveChainId,
+    chainHasFeature,
+    chainAddress,
+} from '../config/chains.js';
 
-// Auctions are permanently enabled
+// Auctions are enabled per-chain (declared in the chain registry).
 export function isAuctionsEnabled() {
-    return true;
+    return chainHasFeature('auctions');
 }
 
 // Get wallet allowlist for auction creation/settlement
@@ -51,16 +62,33 @@ export function canPerformAuctionAction(walletAddress, action = 'create') {
     return false;
 }
 
-// Get configuration from environment
+// Get configuration for the ACTIVE chain (from the chain registry).
+// Return shape is kept identical to the previous single-chain version so
+// existing callers (config.marketplaceAddress, config.wvtruAddress, …)
+// keep working — the values just come from the active chain now.
 export function getConfig() {
+    const c = activeChain();
     return {
-        chainId: parseInt(import.meta.env.VITE_CHAIN_ID || '1490'),
-        rpcUrl: import.meta.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz',
-        marketplaceAddress: import.meta.env.VITE_MARKETPLACE_ADDRESS,
-        wvtruAddress: import.meta.env.VITE_WVTRU_ADDRESS,
-        vibeSinkAddress: import.meta.env.VITE_VIBE_SINK_ADDRESS,
-        uniswapRouterAddress: import.meta.env.VITE_UNIV3_ROUTER_ADDRESS,
-        uniswapFactoryAddress: import.meta.env.VITE_UNIV3_FACTORY_ADDRESS,
+        chainId: c.id,
+        chainKey: c.key,
+        chainName: c.name,
+        nativeSymbol: c.symbol,
+        rpcUrl: c.rpcUrl,
+        explorer: c.explorer,
+        marketplaceAddress: c.marketplaceAddress,
+        // Vitruveo-only addresses ('' on chains that don't have them).
+        wvtruAddress: chainAddress('wvtru'),
+        usdcAddress: chainAddress('usdc'),
+        vibeSinkAddress: chainAddress('vibeSink'),
+        uniswapRouterAddress: chainAddress('uniswapRouter'),
+        uniswapFactoryAddress: chainAddress('uniswapFactory'),
+        revShareNftAddress: chainAddress('revShareNft'),
+        revShareTreasuryAddress: chainAddress('revShareTreasury'),
+        // Per-chain feature switches for the UI to gate on.
+        features: c.features,
         featureFlags: getFeatureFlags(),
     };
 }
+
+// Convenience re-exports so components can gate on features/chain directly.
+export { getActiveChainId, chainHasFeature, chainAddress, activeChain };

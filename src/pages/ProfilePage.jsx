@@ -12,6 +12,8 @@ import EdgeCacheMonitor from '../components/EdgeCacheMonitor';
 import { isAuctionsEnabled } from '../utils/featureFlags';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { formatTokenAmount, getTokenSymbol } from '../utils/tokenUtils';
+import { activeChain, explorerAddress, explorerToken } from '../config/chains.js';
+import { nftThumbnailUrl } from '../utils/mediaUrl';
 import { NFTScanner } from '../utils/nftScanner';
 import { verifyNFTOwnership, filterOwnedNFTs } from '../utils/nftOwnershipUtils';
 import { loadNFTMetadata, batchLoadMetadata } from '../utils/metadataLoader';
@@ -19,6 +21,8 @@ import { getCachedMetadata, getProxyImageUrl, batchPrewarm } from '../utils/edge
 import { VSHARE_ADDRESS, vShareLpSvgDataUrl, vShareDefaultDescription, isVShareContract, getVShareMetadata } from '../utils/vShareUtils';
 import { generateFallbackImage } from '../utils/nftUtils';
 import { filterBlockedNFTs } from '../utils/compliance/blockedContracts';
+
+const ACTIVE_CHAIN = activeChain();
 
 // Standard ERC721 and ERC1155 minimal ABIs
 const ERC721_ABI = [
@@ -58,12 +62,9 @@ const KNOWN_NFT_CONTRACTS = [
 
 // Multiple IPFS gateways to try for better reliability (ordered by reliability)
 const IPFS_GATEWAYS = [
-    'https://gateway.pinata.cloud/ipfs/',
+    '/api/ipfs/ipfs/',
     'https://dweb.link/ipfs/',
     'https://ipfs.io/ipfs/',
-    'https://cloudflare-ipfs.com/ipfs/',
-    'https://gateway.ipfs.io/ipfs/',
-    'https://ipfs.fleek.co/ipfs/',
 ];
 
 // SmartMedia utilities for auction display
@@ -109,6 +110,7 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
         const tryNext = () => {
             if (i >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[i++];
+            const displayUrl = nftThumbnailUrl(test, 400);
             const img = new Image();
             const timer = setTimeout(() => {
                 img.onload = img.onerror = null;
@@ -116,13 +118,13 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
             }, timeoutMs);
             img.onload = () => {
                 clearTimeout(timer);
-                resolve(test);
+                resolve(displayUrl);
             };
             img.onerror = () => {
                 clearTimeout(timer);
                 tryNext();
             };
-            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+            img.src = displayUrl;
         };
         tryNext();
     });
@@ -240,6 +242,7 @@ function SmartMedia({ srcList = [], alt = '', width = 200, height = 200, seed = 
             width={width}
             height={height}
             loading="lazy"
+            decoding="async"
             onError={() => setFailed(true)}
             style={{ display: 'block', borderRadius: 8, maxWidth: '100%', objectFit: 'cover' }}
         />
@@ -1814,8 +1817,10 @@ function ProfilePage() {
                     },
                     body: JSON.stringify({ 
                         walletAddress: wallet,
+                        chainId: ACTIVE_CHAIN.id,
                         immediate: true,
-                        scanFromGenesis: scanFromGenesis // Pass the genesis flag to backend
+                        scanFromGenesis,
+                        fullRescan: scanFromGenesis,
                     })
                 });
                 
@@ -1927,7 +1932,7 @@ function ProfilePage() {
                 if (foundNfts.length > 0) {
                     // Verify ownership of all NFTs to ensure they weren't sold
                     setStatus(`🔍 Verifying ownership of ${foundNfts.length} NFTs...`);
-                    const ownedNfts = await filterOwnedNFTs(foundNfts, wallet, provider, setStatus);
+                    const ownedNfts = await filterOwnedNFTs(foundNfts, wallet, scanner.provider, setStatus);
                     
                     // PRODUCTION: Enhanced deduplication to prevent duplicate NFTs
                     const nftMap = new Map();
@@ -4064,7 +4069,7 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {}, transferNft, bur
                                     <div className="detail-label">Contract Address</div>
                                     <div className="detail-value address">
                                         <a
-                                            href={`https://explorer.vitruveo.xyz/address/${nft.contractAddress}`}
+                                            href={explorerAddress(nft.contractAddress)}
 
                                             target="_blank"
                                             rel="noopener noreferrer"
@@ -4090,7 +4095,7 @@ function NftDetailView({ nft, metadata = {}, contractInfo = {}, transferNft, bur
                                 <div className="blockchain-actions">
                                     <button
                                         className="secondary-button"
-                                        onClick={() => window.open(`https://explorer.vitruveo.xyz/token/${nft.contractAddress}?a=${nft.tokenId}`, '_blank')}
+                                        onClick={() => window.open(explorerToken(nft.contractAddress, nft.tokenId), '_blank')}
                                     >
                                         View on Explorer
                                     </button>

@@ -36,7 +36,7 @@
 - **Build Optimization** - Vite with advanced chunking and tree shaking
 - **Security** - Safe contract interactions with approval workflows
 - **Network Resilience** - Fallback mechanisms for network issues
-- **Data Persistence** - LocalStorage backup when Supabase unavailable
+- **Data Persistence** - LocalStorage backup when the backend is unavailable
 
 ## 🎯 Production Deployment Ready
 
@@ -55,7 +55,7 @@
 
 ### Performance Optimized
 - Bundle size reduced from 731KB to optimized chunks:
-  - Vendor chunks separated (React, Ethers, Supabase)
+  - Vendor chunks separated (React, Ethers)
   - Feature-based code splitting (Auction system, Utils)
   - Largest chunk: 269KB (ethers.js) - reasonable for blockchain app
   - Main app chunk: 36KB with smart lazy loading

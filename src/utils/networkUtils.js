@@ -103,10 +103,8 @@ export const fetchJSON = async (url, options = {}, fallbackUrls = []) => {
  */
 export const createIPFSFallbacks = (ipfsHash) => {
     const gateways = [
-        'https://cloudflare-ipfs.com/ipfs/',
+        '/api/ipfs/ipfs/',
         'https://ipfs.io/ipfs/',
-        'https://gateway.pinata.cloud/ipfs/',
-        'https://ipfs.fleek.co/ipfs/',
         'https://dweb.link/ipfs/'
     ];
     

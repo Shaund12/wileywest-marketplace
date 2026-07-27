@@ -1,5 +1,13 @@
 # Day-1 Compliance Bundle - Implementation Summary
 
+> **⚠️ Historical document.** This describes the compliance bundle as it was
+> merged, when the app ran on Supabase. The backend has since migrated to
+> self-hosted PostgreSQL: the schema now lives in `backend/db/schema.sql`,
+> there is no Supabase SQL Editor, and RLS has been replaced by the server-side
+> allowlist in `backend/routes/db.js`. The **feature descriptions and flags
+> below remain accurate**; the database setup steps do not. See
+> [backend/SETUP.md](backend/SETUP.md) and [docs/compliance.md](docs/compliance.md).
+
 ## ✅ Status: COMPLETE & READY FOR MERGE
 
 This PR successfully implements a comprehensive compliance system for BlockDust marketplace with **zero-downtime** deployment and **full backwards compatibility**.
@@ -11,7 +19,7 @@ This PR successfully implements a comprehensive compliance system for BlockDust 
 1. **DMCA Takedown System** (`VITE_FLAG_DMCA`)
    - Public form for copyright holders to report infringement
    - Admin interface to review and action takedowns
-   - Supabase backend with RLS policies
+   - Server-side allowlist + RPC (originally Supabase RLS)
    - Routes: `/legal/dmca`, `/admin/dmca`
 
 2. **WISP Documentation** (`VITE_FLAG_WISP`)
@@ -22,7 +30,7 @@ This PR successfully implements a comprehensive compliance system for BlockDust 
 
 3. **Sanctions Screening** (`VITE_FLAG_SANCTIONS`)
    - OFAC compliance screening system
-   - LocalList provider (Supabase-backed)
+   - LocalList provider (database-backed)
    - Modal warning for blocked addresses
    - Audit trail in `sanctions_logs` table
    - Routes: `/legal/sanctions`
@@ -86,18 +94,22 @@ npm run build  # ✅ Verified: 37.9s build time
 
 ### Step 2: Apply Database Schema
 
-In Supabase SQL Editor:
-```sql
--- Copy and paste contents of:
-supabase-compliance-schema.sql
+**Current procedure** (superseding the Supabase steps this doc originally described):
 
--- This creates (all additive, no ALTER/DROP):
--- 7 tables: dmca_takedowns, legal_docs, sanctions_blocklist, 
---           sanctions_logs, compliance_settings, nft_tax_profile, admin_users
--- 1 materialized view: ma_gmv_trailing_365
--- 3 RPC functions: rpc_dmca_create, rpc_check_sanctions, refresh_ma_gmv
--- RLS policies for all tables
+```bash
+cd backend && npm run schema     # psql "$DATABASE_URL" -f db/schema.sql
 ```
+
+`backend/db/schema.sql` creates the compliance tables actually in use —
+`dmca_takedowns`, `sanctions_blocklist`, `sanctions_logs`,
+`nft_contract_blocklist`, `nft_contract_logs`, `compliance_settings` — plus
+the RPCs `rpc_dmca_create`, `rpc_check_sanctions`, and `rpc_check_nft_contract`.
+
+Note that `legal_docs`, `nft_tax_profile`, `admin_users`, and the
+`ma_gmv_trailing_365` view from the original Supabase schema were **not**
+ported. Queries against them are handled by the `SOFT_MISSING` set in
+`backend/routes/db.js`, which returns an empty result so the pages degrade
+gracefully. The archived original is in `docs/legacy/`.
 
 ### Step 3: Enable Features Gradually
 
@@ -319,7 +331,7 @@ Redeploy. All compliance features disappear immediately.
 
 1. **Merge PR** to main branch
 2. **Deploy** to production (flags OFF)
-3. **Apply** database schema in Supabase
+3. **Apply** database schema (`cd backend && npm run schema`)
 4. **Test** on staging with flags ON
 5. **Enable** WISP first (lowest risk)
 6. **Monitor** metrics after each flag enable

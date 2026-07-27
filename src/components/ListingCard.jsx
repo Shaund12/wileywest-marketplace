@@ -3,29 +3,25 @@ import { Link } from 'react-router-dom';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { formatPriceWithUSDC, getTokenSymbol, fetchTokenDetails } from '../utils/tokenUtils';
+import { activeChain } from '../config/chains.js';
 import { resolveCollectionName, normalizeDescription, scopedClass } from '../utils/nftUtils';
 import { isVShareContract, vShareLpSvgDataUrl, getVShareMetadata } from '../utils/vShareUtils';
 import { debugWarn } from '../utils/debugUtils';
+import { nftThumbnailUrl } from '../utils/mediaUrl';
 import './ListingCard.css';
 
 /* =========================
    EXACT SmartImage used by Marketplace (embedded here)
    ========================= */
 const IPFS_GATEWAYS = [
+    '/api/ipfs/ipfs/',
     'https://ipfs.io/ipfs/',
     'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/',
-    'https://4everland.io/ipfs/',
 ];
 const IPNS_GATEWAYS = [
+    '/api/ipfs/ipns/',
     'https://ipfs.io/ipns/',
     'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/',
-    'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/',
-    'https://4everland.io/ipns/',
 ];
 const smartImageCache = new Map();
 const safeStr = (v, d = '') => (typeof v === 'string' ? v : d);
@@ -47,7 +43,7 @@ function svgFallbackDataUrl({ seed = 'nft', width = 300, height = 200, title = '
     const hue2 = (hue + 180) % 360;
     const gradId = `g${(h % 1e9).toString(36)}`;
     const blobs = (h % 7) + 3;
-    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
+    const label = title ? title.slice(0, 22) : `${activeChain().name} NFT`;
     const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
   <defs>
@@ -121,11 +117,12 @@ function findFirstWorkingImage(candidates, timeoutMs = 6000) {
             if (settled) return;
             if (idx >= candidates.length) return reject(new Error('No working image'));
             const test = candidates[idx++];
+            const displayUrl = nftThumbnailUrl(test, 400);
             const img = new Image();
             const timer = setTimeout(() => { img.onload = img.onerror = null; tryNext(); }, timeoutMs);
-            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(test); };
+            img.onload = () => { if (settled) return; settled = true; clearTimeout(timer); resolve(displayUrl); };
             img.onerror = () => { clearTimeout(timer); tryNext(); };
-            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+            img.src = displayUrl;
         };
         tryNext();
     });
@@ -176,6 +173,7 @@ function SmartImage({
             width={width}
             height={height}
             loading="lazy"
+            decoding="async"
             crossOrigin="anonymous"
             onError={() => { if (!failed) setFailed(true); }}
             style={{ objectFit: 'cover', display: 'block', borderRadius: 8 }}

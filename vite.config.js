@@ -13,9 +13,7 @@ export default defineConfig({
           // Vendor chunks - separate large libraries
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
           'vendor-ethers': ['ethers'],
-          'vendor-supabase': ['@supabase/supabase-js'],
-          'vendor-analytics': ['@vercel/analytics'],
-          
+
           // Feature chunks - separate by functionality
           'marketplace-core': [
             './src/context/MarketplaceContext.jsx',

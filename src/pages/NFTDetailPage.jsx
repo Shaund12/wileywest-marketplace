@@ -9,6 +9,7 @@ import { loadNFTMetadata } from '../utils/metadataLoader';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
 import NFTImage from '../components/NFTImage';
+import { activeChain } from '../config/chains.js';
 import './NFTDetailPage.css';
 
 const ERC721_METADATA_ABI = [
@@ -317,7 +318,7 @@ export default function NFTDetailPage() {
                                                     <input
                                                         type="number"
                                                         step="0.001"
-                                                        placeholder="New price in VTRU"
+                                                        placeholder={`New price in ${activeChain().symbol}`}
                                                         value={newPrice}
                                                         onChange={(e) => setNewPrice(e.target.value)}
                                                         className="price-input"

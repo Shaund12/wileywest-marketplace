@@ -237,10 +237,9 @@ const fastFetchMetadata = async (tokenURI) => {
 
         // Use more reliable IPFS gateways for better success rate
         const reliableGateways = [
+            '/api/ipfs/ipfs/',
             'https://ipfs.io/ipfs/',
             'https://dweb.link/ipfs/',
-            'https://gateway.pinata.cloud/ipfs/',
-            'https://cloudflare-ipfs.com/ipfs/'
         ];
 
         for (const gateway of reliableGateways) {
@@ -319,7 +318,7 @@ const fastResolveIPFS = (ipfsUrl) => {
     
     // Return the most reliable gateway for immediate display
     // This aligns with ListingCard's successful gateway strategy
-    return `https://cloudflare-ipfs.com/ipfs/${hash}`;
+    return `/api/ipfs/ipfs/${hash}`;
 };
 
 /**
@@ -489,13 +488,9 @@ export const resolveImageUrl = async (imageUrl) => {
 
         // Generate multiple gateway URLs for robust loading
         const gateways = [
-            'https://cloudflare-ipfs.com/ipfs/',
-            'https://cf-ipfs.com/ipfs/',
+            '/api/ipfs/ipfs/',
             'https://dweb.link/ipfs/',
-            'https://gateway.pinata.cloud/ipfs/',
             'https://ipfs.io/ipfs/',
-            'https://w3s.link/ipfs/',
-            'https://nftstorage.link/ipfs/'
         ];
 
         const gatewayUrls = gateways.map(gateway => `${gateway}${hash}`);

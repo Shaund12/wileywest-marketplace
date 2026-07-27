@@ -6,27 +6,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { debugLog, debugWarn } from '../utils/debugUtils';
 import { isVShareContract, vShareLpSvgDataUrl, getVShareMetadata } from '../utils/vShareUtils';
+import { activeChain } from '../config/chains.js';
+import { nftThumbnailUrl } from '../utils/mediaUrl';
 import './NFTImage.css';
 
 // Enhanced IPFS gateway configuration for maximum reliability
 const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/', 
-    'https://cf-ipfs.com/ipfs/', 
+    '/api/ipfs/ipfs/',
     'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/', 
     'https://ipfs.io/ipfs/', 
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/'
 ];
 
 const IPNS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipns/', 
-    'https://cf-ipfs.com/ipns/', 
+    '/api/ipfs/ipns/',
     'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/', 
     'https://ipfs.io/ipns/', 
-    'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/'
 ];
 
 // Enhanced image URL expansion with multiple gateway support
@@ -78,124 +72,28 @@ function expandToCandidateUrls(raw) {
     }
 }
 
-// Robust image loading that handles IPFS black box issues with enhanced cache busting
-function loadImageWithCacheBusting(url, options = {}) {
-    const { timeout = 3000, retryWithCacheBust = true } = options;
-    
+// Verify a stable URL once. Keeping the URL unchanged allows the browser and
+// BlockDust's immutable CID cache to reuse the downloaded response when the
+// visible image renders.
+function loadStableImage(url, { timeout = 5000 } = {}) {
     return new Promise((resolve, reject) => {
+        const displayUrl = nftThumbnailUrl(url, 640);
         const img = new Image();
-        let timeoutId;
-        let hasTimedOut = false;
-        
-        const cleanup = () => {
-            if (timeoutId) {
-                clearTimeout(timeoutId);
-                timeoutId = null;
-            }
-            img.onload = null;
-            img.onerror = null;
-            img.onabort = null;
+        const timer = setTimeout(() => {
+            img.onload = img.onerror = null;
+            reject(new Error(`Timeout loading: ${displayUrl}`));
+        }, timeout);
+        img.onload = () => {
+            clearTimeout(timer);
+            if (img.naturalWidth > 0 && img.naturalHeight > 0) resolve(displayUrl);
+            else reject(new Error(`Image has no dimensions: ${displayUrl}`));
         };
-        
-        const handleLoad = () => {
-            if (hasTimedOut) return;
-            cleanup();
-            
-            // Verify the image actually loaded with dimensions
-            if (img.naturalWidth > 0 && img.naturalHeight > 0) {
-                debugLog(`✅ [NFT Image] Successfully loaded image: ${img.src} (${img.naturalWidth}x${img.naturalHeight})`);
-                resolve(img.src);
-            } else {
-                debugWarn(`⚠️ [NFT Image] Image loaded but has no dimensions (black box detected): ${img.src}`);
-                
-                // Try with aggressive cache busting if we haven't already
-                if (retryWithCacheBust && !img.src.includes('cb=')) {
-                    const timestamp = Date.now();
-                    const randomStr = Math.random().toString(36).substring(7);
-                    const cacheBustedUrl = url + 
-                        (url.includes('?') ? '&' : '?') + 
-                        `cb=${timestamp}&rnd=${randomStr}&fix=blackbox&v=2`;
-                    debugLog(`🔄 [NFT Image] Retrying with enhanced cache busting: ${cacheBustedUrl}`);
-                    
-                    loadImageWithCacheBusting(cacheBustedUrl, { timeout, retryWithCacheBust: false })
-                        .then(resolve)
-                        .catch(reject);
-                } else {
-                    reject(new Error('Image has no dimensions (potential black box)'));
-                }
-            }
+        img.onerror = () => {
+            clearTimeout(timer);
+            reject(new Error(`Failed to load: ${displayUrl}`));
         };
-        
-        const handleError = (e) => {
-            if (hasTimedOut) return;
-            cleanup();
-            
-            debugWarn(`❌ [NFT Image] Error loading image: ${img.src}`, e?.type || 'unknown error');
-            
-            // For IPFS URLs, try with enhanced cache busting to overcome browser caching issues
-            if (retryWithCacheBust && !img.src.includes('cb=') && 
-                (url.includes('ipfs') || url.includes('dweb') || url.includes('gateway'))) {
-                const timestamp = Date.now();
-                const randomStr = Math.random().toString(36).substring(7);
-                const cacheBustedUrl = url + 
-                    (url.includes('?') ? '&' : '?') + 
-                    `cb=${timestamp}&rnd=${randomStr}&bypass=1&reload=force&v=2`;
-                debugLog(`🔄 [NFT Image] IPFS error, retrying with enhanced cache busting: ${cacheBustedUrl}`);
-                
-                loadImageWithCacheBusting(cacheBustedUrl, { timeout, retryWithCacheBust: false })
-                    .then(resolve)
-                    .catch(reject);
-            } else {
-                reject(new Error(`Failed to load: ${img.src}`));
-            }
-        };
-        
-        const handleTimeout = () => {
-            hasTimedOut = true;
-            cleanup();
-            debugWarn(`⏰ [NFT Image] Timeout loading image: ${url}`);
-            reject(new Error(`Timeout loading: ${url}`));
-        };
-        
-        // Set up timeout
-        timeoutId = setTimeout(handleTimeout, timeout);
-        
-        // Set up event handlers
-        img.onload = handleLoad;
-        img.onerror = handleError;
-        img.onabort = handleError;
-        
-        // Set important attributes to prevent black box issues
-        img.crossOrigin = 'anonymous';
         img.decoding = 'async';
-        img.loading = 'eager';
-        
-        // Add additional headers via fetch for better cache control
-        if (url.startsWith('http') && (url.includes('ipfs') || url.includes('gateway'))) {
-            // For IPFS gateways, try to fetch with proper headers first
-            fetch(url, {
-                method: 'HEAD',
-                mode: 'cors',
-                cache: 'no-cache',
-                headers: {
-                    'Cache-Control': 'no-cache, no-store, must-revalidate',
-                    'Pragma': 'no-cache',
-                    'Expires': '0'
-                }
-            }).then(() => {
-                // If HEAD request succeeds, proceed with image loading
-                debugLog(`🔍 [NFT Image] Starting to load with cache headers: ${url}`);
-                img.src = url;
-            }).catch(() => {
-                // If HEAD request fails, proceed anyway
-                debugLog(`🔍 [NFT Image] Starting to load (HEAD failed): ${url}`);
-                img.src = url;
-            });
-        } else {
-            // Start loading the image directly for non-IPFS URLs
-            debugLog(`🔍 [NFT Image] Starting to load: ${url}`);
-            img.src = url;
-        }
+        img.src = displayUrl;
     });
 }
 
@@ -218,7 +116,7 @@ function findFirstWorkingImage(candidates, timeoutMs = 3000) {
             debugLog(`🔍 [NFT Image] Testing gateway ${currentIndex}/${candidates.length}: ${url}`);
             
             try {
-                const workingUrl = await loadImageWithCacheBusting(url, { timeout: timeoutMs });
+                const workingUrl = await loadStableImage(url, { timeout: timeoutMs });
                 if (settled) return;
                 settled = true;
                 debugLog(`✅ [NFT Image] Found working URL: ${workingUrl}`);
@@ -297,7 +195,7 @@ function generateSvgFallback({ contractAddress = '', tokenId = '', title = '', w
     const hue2 = (hue + 180) % 360;
     const gradId = `g${(h % 1e9).toString(36)}`;
     const block = (h % 7) + 3;
-    const label = title ? title.slice(0, 22) : 'Vitruveo NFT';
+    const label = title ? title.slice(0, 22) : `${activeChain().name} NFT`;
     
     const svg = `
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
@@ -526,9 +424,9 @@ const NFTImage = ({
                             opacity: '0.8'
                         }}
                         crossOrigin="anonymous"
-                        loading="eager"
-                        decoding="sync"
-                        fetchPriority="high"
+                        loading="lazy"
+                        decoding="async"
+                        fetchPriority="auto"
                         referrerPolicy="no-referrer"
                     />
                 )}
@@ -585,9 +483,9 @@ const NFTImage = ({
                     opacity: '1'
                 }}
                 crossOrigin="anonymous"
-                loading="eager"
-                decoding="sync"
-                fetchPriority="high"
+                loading="lazy"
+                decoding="async"
+                fetchPriority="auto"
                 referrerPolicy="no-referrer"
             />
         </div>

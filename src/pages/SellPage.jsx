@@ -7,30 +7,22 @@ import { useSupabase } from '../context/SupabaseContext';
 import { fetchTokenPriceInUSDC } from '../utils/tokenUtils';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
 import { refreshUserNFTCollections } from '../utils/nftOwnershipUtils';
+import { explorerAddress, activeChain } from '../config/chains.js';
+import { nftThumbnailUrl } from '../utils/mediaUrl';
 import './SellPage.css';
 
 /* =========================================================
    IPFS/IPNS/Arweave + SmartMedia (self-contained utilities)
    ========================================================= */
 const IPFS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipfs/',
-    'https://cf-ipfs.com/ipfs/',
+    '/api/ipfs/ipfs/',
     'https://dweb.link/ipfs/',
-    'https://gateway.pinata.cloud/ipfs/',
-    'https://infura-ipfs.io/ipfs/',
-    'https://w3s.link/ipfs/',
-    'https://nftstorage.link/ipfs/',
     'https://ipfs.io/ipfs/',
 ];
 
 const IPNS_GATEWAYS = [
-    'https://cloudflare-ipfs.com/ipns/',
-    'https://cf-ipfs.com/ipns/',
+    '/api/ipfs/ipns/',
     'https://dweb.link/ipns/',
-    'https://gateway.pinata.cloud/ipns/',
-    'https://infura-ipfs.io/ipns/',
-    'https://w3s.link/ipns/',
-    'https://nftstorage.link/ipns/',
     'https://ipfs.io/ipns/',
 ];
 
@@ -138,6 +130,7 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
                 resolve(test);
                 return;
             }
+            const displayUrl = nftThumbnailUrl(test, 640);
 
             const img = new Image();
             const timer = setTimeout(() => {
@@ -146,13 +139,13 @@ function findFirstWorkingImage(candidates, timeoutMs = 7000) {
             }, timeoutMs);
             img.onload = () => {
                 clearTimeout(timer);
-                resolve(test);
+                resolve(displayUrl);
             };
             img.onerror = () => {
                 clearTimeout(timer);
                 tryNext();
             };
-            img.src = test + (test.includes('?') ? '&' : '?') + 'cb=' + Date.now();
+            img.src = displayUrl;
         };
         tryNext();
     });
@@ -292,6 +285,7 @@ function SmartMedia({ srcList = [], alt = '', width = 640, height = 460, seed = 
             width={width}
             height={height}
             loading="lazy"
+            decoding="async"
             onError={() => setFailed(true)}
             style={{ display: 'block', borderRadius: 12, maxWidth: '100%', objectFit: 'cover' }}
         />
@@ -336,11 +330,7 @@ const ERC20_ABI = [
 // Token addresses (Vitruveo chain)
 const WVTRU_ADDRESS = '0x3ccc3F22462cAe34766820894D04a40381201ef9';
 const USDC_ADDRESS = '0xbCfB3FCa16b12C7756CD6C24f1cC0AC0E38569CF';
-const VUSD_ADDRESS = '0x1D607d8c617A09c638309bE2Ceb9b4afF42236dA';
-const SEVO_ADDRESS = '0x2A34059DF3D60B1864f10F10492746bd26d3D24a';
-const WSEVO_ADDRESS = '0x43a36604B6Ad9A4cf8EF600241E90b3DD97E145d';
-const VITEX_ADDRESS = '0x4Ed92A1d95d2092973007197794542A5D51FF5a6';
-const VTRO_ADDRESS = '0xDECAF2f187Cb837a42D26FA364349Abc3e80Aa5D';
+// (Legacy Vitruveo ERC20 addresses removed — native token only.)
 
 // Uniswap V3 (Vitruveo)
 const UNISWAP_V3_FACTORY_ADDRESS = '0x6196a7a6108B15a2cc24DdaB41C8CC3098C06351';
@@ -367,10 +357,6 @@ function SellPage() {
     const { getCachedProfile, cacheProfileData } = useSupabase();
     const [searchParams] = useSearchParams();
     const priceIntervalRef = useRef(null);
-    const sellContainerRef = useRef(null);
-
-    // Cursor parallax tracking for background effect
-    const [mousePosition, setMousePosition] = useState({ x: 0.2, y: 0.3 });
 
     // Listing creation success state for confetti effect
     const [listingSuccess, setListingSuccess] = useState(false);
@@ -706,22 +692,6 @@ function SellPage() {
         loadFees();
     }, [provider, marketplaceAddress]);
 
-    // Cursor parallax effect
-    useEffect(() => {
-        const handleMouseMove = (e) => {
-            if (!sellContainerRef.current) return;
-            const rect = sellContainerRef.current.getBoundingClientRect();
-            const x = (e.clientX - rect.left) / rect.width;
-            const y = (e.clientY - rect.top) / rect.height;
-            setMousePosition({ x, y });
-            sellContainerRef.current.style.setProperty('--mx', x.toFixed(2));
-            sellContainerRef.current.style.setProperty('--my', y.toFixed(2));
-        };
-
-        document.addEventListener('mousemove', handleMouseMove);
-        return () => document.removeEventListener('mousemove', handleMouseMove);
-    }, []);
-
     // Update progress based on form completion
     useEffect(() => {
         if (metadata) {
@@ -923,7 +893,9 @@ function SellPage() {
         const price = await fetchTokenPriceInUSDC(tokenAddress, provider);
         const tokenSymbol = tokenList[tokenAddress]?.symbol || 'Unknown';
         let source;
-        if (tokenAddress === ethers.ZeroAddress) source = 'Uniswap V3 (WVTRU proxy)';
+        if (tokenAddress === ethers.ZeroAddress) {
+            source = activeChain().key === 'vitruveo' ? 'BSC live price feed' : 'HYVE launch estimate';
+        }
         else if (tokenAddress === USDC_ADDRESS) source = 'USD Stablecoin';
         else source = `Uniswap V3 (${tokenSymbol}/USDC)`;
         return { price, source };
@@ -1024,63 +996,17 @@ function SellPage() {
         setLoadingPrices(true);
         const initialTokens = {};
         try {
+            // Native token only — the old Vitruveo ERC20s died in the chain
+            // redo. Listings are priced in the active chain's native token
+            // (VTRU on Vitruveo, HYVE on Hyve).
+            const nativeChain = activeChain();
             initialTokens[ethers.ZeroAddress] = {
                 address: ethers.ZeroAddress,
-                symbol: 'VTRU',
-                name: 'Native VTRU',
+                symbol: nativeChain.symbol,
+                name: `Native ${nativeChain.symbol}`,
                 decimals: 18,
                 isNative: true,
             };
-
-            // WVTRU
-            try {
-                const c = new ethers.Contract(WVTRU_ADDRESS, ERC20_ABI, provider);
-                const [symbol, name, decimals] = await Promise.all([
-                    c.symbol().catch(() => 'WVTRU'),
-                    c.name().catch(() => 'Wrapped VTRU'),
-                    c.decimals().catch(() => 18),
-                ]);
-                initialTokens[WVTRU_ADDRESS] = { address: WVTRU_ADDRESS, symbol, name, decimals };
-            } catch {
-                initialTokens[WVTRU_ADDRESS] = { address: WVTRU_ADDRESS, symbol: 'WVTRU', name: 'Wrapped VTRU', decimals: 18 };
-            }
-
-            // USDC
-            try {
-                const c = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, provider);
-                const [symbol, name, decimals] = await Promise.all([
-                    c.symbol().catch(() => 'USDC'),
-                    c.name().catch(() => 'USD Coin'),
-                    c.decimals().catch(() => 6),
-                ]);
-                initialTokens[USDC_ADDRESS] = { address: USDC_ADDRESS, symbol, name, decimals };
-                setLivePrice((prev) => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
-                setPriceSources((prev) => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
-            } catch {
-                initialTokens[USDC_ADDRESS] = { address: USDC_ADDRESS, symbol: 'USDC', name: 'USD Coin', decimals: 6 };
-                setLivePrice((prev) => ({ ...prev, [USDC_ADDRESS]: 1.0 }));
-                setPriceSources((prev) => ({ ...prev, [USDC_ADDRESS]: 'USD Stablecoin' }));
-            }
-
-            const addToken = async (addr, fallbackSymbol, fallbackName, fallbackDecimals = 18) => {
-                try {
-                    const c = new ethers.Contract(addr, ERC20_ABI, provider);
-                    const [symbol, name, decimals] = await Promise.all([
-                        c.symbol().catch(() => fallbackSymbol),
-                        c.name().catch(() => fallbackName),
-                        c.decimals().catch(() => fallbackDecimals),
-                    ]);
-                    initialTokens[addr] = { address: addr, symbol, name, decimals };
-                } catch {
-                    initialTokens[addr] = { address: addr, symbol: fallbackSymbol, name: fallbackName, decimals: fallbackDecimals };
-                }
-            };
-
-            await addToken(VUSD_ADDRESS, 'VUSD', 'VUSD Token', 6);
-            await addToken(SEVO_ADDRESS, 'SEVO', 'SEVO Token');
-            await addToken(WSEVO_ADDRESS, 'WSEVO', 'Wrapped SEVO');
-            await addToken(VITEX_ADDRESS, 'VITEX', 'VITEX Token');
-            await addToken(VTRO_ADDRESS, 'VTRO', 'VTRO Token');
 
             setTokenList(initialTokens);
             setLastUpdateTime(new Date());
@@ -1396,7 +1322,7 @@ function SellPage() {
        UI with enhanced styling
        ========================= */
     return (
-        <div className="sell-container" ref={sellContainerRef}>
+        <div className="sell-container">
             <div className="page-header">
                 <h1>Sell Your NFT</h1>
                 <p>Create a listing for your digital asset</p>
@@ -1415,7 +1341,7 @@ function SellPage() {
             {Object.keys(livePrice).length > 0 && (
                 <div className="price-ticker">
                     <div className="ticker-header">
-                        <span>Uniswap V3 Token Prices</span>
+                        <span>{activeChain().name} Market Price</span>
                         <span className="ticker-time">Last updated: {formatTime(lastUpdateTime)}</span>
                     </div>
                     <div className="ticker-items">
@@ -1445,7 +1371,7 @@ function SellPage() {
                                     </div>
                                 );
                             })}
-                        <div className="ticker-refresh" onClick={() => fetchUniswapPrices()} title="Refresh Uniswap Prices">
+                        <div className="ticker-refresh" onClick={() => fetchUniswapPrices()} title="Refresh market price">
                             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                                 <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                             </svg>
@@ -1456,7 +1382,7 @@ function SellPage() {
 
             <div className="sell-layout">
                 <div className="sell-form">
-                    <div className={`card glow-card ${listingSuccess ? 'confetti' : ''}`}>
+                    <div className={`card ${listingSuccess ? 'confetti' : ''}`}>
                         <form onSubmit={handleSubmit}>
                             <div className="form-section">
                                 <h3>NFT Details</h3>
@@ -1751,7 +1677,7 @@ function SellPage() {
                                             />
                                             <div className="price-conversion">
                                                 <div className="price-eth">
-                                                    {displayPrice.eth} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    {displayPrice.eth} {tokenList[formData.paymentToken]?.symbol || activeChain().symbol}
                                                 </div>
                                                 <div className="price-usd">
                                                     ≈ {displayPrice.usd === 'Unknown' ? 'Unknown USD value' : `$${displayPrice.usd} USD`}
@@ -1978,7 +1904,7 @@ function SellPage() {
                     </div>
                 </div>
 
-                {/* Preview with 3D tilt effect */}
+                {/* Stable NFT preview */}
                 <div className="nft-preview">
                     {loading ? (
                         <div className="preview-loading">
@@ -1986,7 +1912,7 @@ function SellPage() {
                             <p>Loading NFT data...</p>
                         </div>
                     ) : metadata ? (
-                        <div className="premium-preview tilt-3d">
+                        <div className="premium-preview">
                             <div className="preview-header">
                                 <div className="preview-badge">{nftType || 'NFT'}</div>
                                 {ownershipVerified && (
@@ -2072,7 +1998,7 @@ function SellPage() {
                                             <div className="detail-row">
                                                 <span className="detail-label">Contract</span>
                                                 <span className="detail-value">
-                                                    <a href={`https://explorer.vitruveo.xyz/address/${formData.nftContract}`} target="_blank" rel="noopener noreferrer">
+                                                    <a href={explorerAddress(formData.nftContract)} target="_blank" rel="noopener noreferrer">
                                                         {`${formData.nftContract.slice(0, 6)}...${formData.nftContract.slice(-4)}`}
                                                     </a>
                                                 </span>
@@ -2148,7 +2074,7 @@ function SellPage() {
                                                 <div className="pricing-label">Listing Subtotal</div>
                                                 <div className="pricing-value">
                                                     <span>
-                                                        {proceeds.subtotal} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    {proceeds.subtotal} {tokenList[formData.paymentToken]?.symbol || activeChain().symbol}
                                                     </span>
                                                     <span className="pricing-usd">
                                                         {proceeds.usdValue === 'Unknown' ? '(USD value unknown)' : `($${proceeds.usdValue})`}
@@ -2171,7 +2097,7 @@ function SellPage() {
                                                     </span>
                                                 </div>
                                                 <div className="pricing-value negative">
-                                                    -{proceeds.marketplaceFee} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    -{proceeds.marketplaceFee} {tokenList[formData.paymentToken]?.symbol || activeChain().symbol}
                                                 </div>
                                             </div>
 
@@ -2188,7 +2114,7 @@ function SellPage() {
                                                         </span>
                                                     </div>
                                                     <div className="pricing-value">
-                                                        {proceeds.vibeFee} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                        {proceeds.vibeFee} {tokenList[formData.paymentToken]?.symbol || activeChain().symbol}
                                                     </div>
                                                 </div>
                                             )}
@@ -2201,7 +2127,7 @@ function SellPage() {
                                                     </span>
                                                 </div>
                                                 <div className="pricing-value negative">
-                                                    -{proceeds.royaltyFee} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                    -{proceeds.royaltyFee} {tokenList[formData.paymentToken]?.symbol || activeChain().symbol}
                                                 </div>
                                             </div>
 
@@ -2211,7 +2137,7 @@ function SellPage() {
                                                 <div className="pricing-label">You'll Receive</div>
                                                 <div className="pricing-value">
                                                     <span>
-                                                        {proceeds.total} {tokenList[formData.paymentToken]?.symbol || 'VTRU'}
+                                                        {proceeds.total} {tokenList[formData.paymentToken]?.symbol || activeChain().symbol}
                                                     </span>
                                                     <span className="pricing-usd">
                                                         {proceeds.usdValue === 'Unknown' ? '(USD value unknown)' : `($${proceeds.usdValue})`}
@@ -2226,7 +2152,7 @@ function SellPage() {
                                                         d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"
                                                     />
                                                 </svg>
-                                                <span>Estimated network fee: {fees.networkFee} VTRU</span>
+                                                <span>Estimated network fee: {fees.networkFee} {activeChain().symbol}</span>
                                             </div>
 
                                             <div className="price-source-note">
@@ -2239,7 +2165,7 @@ function SellPage() {
                                                     }}
                                                     className="refresh-link"
                                                 >
-                                                    Refresh Uniswap prices
+                                                Refresh market price
                                                 </a>
                                             </div>
 
@@ -2251,7 +2177,11 @@ function SellPage() {
                                                             d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"
                                                         />
                                                     </svg>
-                                                    <span>Native VTRU uses WVTRU price from Uniswap</span>
+                                                    <span>
+                                                        Native {activeChain().symbol} uses {activeChain().key === 'vitruveo'
+                                                            ? 'the live VTRU BSC price feed'
+                                                            : 'the configured HYVE launch-price estimate'}
+                                                    </span>
                                                 </div>
                                             )}
 

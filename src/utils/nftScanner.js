@@ -36,6 +36,7 @@ const EXTENDED_ERC1155_ABI = [
 ];
 
 import { getKnownNFTContractsArray } from './knownCollections.js';
+import { activeChain } from '../config/chains.js';
 
 // Add well-known NFT contracts to force-scan - EXPANDED LIST for comprehensive coverage
 // Updated to use the centralized known collections registry
@@ -57,7 +58,15 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
  */
 export class NFTScanner {
     constructor(provider, walletAddress, statusCallback) {
-        this.provider = provider;
+        this.chain = activeChain();
+        this.chainId = this.chain.id;
+        // Pin discovery to BlockDust's selected chain. A BrowserProvider can
+        // briefly report the previous chain while a wallet is switching.
+        this.provider = new ethers.JsonRpcProvider(
+            this.chain.rpcUrl,
+            this.chain.id,
+            { staticNetwork: true }
+        );
         
         // Validate and normalize wallet address
         try {
@@ -82,15 +91,19 @@ export class NFTScanner {
         this.backgroundScanPromise = null;
         
         // Add validation for provider
-        if (!provider) {
+        if (!provider && !this.chain.rpcUrl) {
             throw new Error('Provider is required for NFT scanning');
         }
+    }
+
+    cacheKey(namespace) {
+        return `${namespace}:v2:${this.chainId}:${this.walletAddress.toLowerCase()}`;
     }
 
     // Load cached NFTs for this wallet
     loadCachedNfts() {
         try {
-            const cacheKey = `nft_cache_${this.walletAddress.toLowerCase()}`;
+            const cacheKey = this.cacheKey('nft_cache');
             const cachedData = localStorage.getItem(cacheKey);
             
             if (cachedData) {
@@ -112,11 +125,11 @@ export class NFTScanner {
     // Save NFTs to cache
     saveNftsToCache(nfts) {
         try {
-            const cacheKey = `nft_cache_${this.walletAddress.toLowerCase()}`;
+            const cacheKey = this.cacheKey('nft_cache');
             const cacheData = {
                 nfts,
                 timestamp: Date.now(),
-                chainId: this.provider._network?.chainId
+                chainId: this.chainId
             };
             
             localStorage.setItem(cacheKey, JSON.stringify(cacheData));
@@ -128,7 +141,7 @@ export class NFTScanner {
     // Load contract cache
     loadContractCache() {
         try {
-            const contractCacheData = localStorage.getItem('nft_contract_cache');
+            const contractCacheData = localStorage.getItem(this.cacheKey('nft_contract_cache'));
             if (contractCacheData) {
                 return JSON.parse(contractCacheData);
             }
@@ -142,7 +155,7 @@ export class NFTScanner {
     // Save contract cache
     saveContractCache() {
         try {
-            localStorage.setItem('nft_contract_cache', JSON.stringify(this.contractCache));
+            localStorage.setItem(this.cacheKey('nft_contract_cache'), JSON.stringify(this.contractCache));
         } catch (e) {
             debugWarn('Error saving contract cache:', e);
         }
@@ -151,7 +164,7 @@ export class NFTScanner {
     // Load known ERC20 tokens
     loadKnownErc20s() {
         try {
-            const erc20Data = localStorage.getItem('known_erc20_tokens');
+            const erc20Data = localStorage.getItem(this.cacheKey('known_erc20_tokens'));
             if (erc20Data) {
                 const tokens = JSON.parse(erc20Data);
                 tokens.forEach(addr => this.knownErc20s.add(addr.toLowerCase()));
@@ -164,7 +177,7 @@ export class NFTScanner {
     // Save known ERC20 tokens
     saveKnownErc20s() {
         try {
-            localStorage.setItem('known_erc20_tokens', 
+            localStorage.setItem(this.cacheKey('known_erc20_tokens'),
                 JSON.stringify([...this.knownErc20s]));
         } catch (e) {
             debugWarn('Error saving known ERC20 tokens:', e);
@@ -174,7 +187,7 @@ export class NFTScanner {
     // Load metadata cache
     loadMetadataCache() {
         try {
-            const metadataCache = localStorage.getItem('nft_metadata_cache');
+            const metadataCache = localStorage.getItem(this.cacheKey('nft_metadata_cache'));
             if (metadataCache) {
                 return JSON.parse(metadataCache);
             }
@@ -202,7 +215,7 @@ export class NFTScanner {
                 };
             }
             
-            localStorage.setItem('nft_metadata_cache', JSON.stringify(minimalCache));
+            localStorage.setItem(this.cacheKey('nft_metadata_cache'), JSON.stringify(minimalCache));
         } catch (e) {
             debugWarn('Error saving metadata cache:', e);
         }
@@ -287,6 +300,86 @@ export class NFTScanner {
         return nfts;
     }
 
+    /**
+     * Read the explorer's indexed current-owner inventory. This is the only
+     * complete discovery path available on pruned public RPC nodes because it
+     * covers non-enumerable ERC-721 contracts and arbitrary ERC-1155 IDs.
+     */
+    async fetchIndexedWalletInventory() {
+        const endpoint = `${this.chain.explorer.replace(/\/$/, '')}/api/v2/addresses/${this.walletAddress}/nft`;
+        const nfts = [];
+        let nextPage = null;
+        let page = 0;
+
+        try {
+            this.updateStatus(`Discovering every NFT indexed for this wallet on ${this.chain.name}…`);
+            do {
+                const params = new URLSearchParams({ type: 'ERC-721,ERC-1155' });
+                if (nextPage) {
+                    Object.entries(nextPage).forEach(([key, value]) => {
+                        if (value !== null && value !== undefined) params.set(key, String(value));
+                    });
+                }
+
+                const response = await fetch(`${endpoint}?${params.toString()}`, {
+                    headers: { Accept: 'application/json' },
+                    cache: 'no-store',
+                });
+                if (!response.ok) throw new Error(`Explorer index returned HTTP ${response.status}`);
+                const payload = await response.json();
+                if (!Array.isArray(payload.items)) throw new Error('Explorer index returned an invalid inventory');
+
+                for (const item of payload.items) {
+                    const token = item.token || {};
+                    const contractAddress = token.address || token.address_hash;
+                    if (!contractAddress || !ethers.isAddress(contractAddress) || item.id === null || item.id === undefined) continue;
+
+                    const metadata = item.metadata && typeof item.metadata === 'object' ? item.metadata : {};
+                    const type = String(token.type || '').toUpperCase().includes('1155') ? 'ERC1155' : 'ERC721';
+                    const image = item.image_url || metadata.image || metadata.image_url || item.media_url || null;
+                    nfts.push({
+                        contractAddress: ethers.getAddress(contractAddress),
+                        tokenId: String(item.id),
+                        type,
+                        balance: String(item.value || '1'),
+                        tokenURI: item.token_uri || null,
+                        name: metadata.name || `${token.name || 'NFT'} #${item.id}`,
+                        image,
+                        imageUrl: image,
+                        metadata: {
+                            ...metadata,
+                            image: metadata.image || image,
+                            imageUrl: metadata.imageUrl || item.image_url || image,
+                        },
+                        collectionName: token.name || null,
+                        collectionSymbol: token.symbol || null,
+                        chainId: this.chainId,
+                        discoverySource: 'explorer-index',
+                    });
+                }
+
+                nextPage = payload.next_page_params || null;
+                page += 1;
+                this.updateStatus(`Indexed ${nfts.length} NFTs on ${this.chain.name}${nextPage ? '…' : ''}`);
+            } while (nextPage && page < 100);
+
+            const unique = [...new Map(
+                nfts.map((nft) => [`${nft.contractAddress.toLowerCase()}:${nft.tokenId}`, nft])
+            ).values()];
+            const allowed = new Set(
+                filterBlockedAddresses(unique.map((nft) => nft.contractAddress))
+                    .map((address) => address.toLowerCase())
+            );
+            return {
+                success: true,
+                nfts: unique.filter((nft) => allowed.has(nft.contractAddress.toLowerCase())),
+            };
+        } catch (error) {
+            debugWarn(`${this.chain.name} explorer inventory unavailable; falling back to RPC discovery:`, error.message);
+            return { success: false, nfts: [] };
+        }
+    }
+
     // NEW: Enhanced contract discovery for Vitruveo blockchain
     async discoverNFTContractsForVitruveoBlockchain(scanFromGenensis = false) {
         const discoveredContracts = new Set();
@@ -297,10 +390,10 @@ export class NFTScanner {
             
             this.updateStatus(`🔍 Discovering NFT contracts on Vitruveo blockchain...`);
             
-            // Focus on Vitruveo marketplace and local contracts
+            // Focus on the active chain's marketplace and local contracts
             const VITRUVEO_MARKETPLACE_CONTRACTS = [
-                process.env.VITE_MARKETPLACE_ADDRESS, // Our own marketplace
-                // Add other known Vitruveo marketplace contracts here as they're discovered
+                activeChain().marketplaceAddress, // our marketplace on the active chain
+                // Add other known marketplace contracts here as they're discovered
             ].filter(addr => addr && addr !== '0x0000000000000000000000000000000000000000');
 
             // Scan our own marketplace for NFT contract activity
@@ -464,7 +557,8 @@ export class NFTScanner {
     // Smart background scan with rate limiting for production use
     startBackgroundScan() {
         // Check if we should do a smart background refresh
-        const lastScan = localStorage.getItem('nft_last_background_scan');
+        const backgroundKey = this.cacheKey('nft_last_background_scan');
+        const lastScan = localStorage.getItem(backgroundKey);
         const BACKGROUND_SCAN_COOLDOWN = 10 * 60 * 1000; // 10 minutes minimum between scans
         
         if (lastScan && (Date.now() - parseInt(lastScan)) < BACKGROUND_SCAN_COOLDOWN) {
@@ -482,7 +576,7 @@ export class NFTScanner {
         setTimeout(async () => {
             try {
                 debugLog("🔄 Starting smart background NFT refresh...");
-                localStorage.setItem('nft_last_background_scan', Date.now().toString());
+                localStorage.setItem(backgroundKey, Date.now().toString());
                 
                 // Only scan recent blocks for new NFTs, not full history
                 const recentNfts = await this.scanAllNFTs(false, false);
@@ -510,6 +604,21 @@ export class NFTScanner {
             
             // Reset progress
             this.progress = { found: 0, scanned: 0, total: 0 };
+
+            // Primary path: the explorer maintains a current owner index and
+            // therefore does not depend on enumerable contracts or old logs.
+            const indexed = await this.fetchIndexedWalletInventory();
+            if (indexed.success) {
+                this.nfts = indexed.nfts;
+                this.progress = {
+                    found: indexed.nfts.length,
+                    scanned: indexed.nfts.length,
+                    total: indexed.nfts.length,
+                };
+                this.saveNftsToCache(indexed.nfts);
+                this.updateStatus(`Found and saved ${indexed.nfts.length} NFTs on ${this.chain.name}`);
+                return indexed.nfts;
+            }
             
             // Start with known contracts + contract discovery
             let contractsToScan = [...KNOWN_NFT_CONTRACTS];
@@ -2170,7 +2279,7 @@ export class NFTScanner {
 
             // Handle IPFS URIs
             if (resolvedUri.startsWith('ipfs://')) {
-                resolvedUri = `https://cloudflare-ipfs.com/ipfs/${resolvedUri.replace('ipfs://', '')}`;
+                resolvedUri = `/api/ipfs/ipfs/${resolvedUri.replace('ipfs://', '')}`;
             }
 
             // Try to fetch with a timeout
@@ -2190,7 +2299,7 @@ export class NFTScanner {
                     
                     // Process IPFS image URLs
                     if (imageUrl.startsWith('ipfs://')) {
-                        imageUrl = `https://cloudflare-ipfs.com/ipfs/${imageUrl.replace('ipfs://', '')}`;
+                        imageUrl = `/api/ipfs/ipfs/${imageUrl.replace('ipfs://', '')}`;
                     }
                 } else if (metadata.image_url) {
                     imageUrl = metadata.image_url;

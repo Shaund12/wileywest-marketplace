@@ -1,9 +1,13 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
-import { createClient } from '@supabase/supabase-js';
+// Migrated off Supabase: this client speaks to the local BlockDust backend
+// (Express + PostgreSQL) but exposes the same fluent API the code below uses.
+import { createPgRestClient } from '../lib/pgRestClient';
 import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from '../utils/debugUtils';
+import { activeChain } from '../config/chains.js';
 
 const SupabaseContext = createContext();
+const ACTIVE_CHAIN_ID = activeChain().id;
 
 // Cache configuration
 const CACHE_CONFIG = {
@@ -27,43 +31,40 @@ export function SupabaseProvider({ children }) {
     const cache = useRef(new Map());
     const subscriptions = useRef(new Map());
 
-    // Initialize Supabase client
+    // Initialize the local Postgres-backed client (replaces Supabase).
+    // The backend base URL is same-origin by default (/api/db); override via
+    // VITE_API_BASE_URL if the backend runs on a different host/port.
     useEffect(() => {
         try {
-            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-            const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+            const apiBase = import.meta.env.VITE_API_BASE_URL
+                ? `${import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')}/api/db`
+                : '/api/db';
+            const client = createPgRestClient(apiBase);
+            setSupabase(client);
+            setIsConnected(true);
+            debugLog('✅ Postgres-backed data client initialized');
 
-            if (supabaseUrl && supabaseKey && supabaseUrl !== 'https://dummy.supabase.co') {
-                const client = createClient(supabaseUrl, supabaseKey);
-                setSupabase(client);
-                setIsConnected(true);
-                debugLog('✅ Supabase client initialized for caching');
+            // for quick console testing if you want:
+            // @ts-ignore
+            window.supabase = client;
 
-                // for quick console testing if you want:
-                // @ts-ignore
-                window.supabase = client;
-
-                // Test the connection
-                testSupabaseConnection(client);
-            } else {
-                debugLog('⚠️ Supabase not configured - running without cache');
-                setIsConnected(false);
-            }
+            // Test the connection
+            testSupabaseConnection(client);
         } catch (error) {
-            debugWarn('❌ Supabase initialization failed:', error.message);
+            debugWarn('❌ Data client initialization failed:', error.message);
             setIsConnected(false);
         }
     }, []);
 
-    // Test Supabase connection
+    // Test backend connectivity
     const testSupabaseConnection = async (client) => {
         try {
             const { error } = await client.from('marketplace_listings').select('id').limit(1);
             if (error) {
-                debugWarn('⚠️ Supabase connection test failed:', error.message);
+                debugWarn('⚠️ Backend connection test failed:', error.message);
             }
         } catch (error) {
-            debugWarn('⚠️ Supabase connection test error:', error.message);
+            debugWarn('⚠️ Backend connection test error:', error.message);
         }
     };
 
@@ -480,6 +481,7 @@ export function SupabaseProvider({ children }) {
                         .from('user_profiles')
                         .select('*')
                         .eq('wallet_address', String(address).toLowerCase())
+                        .eq('chain_id', ACTIVE_CHAIN_ID)
                         .maybeSingle();
                     existingProfile = data;
                     debugLog(`🔍 PRODUCTION: ${existingProfile ? 'Found existing profile' : 'No existing profile'} for ${address}`);
@@ -490,6 +492,7 @@ export function SupabaseProvider({ children }) {
                 // CRITICAL FIX: Only include fields that exist in the database schema
                 const profileToSave = {
                     wallet_address: String(address).toLowerCase(),
+                    chain_id: ACTIVE_CHAIN_ID,
                     nfts: profileData.nfts || existingProfile?.nfts || [],
                     listings: profileData.listings || existingProfile?.listings || [],
                     balance: profileData.balance || existingProfile?.balance || '0',
@@ -500,7 +503,7 @@ export function SupabaseProvider({ children }) {
                 debugLog(`💾 PRODUCTION: Upserting profile with ${profileToSave.nfts.length} NFTs for ${address}...`);
                 const { data, error } = await supabase
                     .from('user_profiles')
-                    .upsert(profileToSave, { onConflict: 'wallet_address', ignoreDuplicates: false })
+                    .upsert(profileToSave, { onConflict: 'wallet_address,chain_id', ignoreDuplicates: false })
                     .select();
 
                 if (error) {
@@ -515,7 +518,7 @@ export function SupabaseProvider({ children }) {
                 } else {
                     debugLog(`✅ PRODUCTION: Profile ${existingProfile ? 'updated' : 'created'} for ${address} (${profileToSave.nfts.length} NFTs, ${profileToSave.listings.length} listings)`);
                     debugLog(`🎯 PRODUCTION: Database operation successful - profile now exists in Supabase`);
-                    const key = getCacheKey('profile', String(address).toLowerCase());
+                    const key = getCacheKey('profile', `${ACTIVE_CHAIN_ID}:${String(address).toLowerCase()}`);
                     setCache(key, profileToSave, 'profile');
                 }
             } catch (error) {
@@ -529,7 +532,7 @@ export function SupabaseProvider({ children }) {
     const getCachedProfile = useCallback(
         async (address) => {
             if (!address) return null;
-            const memKey = getCacheKey('profile', String(address).toLowerCase());
+            const memKey = getCacheKey('profile', `${ACTIVE_CHAIN_ID}:${String(address).toLowerCase()}`);
             const mem = getCache(memKey);
             if (mem) return mem;
 
@@ -541,6 +544,7 @@ export function SupabaseProvider({ children }) {
                     .from('user_profiles')
                     .select('*')
                     .eq('wallet_address', String(address).toLowerCase())
+                    .eq('chain_id', ACTIVE_CHAIN_ID)
                     .maybeSingle();
 
                 if (error) {
@@ -830,6 +834,7 @@ export function SupabaseProvider({ children }) {
                             .from('user_profiles')
                             .select('*')
                             .eq('wallet_address', seller)
+                            .eq('chain_id', ACTIVE_CHAIN_ID)
                             .maybeSingle();
 
                         if (fetchError) {
@@ -855,7 +860,8 @@ export function SupabaseProvider({ children }) {
                                 listings: updatedListings,
                                 updated_at: new Date().toISOString()
                             })
-                            .eq('wallet_address', seller);
+                            .eq('wallet_address', seller)
+                            .eq('chain_id', ACTIVE_CHAIN_ID);
 
                         if (updateError) {
                             debugWarn(`Error updating profile for ${seller}:`, updateError);
@@ -863,7 +869,7 @@ export function SupabaseProvider({ children }) {
                             debugLog(`✅ Updated profile for seller ${seller} - removed ${sales.length} sold items`);
                             
                             // Clear cached profile to force refresh
-                            const profileKey = getCacheKey('profile', seller);
+                            const profileKey = getCacheKey('profile', `${ACTIVE_CHAIN_ID}:${seller}`);
                             cache.current.delete(profileKey);
                         }
 

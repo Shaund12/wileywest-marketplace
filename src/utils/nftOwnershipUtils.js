@@ -1,5 +1,6 @@
 import { ethers } from 'ethers';
 import { debugWarn, debugLog } from './debugUtils';
+import { activeChain } from '../config/chains.js';
 
 // Standard ERC721 and ERC1155 minimal ABIs for ownership verification
 const ERC721_ABI = [
@@ -139,10 +140,16 @@ export const refreshUserNFTCollections = async (
         }
 
         // Verify ownership of cached NFTs
+        const chain = activeChain();
+        const chainProvider = new ethers.JsonRpcProvider(
+            chain.rpcUrl,
+            chain.id,
+            { staticNetwork: true }
+        );
         const ownedNfts = await filterOwnedNFTs(
             cachedProfile.nfts, 
             userAddress, 
-            provider, 
+            chainProvider,
             statusCallback
         );
 
