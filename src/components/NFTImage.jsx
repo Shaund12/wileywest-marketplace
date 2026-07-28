@@ -3,7 +3,7 @@
  * Ensures consistent image loading across all pages in the marketplace
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { debugLog, debugWarn } from '../utils/debugUtils';
 import { isVShareContract, vShareLpSvgDataUrl, getVShareMetadata } from '../utils/vShareUtils';
 import { activeChain } from '../config/chains.js';
@@ -243,6 +243,17 @@ const NFTImage = ({
     const [loadAttempts, setLoadAttempts] = useState(0);
     const [fallbackUrl, setFallbackUrl] = useState(null);
 
+    // Key the effect on the resolved source *values*, not object identity.
+    // `listing` is a fresh object on every parent render (MarketplaceContext
+    // polls), so depending on it re-ran this effect continuously: each pass
+    // reset currentImageUrl and re-probed gateways, so an image would paint
+    // and then blank out a moment later.
+    const sourceKey = useMemo(() => {
+        if (src) return String(src);
+        return collectImageSources(listing, contractAddress, tokenId).join('|');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [src, listing?.image, listing?.imageUrl, listing?.metadata?.image, listing?.metadata?.imageUrl, contractAddress, tokenId]);
+
     // Simplified and reliable image source resolution
     useEffect(() => {
         const resolveImageSources = async () => {
@@ -319,7 +330,10 @@ const NFTImage = ({
         };
 
         resolveImageSources();
-    }, [src, listing, contractAddress, tokenId, alt, width, height]);
+        // sourceKey collapses src/listing into a stable string; alt/width/height
+        // are presentational only and must not trigger a re-resolve.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sourceKey, contractAddress, tokenId]);
 
     // Simplified manual retry function
     const retryImageLoad = useCallback(() => {
@@ -349,15 +363,31 @@ const NFTImage = ({
             setHasError(false);
             onLoad?.(e);
         } else {
-            debugWarn(`⚠️ [NFT Image] Image appears to have loaded but has no dimensions: ${currentImageUrl}`);
-            
-            // If the image loaded but has no dimensions, try the fallback
-            if (fallbackUrl && currentImageUrl !== fallbackUrl) {
-                debugLog(`🔄 [NFT Image] Using fallback due to dimension issue: ${fallbackUrl}`);
-                setCurrentImageUrl(fallbackUrl);
+            // naturalWidth can legitimately be 0 here — an SVG without an
+            // intrinsic size reports 0, and so can an image whose decode has
+            // not finished. Treating that as failure swapped in the fallback
+            // over an image that was about to paint, which looked like the
+            // picture appearing and then vanishing. Re-check after a decode
+            // before giving up.
+            const settle = () => {
+                if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+                    setIsLoading(false);
+                    setHasError(false);
+                    onLoad?.(e);
+                    return;
+                }
+                debugWarn(`⚠️ [NFT Image] No intrinsic dimensions: ${currentImageUrl}`);
+                if (fallbackUrl && currentImageUrl !== fallbackUrl) {
+                    setCurrentImageUrl(fallbackUrl);
+                } else {
+                    setIsLoading(false);
+                    setHasError(true);
+                }
+            };
+            if (typeof img.decode === 'function') {
+                img.decode().then(settle).catch(settle);
             } else {
-                setIsLoading(false);
-                setHasError(true);
+                setTimeout(settle, 0);
             }
         }
     }, [currentImageUrl, fallbackUrl, onLoad]);
@@ -367,29 +397,23 @@ const NFTImage = ({
         debugWarn(`❌ [NFT Image] Failed to render: ${currentImageUrl}`, e?.type || 'unknown error');
         
         // Enhanced black box detection
-        const potentialBlackBox = (
-            (!img.naturalWidth && !img.naturalHeight && img.complete) ||
-            (img.naturalWidth === 0 && img.naturalHeight === 0) ||
-            (img.complete && !img.src.startsWith('data:'))
-        );
-        
-        if (potentialBlackBox) {
-            debugWarn(`🚫 [NFT Image] Detected black box issue for: ${currentImageUrl}`);
-            
-            // For black box issues, try to force reload with more aggressive cache busting
-            if (!currentImageUrl.includes('force=') && !currentImageUrl.startsWith('data:')) {
-                const timestamp = Date.now();
-                const randomStr = Math.random().toString(36).substring(7);
-                const forceReloadUrl = currentImageUrl + 
-                    (currentImageUrl.includes('?') ? '&' : '?') + 
-                    `force=${timestamp}&fix=blackbox&rnd=${randomStr}&nocache=1&reload=force`;
-                    
-                debugLog(`🔄 [NFT Image] Attempting aggressive force reload: ${forceReloadUrl}`);
-                setCurrentImageUrl(forceReloadUrl);
-                return; // Don't proceed to fallback yet
-            }
+        // The previous "black box" heuristic included `img.complete && !data:`,
+        // which is true of *every* finished non-data image, so an error always
+        // triggered a cache-busted refetch. That defeated caching and, since
+        // the retry URL differs only by query string, made images reload
+        // repeatedly rather than settle. Only the genuine zero-dimension case
+        // is worth one retry.
+        const zeroDimensions = img.complete && !img.naturalWidth && !img.naturalHeight;
+
+        if (zeroDimensions && !currentImageUrl.includes('retry=') && !currentImageUrl.startsWith('data:')) {
+            const retryUrl = currentImageUrl +
+                (currentImageUrl.includes('?') ? '&' : '?') +
+                `retry=1`;
+            debugLog(`🔄 [NFT Image] Single retry for zero-dimension image: ${retryUrl}`);
+            setCurrentImageUrl(retryUrl);
+            return; // Don't proceed to fallback yet
         }
-        
+
         // If we have a fallback URL and current image is not already the fallback
         if (fallbackUrl && currentImageUrl !== fallbackUrl) {
             debugLog(`🔄 [NFT Image] Using fallback SVG: ${fallbackUrl}`);
