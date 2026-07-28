@@ -221,6 +221,14 @@ export default function NFTDetailPage() {
                     <div className="nft-detail-image-section">
                         <div className="nft-image-container">
                             <NFTImage
+                                // Pass the resolved image explicitly. Without
+                                // src, NFTImage falls back to
+                                // collectImageSources(), which only reads from
+                                // `listing` — null for any NFT that isn't
+                                // currently for sale — so the metadata loaded
+                                // just above was discarded and every such NFT
+                                // rendered the SVG placeholder.
+                                src={metadata?.imageUrl || metadata?.image || null}
                                 listing={listing}
                                 contractAddress={contractAddress}
                                 tokenId={tokenId}

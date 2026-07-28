@@ -148,14 +148,17 @@ function collectImageSources(listing, contractAddress, tokenId) {
         }
     }
     
-    // Standard image collection for all NFTs
-    const m = listing?.metadata || {};
+    // Standard image collection for all NFTs.
+    // `listing` is null whenever the NFT isn't currently for sale, so callers
+    // that only have loaded metadata must be able to reach this path too —
+    // hence accepting a metadata-shaped object here as well.
+    const m = listing?.metadata || listing || {};
     const sources = [
-        m.image, 
-        listing?.image, 
-        listing?.imageUrl, 
-        m.image_url, 
-        m.imageUrl
+        m.image,
+        m.imageUrl,
+        m.image_url,
+        listing?.image,
+        listing?.imageUrl,
     ];
     
     const seen = new Set();
