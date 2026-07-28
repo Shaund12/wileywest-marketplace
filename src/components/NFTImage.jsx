@@ -426,7 +426,6 @@ const NFTImage = ({
                             display: 'block',
                             opacity: '0.8'
                         }}
-                        crossOrigin="anonymous"
                         loading="lazy"
                         decoding="async"
                         fetchPriority="auto"
@@ -485,7 +484,6 @@ const NFTImage = ({
                     display: 'block',
                     opacity: '1'
                 }}
-                crossOrigin="anonymous"
                 loading="lazy"
                 decoding="async"
                 fetchPriority="auto"

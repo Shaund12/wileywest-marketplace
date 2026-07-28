@@ -226,6 +226,28 @@
     filter: brightness(1.1) contrast(1.1);
 }
 
+/* NFTImage's wrapper div. It must fill the square container rather than be
+   sized by the img rules above — those are for a bare <img>, and applying
+   them to a flex item collapsed it to zero height. */
+.nft-detail-image {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    z-index: 1;
+    border: none;
+    background: transparent;
+}
+
+.nft-detail-image img {
+    object-fit: contain !important;
+    transition: transform 0.4s ease;
+}
+
+.nft-detail-image:hover img {
+    transform: scale(1.05);
+    filter: brightness(1.1) contrast(1.1);
+}
+
 .nft-image-placeholder {
     width: 100%;
     height: 100%;

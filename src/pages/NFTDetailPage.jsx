@@ -233,9 +233,15 @@ export default function NFTDetailPage() {
                                 contractAddress={contractAddress}
                                 tokenId={tokenId}
                                 alt={metadata?.name || `NFT #${tokenId}`}
-                                className="nft-image"
-                                width={400}
-                                height={400}
+                                // Deliberately not "nft-image": NFTImage puts
+                                // className on its wrapper div, so passing that
+                                // name applied this page's img rules
+                                // (width/height:100%) to a flex item inside
+                                // .nft-image-container, collapsing it to zero
+                                // height. The image loaded but painted nothing.
+                                className="nft-detail-image"
+                                width="100%"
+                                height="100%"
                                 placeholder="🖼️"
                                 showRetry={true}
                             />
