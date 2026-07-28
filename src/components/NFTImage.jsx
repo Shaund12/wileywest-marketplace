@@ -449,7 +449,7 @@ const NFTImage = ({
                         style={{ 
                             width: '100%', 
                             height: '100%', 
-                            objectFit: 'cover',
+                            objectFit: fill ? 'contain' : 'cover',
                             backgroundColor: 'transparent',
                             border: 'none',
                             outline: 'none',
@@ -507,7 +507,7 @@ const NFTImage = ({
                 style={{ 
                     width: '100%', 
                     height: '100%', 
-                    objectFit: 'cover',
+                    objectFit: fill ? 'contain' : 'cover',
                     backgroundColor: 'transparent',
                     border: 'none',
                     outline: 'none',
