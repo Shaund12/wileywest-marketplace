@@ -108,9 +108,19 @@ const loadMetadataInternal = async (contractAddress, tokenId, provider, existing
                 metadata = await fetchMetadataFromContract(contractAddress, tokenId, provider);
                 loadingStrategy = 'contract';
             } catch (contractError) {
-                // Quick fallback to basic metadata
-                metadata = createBasicMetadata(contractAddress, tokenId);
-                loadingStrategy = 'fallback';
+                // Before giving up, ask the backend. It resolves tokenURI across
+                // every configured chain and caches the result, so it succeeds
+                // in cases where the browser-side read times out or hits the
+                // wrong chain. Falling straight through to createBasicMetadata
+                // here is what put a picsum.photos stock image on NFTs whose
+                // real metadata was available all along.
+                try {
+                    metadata = await fetchMetadataFromApi(contractAddress, tokenId);
+                    loadingStrategy = 'api';
+                } catch {
+                    metadata = createBasicMetadata(contractAddress, tokenId);
+                    loadingStrategy = 'fallback';
+                }
             }
         }
 
@@ -327,6 +337,31 @@ const fastResolveIPFS = (ipfsUrl) => {
     // Return the most reliable gateway for immediate display
     // This aligns with ListingCard's successful gateway strategy
     return `/api/ipfs/ipfs/${hash}`;
+};
+
+/**
+ * Ask the backend for metadata.
+ *
+ * /api/metadata-cache resolves tokenURI against every configured chain and
+ * caches the result, so it succeeds where a browser-side contract read fails
+ * — a wallet provider pointed at the wrong chain, an RPC timeout, or a
+ * contract that only answers on the chain the page is not currently on.
+ */
+const fetchMetadataFromApi = async (contractAddress, tokenId) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+        const res = await fetch(
+            `/api/metadata-cache?contract=${encodeURIComponent(contractAddress)}&tokenId=${encodeURIComponent(tokenId)}`,
+            { headers: { Accept: 'application/json' }, signal: controller.signal },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!data || (!data.image && !data.imageUrl)) throw new Error('No image in API metadata');
+        return data;
+    } finally {
+        clearTimeout(timer);
+    }
 };
 
 /**

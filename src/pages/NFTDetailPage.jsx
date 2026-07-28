@@ -239,9 +239,8 @@ export default function NFTDetailPage() {
                                 // (width/height:100%) to a flex item inside
                                 // .nft-image-container, collapsing it to zero
                                 // height. The image loaded but painted nothing.
-                                className="nft-detail-image"
-                                width="100%"
-                                height="100%"
+                                className="nft-detail-hero"
+                                fill
                                 placeholder="🖼️"
                                 showRetry={true}
                             />

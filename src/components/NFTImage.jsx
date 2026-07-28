@@ -233,7 +233,13 @@ const NFTImage = ({
     showRetry = true,
     onLoad,
     onError,
-    placeholder = '🖼️'
+    placeholder = '🖼️',
+    // When true, the wrapper carries no inline width/height and the caller's
+    // stylesheet sizes it. Needed inside containers that establish their box
+    // with aspect-ratio: an inline height:100% there resolves against a
+    // non-definite height, collapses to zero, and the image — though loaded
+    // and opaque — has no area to paint into.
+    fill = false,
 }) => {
     const [currentImageUrl, setCurrentImageUrl] = useState(null);
     const [gatewayIndex, setGatewayIndex] = useState(0);
@@ -432,7 +438,7 @@ const NFTImage = ({
     // Render loading state
     if (isLoading) {
         return (
-            <div className={`nft-image-container ${className}`} style={{ width, height }}>
+            <div className={`nft-image-container ${className}`} style={fill ? undefined : { width, height }}>
                 {currentImageUrl && (
                     <img
                         src={currentImageUrl}
@@ -466,7 +472,7 @@ const NFTImage = ({
     // Render error state with retry option
     if (hasError) {
         return (
-            <div className={`nft-image-container nft-image-error ${className}`} style={{ width, height }}>
+            <div className={`nft-image-container nft-image-error ${className}`} style={fill ? undefined : { width, height }}>
                 <div className="nft-image-placeholder">
                     <div className="placeholder-icon">{placeholder}</div>
                     <div className="placeholder-text">Image unavailable</div>
@@ -491,7 +497,7 @@ const NFTImage = ({
 
     // Render successful image
     return (
-        <div className={`nft-image-container ${className}`} style={{ width, height }}>
+        <div className={`nft-image-container ${className}`} style={fill ? undefined : { width, height }}>
             <img
                 src={currentImageUrl}
                 alt={alt}
