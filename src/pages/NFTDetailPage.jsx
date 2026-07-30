@@ -8,7 +8,6 @@ import { formatPriceWithUSDC, getTokenSymbol } from '../utils/tokenUtils';
 import { loadNFTMetadata } from '../utils/metadataLoader';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import EmptyState from '../components/EmptyState';
-import NFTImage from '../components/NFTImage';
 import { activeChain } from '../config/chains.js';
 import './NFTDetailPage.css';
 
@@ -220,29 +219,10 @@ export default function NFTDetailPage() {
                     {/* Image Section */}
                     <div className="nft-detail-image-section">
                         <div className="nft-image-container">
-                            <NFTImage
-                                // Pass the resolved image explicitly. Without
-                                // src, NFTImage falls back to
-                                // collectImageSources(), which only reads from
-                                // `listing` — null for any NFT that isn't
-                                // currently for sale — so the metadata loaded
-                                // just above was discarded and every such NFT
-                                // rendered the SVG placeholder.
-                                src={metadata?.imageUrl || metadata?.image || null}
-                                listing={listing}
-                                contractAddress={contractAddress}
-                                tokenId={tokenId}
+                            <img
+                                src={metadata?.imageUrl || metadata?.image || undefined}
                                 alt={metadata?.name || `NFT #${tokenId}`}
-                                // Deliberately not "nft-image": NFTImage puts
-                                // className on its wrapper div, so passing that
-                                // name applied this page's img rules
-                                // (width/height:100%) to a flex item inside
-                                // .nft-image-container, collapsing it to zero
-                                // height. The image loaded but painted nothing.
-                                className="nft-detail-hero"
-                                fill
-                                placeholder="🖼️"
-                                showRetry={true}
+                                className="nft-detail-hero-image"
                             />
                         </div>
 

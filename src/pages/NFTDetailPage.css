@@ -226,32 +226,15 @@
     filter: brightness(1.1) contrast(1.1);
 }
 
-/* NFTImage's wrapper div on this page.
-   Named .nft-detail-hero rather than .nft-detail-image because the latter is
-   already defined in src/profile-page.css — that stylesheet is loaded
-   globally, both rules have equal specificity, and its version (padding:20px,
-   height:100%) was winning on load order and collapsing this wrapper.
-   position:absolute + inset:0 also avoids resolving a percentage height
-   against .nft-image-container, whose height comes from aspect-ratio and is
-   therefore not definite. */
-.nft-detail-hero {
-    position: absolute;
-    inset: 0;
-    width: auto;
-    height: auto;
-    z-index: 1;
-    border: none;
-    background: transparent;
-}
-
-.nft-detail-hero img {
+.nft-detail-hero-image {
     width: 100%;
     height: 100%;
     object-fit: contain !important;
     transition: transform 0.4s ease;
+    display: block;
 }
 
-.nft-detail-hero:hover img {
+.nft-detail-hero-image:hover {
     transform: scale(1.05);
     filter: brightness(1.1) contrast(1.1);
 }

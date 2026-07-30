@@ -12,7 +12,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import NFTImage from '../components/NFTImage';
 import EmptyState from '../components/EmptyState';
 import LoadingSkeleton from '../components/LoadingSkeleton';
 import { fetchCollections, fetchCollectionTokens } from '../utils/explorerApi';
@@ -329,14 +328,11 @@ function CollectionTokens({ collection, chainId, onBack }) {
                                 className="token-card"
                             >
                                 <div className="token-card__media">
-                                    <NFTImage
+                                    <img
                                         src={t.imageUrl}
-                                        contractAddress={collection.address}
-                                        tokenId={t.tokenId}
                                         alt={t.name}
-                                        width={240}
-                                        height={240}
-                                        showRetry={false}
+                                        loading="lazy"
+                                        decoding="async"
                                     />
                                 </div>
                                 <div className="token-card__body">
