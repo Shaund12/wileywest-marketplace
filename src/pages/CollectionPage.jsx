@@ -303,17 +303,16 @@ export default function CollectionPage() {
         owners: 0
     });
 
-    // Update collection stats when filtered items change
     useEffect(() => {
         const calculateStats = async () => {
-            const items = filteredItems;
+            const items = collectionListings;
             const totalListings = items.length;
             
             if (totalListings === 0) {
                 setCollectionStats({
                     totalListings: 0,
-                    floorPrice: '$0.00',
-                    totalVolume: '$0.00',
+                    floorPrice: '—',
+                    totalVolume: '—',
                     owners: 0
                 });
                 return;
@@ -322,7 +321,7 @@ export default function CollectionPage() {
             try {
                 // Calculate floor price in USDC by comparing all items
                 let lowestPriceUSDC = Infinity;
-                let floorPriceDisplay = '$0.00';
+                let floorPriceDisplay = '—';
                 let totalVolumeUSDC = 0;
 
                 for (const item of items) {
@@ -346,23 +345,23 @@ export default function CollectionPage() {
 
                 setCollectionStats({
                     totalListings,
-                    floorPrice: lowestPriceUSDC === Infinity ? '$0.00' : floorPriceDisplay,
-                    totalVolume: `$${totalVolumeUSDC.toFixed(2)}`,
+                    floorPrice: lowestPriceUSDC === Infinity ? '—' : floorPriceDisplay,
+                    totalVolume: totalVolumeUSDC > 0 ? `$${totalVolumeUSDC.toFixed(2)}` : '—',
                     owners
                 });
             } catch (error) {
                 console.warn('Error calculating collection stats:', error);
                 setCollectionStats({
                     totalListings,
-                    floorPrice: '$0.00',
-                    totalVolume: '$0.00',
+                    floorPrice: '—',
+                    totalVolume: '—',
                     owners: new Set(items.map(item => item.seller)).size
                 });
             }
         };
 
         calculateStats();
-    }, [filteredItems, provider]);
+    }, [collectionListings, provider]);
 
     // Pagination
     const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
@@ -456,12 +455,16 @@ export default function CollectionPage() {
                             <h3 className="collection-stat-value">{collectionStats.totalListings}</h3>
                         </div>
                         <div className="collection-stat-card">
-                            <div className="collection-stat-label">Floor Price</div>
+                            <div className="collection-stat-label">Lowest listed</div>
                             <h3 className="collection-stat-value">{collectionStats.floorPrice}</h3>
                         </div>
                         <div className="collection-stat-card">
-                            <div className="collection-stat-label">Total Volume</div>
+                            <div className="collection-stat-label">Total listed value</div>
                             <h3 className="collection-stat-value">{collectionStats.totalVolume}</h3>
+                        </div>
+                        <div className="collection-stat-card">
+                            <div className="collection-stat-label">Sellers</div>
+                            <h3 className="collection-stat-value">{collectionStats.owners || '—'}</h3>
                         </div>
                     </div>
                 </div>
