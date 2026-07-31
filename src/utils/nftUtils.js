@@ -29,7 +29,6 @@ export const MARKETPLACE_CONFIG = {
     MAX_CONCURRENT_CONTRACT_CALLS: 2,
     
     // Fallback settings - Updated with working gateways  
-    DEFAULT_NFT_PLACEHOLDER: 'https://picsum.photos/seed/default/300/300',
     IPFS_GATEWAYS: [
         '/api/ipfs/ipfs/',
         'https://ipfs.io/ipfs/',              // Official gateway - most reliable
@@ -314,6 +313,9 @@ export const normalizeNFTMetadata = (rawMetadata, contractAddress, tokenId) => {
                     loaded: true,
                     loading: false,
                     error: null,
+                    metadataState: 'loaded',
+                    failureProvenance: null,
+                    lastAttemptedUri: null,
                     timestamp: Date.now(),
                     source: 'V-Share Generator'
                 };
@@ -342,6 +344,9 @@ export const normalizeNFTMetadata = (rawMetadata, contractAddress, tokenId) => {
             loaded: true,
             loading: false,
             error: null,
+            metadataState: 'loading',
+            failureProvenance: null,
+            lastAttemptedUri: rawMetadata?.tokenURI || rawMetadata?.token_uri || null,
             timestamp: Date.now()
         };
         
@@ -350,6 +355,8 @@ export const normalizeNFTMetadata = (rawMetadata, contractAddress, tokenId) => {
             normalized.name = `NFT #${tokenId}`;
             normalized.description = 'Metadata unavailable';
             normalized.error = 'No metadata provided';
+            normalized.metadataState = 'metadata_unavailable';
+            normalized.failureProvenance = 'metadata_input';
             return normalized;
         }
         
@@ -364,33 +371,47 @@ export const normalizeNFTMetadata = (rawMetadata, contractAddress, tokenId) => {
             try {
                 normalized.image = resolveIPFSUrl(rawMetadata.image);
                 normalized.imageUrl = normalized.image;
+                normalized.metadataState = 'loaded';
             } catch (e) {
                 debugWarn('Error resolving image URL:', e);
-                normalized.image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
-                normalized.imageUrl = normalized.image;
+                normalized.image = null;
+                normalized.imageUrl = null;
+                normalized.error = e.message;
+                normalized.metadataState = 'media_failed';
+                normalized.failureProvenance = 'image_uri';
+                normalized.lastAttemptedUri = rawMetadata.image;
             }
         } else if (rawMetadata.image_url) {
             try {
                 normalized.image = resolveIPFSUrl(rawMetadata.image_url);
                 normalized.imageUrl = normalized.image;
+                normalized.metadataState = 'loaded';
             } catch (e) {
                 debugWarn('Error resolving image_url:', e);
-                normalized.image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
-                normalized.imageUrl = normalized.image;
+                normalized.image = null;
+                normalized.imageUrl = null;
+                normalized.error = e.message;
+                normalized.metadataState = 'media_failed';
+                normalized.failureProvenance = 'image_uri';
+                normalized.lastAttemptedUri = rawMetadata.image_url;
             }
         } else if (rawMetadata.imageUrl) {
             try {
                 normalized.image = resolveIPFSUrl(rawMetadata.imageUrl);
                 normalized.imageUrl = normalized.image;
+                normalized.metadataState = 'loaded';
             } catch (e) {
                 debugWarn('Error resolving imageUrl:', e);
-                normalized.image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
-                normalized.imageUrl = normalized.image;
+                normalized.image = null;
+                normalized.imageUrl = null;
+                normalized.error = e.message;
+                normalized.metadataState = 'media_failed';
+                normalized.failureProvenance = 'image_uri';
+                normalized.lastAttemptedUri = rawMetadata.imageUrl;
             }
         } else {
-            // No image found, use placeholder
-            normalized.image = MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
-            normalized.imageUrl = normalized.image;
+            normalized.metadataState = 'missing_image';
+            normalized.failureProvenance = 'metadata_document';
         }
         
         // Process attributes
@@ -466,6 +487,9 @@ export const normalizeNFTMetadata = (rawMetadata, contractAddress, tokenId) => {
             loaded: true,
             loading: false,
             error: error.message || 'Processing error',
+            metadataState: 'metadata_unavailable',
+            failureProvenance: 'normalization',
+            lastAttemptedUri: rawMetadata?.tokenURI || rawMetadata?.token_uri || null,
             timestamp: Date.now()
         };
     }

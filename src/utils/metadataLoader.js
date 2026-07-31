@@ -5,7 +5,7 @@
 
 import { ethers } from 'ethers';
 import { debugLog, debugWarn, criticalError } from './debugUtils';
-import { fetchMetadataWithFallback, normalizeNFTMetadata, MARKETPLACE_CONFIG } from './nftUtils';
+import { fetchMetadataWithFallback, normalizeNFTMetadata } from './nftUtils';
 import { getReadProvider } from './networkUtils';
 
 // Global metadata cache to prevent duplicate fetches
@@ -296,18 +296,22 @@ const fastFetchMetadata = async (tokenURI) => {
  * Ultra-fast metadata normalization without heavy processing
  */
 const fastNormalizeMetadata = (metadata, contractAddress, tokenId) => {
+    const image = metadata?.image || metadata?.imageUrl || null;
     // Quick validation and normalization
     const normalized = {
         name: metadata?.name || `NFT #${tokenId}`,
         description: metadata?.description || '',
-        image: metadata?.image || metadata?.imageUrl || MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
-        imageUrl: metadata?.image || metadata?.imageUrl || MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
+        image,
+        imageUrl: image,
         attributes: metadata?.attributes || metadata?.traits || [],
         contractAddress: contractAddress,
         tokenId: tokenId,
         loaded: true,
         loading: false,
-        error: null,
+        error: metadata?.error || null,
+        metadataState: metadata?.metadataState || (image ? 'loaded' : 'missing_image'),
+        failureProvenance: metadata?.failureProvenance || (image ? null : 'metadata_document'),
+        lastAttemptedUri: metadata?.lastAttemptedUri || metadata?.tokenURI || metadata?.token_uri || null,
         timestamp: Date.now()
     };
 
@@ -325,7 +329,7 @@ const fastNormalizeMetadata = (metadata, contractAddress, tokenId) => {
  * Prioritizes fast gateways but provides fallback URLs for robust loading
  */
 const fastResolveIPFS = (ipfsUrl) => {
-    if (!ipfsUrl) return MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER;
+    if (!ipfsUrl) return null;
     
     let hash = ipfsUrl;
     if (ipfsUrl.startsWith('ipfs://')) {
@@ -371,14 +375,17 @@ const createBasicMetadata = (contractAddress, tokenId) => {
     return {
         name: `NFT #${tokenId}`,
         description: `Token #${tokenId} from contract ${contractAddress}`,
-        image: MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
-        imageUrl: MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
+        image: null,
+        imageUrl: null,
         attributes: [],
         contractAddress: contractAddress,
         tokenId: tokenId,
         loaded: true,
         loading: false,
-        error: null
+        error: 'Contract and metadata API did not return usable metadata',
+        metadataState: 'metadata_unavailable',
+        failureProvenance: 'contract_and_metadata_api',
+        lastAttemptedUri: null
     };
 };
 
@@ -389,8 +396,8 @@ const createFallbackMetadata = (tokenId, errorMessage) => {
     return {
         name: `NFT #${tokenId || 'Unknown'}`,
         description: `Metadata unavailable: ${errorMessage}`,
-        image: MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
-        imageUrl: MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
+        image: null,
+        imageUrl: null,
         attributes: [],
         collection: null,
         contractAddress: null,
@@ -398,6 +405,9 @@ const createFallbackMetadata = (tokenId, errorMessage) => {
         loaded: true,
         loading: false,
         error: errorMessage,
+        metadataState: 'metadata_unavailable',
+        failureProvenance: 'metadata_loader',
+        lastAttemptedUri: null,
         timestamp: Date.now(),
         loadingStrategy: 'error_fallback'
     };
@@ -505,9 +515,10 @@ export const batchLoadMetadata = async (nfts, provider, batchSize = 20) => {
 export const resolveImageUrl = async (imageUrl) => {
     if (!imageUrl || typeof imageUrl !== 'string') {
         return {
-            primary: MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER,
+            primary: null,
             fallbacks: [],
-            isIPFS: false
+            isIPFS: false,
+            metadataState: 'missing_image'
         };
     }
 
@@ -560,7 +571,7 @@ export const resolveImageUrl = async (imageUrl) => {
     // If unknown format, use as-is with fallback
     return {
         primary: imageUrl,
-        fallbacks: [MARKETPLACE_CONFIG.DEFAULT_NFT_PLACEHOLDER],
+        fallbacks: [],
         isIPFS: false
     };
 };
