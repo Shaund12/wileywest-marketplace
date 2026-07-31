@@ -18,7 +18,8 @@ import {
     resolveIPFSWithFallbacks,
     isCORSError,
     isNetworkError,
-    retryWithBackoff
+    retryWithBackoff,
+    getReadProvider
 } from '../utils/networkUtils';
 import { batchLoadMetadata } from '../utils/metadataLoader';
 
@@ -488,15 +489,17 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
 
     // Optimized parallel blockchain scanning with smart caching
     const fetchPastSalesEvents = async (contract) => {
-        if (!contract || !provider) return;
+        if (!contract) return;
         
         try {
+            const readProvider = getReadProvider();
+            const readContract = new ethers.Contract(contract.target, contract.interface, readProvider);
             setStatus("🚀 Starting optimized blockchain scan with parallel processing...");
             debugLog("🚀 Starting optimized blockchain scan with parallel processing...");
             
             // Test network connectivity first
             try {
-                await provider.getNetwork();
+                await readProvider.getNetwork();
             } catch (networkError) {
                 debugWarn("Network connectivity issue - skipping past events fetch");
                 setStatus("");
@@ -504,7 +507,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
             }
             
             // Get the current block number
-            const currentBlock = await provider.getBlockNumber();
+            const currentBlock = await readProvider.getBlockNumber();
             
             // CONSERVATIVE SCAN: Only scan recent blocks to avoid massive data collection
             const fromBlock = Math.max(currentBlock - 100000, lastScannedBlock); // Extended to last 100k blocks for better test sales coverage
@@ -552,14 +555,14 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                     
                     try {
                         // Sequential event queries for this chunk (no parallel processing)
-                        const chunkPurchased = await contract.queryFilter(
-                            contract.filters.NFTPurchased(),
+                        const chunkPurchased = await readContract.queryFilter(
+                            readContract.filters.NFTPurchased(),
                             start,
                             end
                         );
                         
-                        const chunkCanceled = await contract.queryFilter(
-                            contract.filters.ListingCanceled(),
+                        const chunkCanceled = await readContract.queryFilter(
+                            readContract.filters.ListingCanceled(),
                             start,
                             end
                         );
@@ -572,7 +575,7 @@ export function MarketplaceProvider({ children, marketplaceAddress, abi }) {
                         
                     } catch (chunkError) {
                         debugWarn(`⚠️ Error in chunk ${chunkKey}:`, chunkError);
-                        return { purchased: [], canceled: [] };
+                        throw chunkError;
                     }
                 };
                 
