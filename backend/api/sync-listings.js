@@ -43,18 +43,38 @@ const CONFIG = {
     MAX_PARALLEL: 20,
     MAX_EXECUTION_TIME: 240000,
     MAX_BLOCK_RANGE: 50000,
+    RPC_RETRIES: 2,
 };
 
-let provider, marketplace;
+let provider, marketplaces;
 
 function init() {
     const rpcUrl = process.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
-    provider = new ethers.JsonRpcProvider(rpcUrl);
+    const fallbackUrl = process.env.MARKETPLACE_RPC_FALLBACK_URL ||
+        (process.env.VITE_CHAIN_ID === '1490'
+            ? 'https://explorer.vitruveo.ai/api/eth-rpc'
+            : 'https://explorer.hyvechain.com/api/eth-rpc');
+    const providers = [...new Set([rpcUrl, fallbackUrl])].map((url) => new ethers.JsonRpcProvider(url));
+    provider = new ethers.FallbackProvider(providers, undefined, { quorum: 1 });
     const marketplaceAddress = process.env.VITE_MARKETPLACE_ADDRESS;
     if (!marketplaceAddress || marketplaceAddress === '0x0000000000000000000000000000000000000000') {
         throw new Error('Marketplace address not configured (VITE_MARKETPLACE_ADDRESS)');
     }
-    marketplace = new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, provider);
+    marketplaces = providers.map((rpcProvider) => new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, rpcProvider));
+}
+
+async function queryEvents(filterName, fromBlock, toBlock) {
+    let lastError;
+    for (let attempt = 0; attempt <= CONFIG.RPC_RETRIES; attempt += 1) {
+        for (const contract of marketplaces) {
+            try {
+                return await contract.queryFilter(contract.filters[filterName](), fromBlock, toBlock);
+            } catch (error) {
+                lastError = error;
+            }
+        }
+    }
+    throw new Error(`${filterName} ${fromBlock}-${toBlock} failed: ${lastError?.message || 'RPC unavailable'}`);
 }
 
 async function getLastSyncMeta() {
@@ -81,34 +101,28 @@ async function fetchJson(url, timeoutMs) {
 }
 
 async function discoverNewListingIds(fromBlock, toBlock) {
-    const ev = marketplace.filters.ListingCreated();
     const ids = [];
     for (let start = fromBlock; start <= toBlock; start += CONFIG.LISTING_EVENT_CHUNK) {
         const end = Math.min(start + CONFIG.LISTING_EVENT_CHUNK - 1, toBlock);
-        try {
-            const events = await marketplace.queryFilter(ev, start, end);
-            events.forEach((e) => ids.push(e.args.listingId.toString()));
-        } catch (err) { console.warn(`events ${start}-${end}:`, err.message); }
+        const events = await queryEvents('ListingCreated', start, end);
+        events.forEach((e) => ids.push(e.args.listingId.toString()));
     }
     return ids;
 }
 
 async function fetchCanceledListings(fromBlock, toBlock) {
-    const cancelEv = marketplace.filters.ListingCanceled();
     const canceled = new Set();
     for (let start = fromBlock; start <= toBlock; start += CONFIG.LISTING_EVENT_CHUNK) {
         const end = Math.min(start + CONFIG.LISTING_EVENT_CHUNK - 1, toBlock);
-        try {
-            const events = await marketplace.queryFilter(cancelEv, start, end);
-            events.forEach((e) => canceled.add(e.args.listingId.toString()));
-        } catch (err) { console.warn(`cancel events ${start}-${end}:`, err.message); }
+        const events = await queryEvents('ListingCanceled', start, end);
+        events.forEach((e) => canceled.add(e.args.listingId.toString()));
     }
     return canceled;
 }
 
 async function fetchListingOnChain(listingId) {
     try {
-        const data = await marketplace.listings(listingId);
+        const data = await marketplaces[0].listings(listingId);
         if (data.seller === ethers.ZeroAddress) return null;
         return {
             id: listingId, seller: data.seller, nftContract: data.nftContract,
@@ -153,27 +167,14 @@ async function upsertListingRows(rows) {
     }
 }
 
-async function syncListings(fullRescan = false, liteSync = false) {
+async function persistRange(fromBlock, effectiveToBlock, liteSync = false) {
     const startTime = Date.now();
-    const latest = await provider.getBlockNumber();
-    let fromBlock = 0;
-    const meta = await getLastSyncMeta();
-    if (meta && !fullRescan) fromBlock = Number(meta.last_block) + 1;
-
-    let maxBlockRange = CONFIG.MAX_BLOCK_RANGE;
-    if (liteSync) maxBlockRange = Math.min(maxBlockRange, 10000);
-    const maxToBlock = Math.min(latest, fromBlock + maxBlockRange);
-    const effectiveToBlock = fullRescan ? maxToBlock : latest;
-
     const newIds = await discoverNewListingIds(fromBlock, effectiveToBlock);
     const canceled = await fetchCanceledListings(fromBlock, effectiveToBlock);
 
-    let limitedNewIds = newIds;
-    if (liteSync && newIds.length > 100) limitedNewIds = newIds.slice(0, 100);
-
     const listingsMap = new Map();
-    for (let i = 0; i < limitedNewIds.length; i += CONFIG.MAX_PARALLEL) {
-        const chunk = limitedNewIds.slice(i, i + CONFIG.MAX_PARALLEL);
+    for (let i = 0; i < newIds.length; i += CONFIG.MAX_PARALLEL) {
+        const chunk = newIds.slice(i, i + CONFIG.MAX_PARALLEL);
         await Promise.allSettled(chunk.map(async (id) => {
             const onchain = await fetchListingOnChain(id);
             if (onchain) listingsMap.set(id, onchain);
@@ -207,13 +208,33 @@ async function syncListings(fullRescan = false, liteSync = false) {
         }
     }
 
-    await setLastSyncMeta(effectiveToBlock);
     return {
-        newListingIds: newIds.length, processedListings: limitedNewIds.length,
-        upserted: upsertRows.length, canceled: canceled.size, latestBlock: latest,
+        newListingIds: newIds.length, processedListings: newIds.length,
+        upserted: upsertRows.length, canceled: canceled.size,
         fromBlock, effectiveToBlock, executionTimeMs: Date.now() - startTime,
-        partialSync: effectiveToBlock < latest, liteMode: liteSync,
+        liteMode: liteSync,
     };
+}
+
+async function commitCoveredRange(work, advance, endBlock) {
+    const result = await work();
+    await advance(endBlock);
+    return result;
+}
+
+async function syncListings(fullRescan = false, liteSync = false) {
+    const latest = await provider.getBlockNumber();
+    const meta = await getLastSyncMeta();
+    const fromBlock = fullRescan ? 0 : (meta ? Number(meta.last_block) + 1 : 0);
+    const rangeLimit = liteSync ? Math.min(CONFIG.MAX_BLOCK_RANGE, 10000) : CONFIG.MAX_BLOCK_RANGE;
+    const effectiveToBlock = Math.min(latest, fromBlock + rangeLimit - 1);
+    if (fromBlock > latest) return { newListingIds: 0, processedListings: 0, upserted: 0, canceled: 0, latestBlock: latest, fromBlock, effectiveToBlock: latest, partialSync: false, liteMode: liteSync };
+    const stats = await commitCoveredRange(
+        () => persistRange(fromBlock, effectiveToBlock, liteSync),
+        setLastSyncMeta,
+        effectiveToBlock,
+    );
+    return { ...stats, latestBlock: latest, partialSync: effectiveToBlock < latest };
 }
 
 module.exports = async function handler(req, res) {
@@ -223,6 +244,15 @@ module.exports = async function handler(req, res) {
     try {
         init();
         const body = req.method === 'POST' ? req.body || {} : {};
+        const repairFrom = Number(body.repairFromBlock);
+        const repairTo = Number(body.repairToBlock);
+        if (Number.isInteger(repairFrom) || Number.isInteger(repairTo)) {
+            if (!Number.isInteger(repairFrom) || !Number.isInteger(repairTo) || repairFrom < 0 || repairTo < repairFrom || repairTo - repairFrom + 1 > CONFIG.MAX_BLOCK_RANGE) {
+                return res.status(400).json({ error: `Repair range must be contiguous and at most ${CONFIG.MAX_BLOCK_RANGE} blocks` });
+            }
+            const stats = await persistRange(repairFrom, repairTo, body.liteSync === true);
+            return res.status(200).json({ success: true, repair: true, stats, durationMs: Date.now() - start });
+        }
         const fullRescan = body.fullRescan === true;
         const liteSync = body.liteSync === true;
         const stats = await syncListings(fullRescan, liteSync);
@@ -232,3 +262,4 @@ module.exports = async function handler(req, res) {
     }
 };
 module.exports.syncListings = async (opts = {}) => { init(); return syncListings(opts.fullRescan === true, opts.liteSync !== false); };
+module.exports.commitCoveredRange = commitCoveredRange;
