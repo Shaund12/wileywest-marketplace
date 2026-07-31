@@ -17,3 +17,11 @@ node_modules/
 *.tmp
 *.temp
 /.vs
+
+# Local debugging artifacts (Playwright/agent screenshots, scratch notes)
+.playwright-mcp/
+.omo/
+.debug-journal.md
+*.png
+!src/**/*.png
+!public/**/*.png
