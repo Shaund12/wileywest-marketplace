@@ -58,7 +58,50 @@ async function checkRpc(url, expectedChainId) {
     }
 }
 
-async function collectHealthSnapshot({ healthCheck, rpcTargets }) {
+async function rpcHead(url) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', accept: 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'eth_blockNumber', params: [] }),
+            signal: controller.signal,
+        });
+        if (!response.ok) return null;
+        const payload = await response.json();
+        return Number.parseInt(payload.result, 16);
+    } finally { clearTimeout(timeout); }
+}
+
+function buildSyncHealth({ rows, heads, runtime, listingCount, now = Date.now() }) {
+    const cursors = new Map(rows.map((row) => [row.key, row]));
+    const chains = { hyve: 7847, vitruveo: 1490 };
+    return Object.fromEntries(Object.entries(chains).map(([key, chainId]) => {
+        const cursor = cursors.get(`listing_events:${chainId}`) ||
+            (chainId === runtime.chainId ? cursors.get('listing_events') : null);
+        const indexedHead = cursor ? Number(cursor.last_block) : null;
+        const rpcBlock = heads[key];
+        const successfulEnd = runtime.lastSuccessfulRange?.toBlock ?? null;
+        return [key, {
+            chainId,
+            indexedHead,
+            rpcHead: rpcBlock,
+            lagBlocks: indexedHead === null || rpcBlock === null ? null : Math.max(0, rpcBlock - indexedHead),
+            lagSeconds: cursor?.updated_at ? Math.max(0, Math.floor((now - new Date(cursor.updated_at).getTime()) / 1000)) : null,
+            lastFullySuccessfulRange: chainId === runtime.chainId ? runtime.lastSuccessfulRange : null,
+            failedRange: chainId === runtime.chainId ? runtime.failedRange : null,
+            retryCount: chainId === runtime.chainId ? runtime.retryCount : 0,
+            lastError: chainId === runtime.chainId ? runtime.lastError : null,
+            discoveredListings: chainId === runtime.chainId ? runtime.discoveredListings : null,
+            persistedListings: chainId === runtime.chainId ? runtime.persistedListings : null,
+            activeListings: chainId === runtime.chainId ? listingCount : null,
+            cursorAdvancedWithoutCoverage: successfulEnd !== null && indexedHead > successfulEnd,
+        }];
+    }));
+}
+
+async function collectHealthSnapshot({ healthCheck, rpcTargets, query, syncRuntime }) {
     const requestStarted = performance.now();
     const [database, hyve, vitruveo] = await Promise.all([
         measure('database', 'Marketplace database', 'Listings, profiles, and cached metadata', healthCheck),
@@ -78,6 +121,23 @@ async function collectHealthSnapshot({ healthCheck, rpcTargets }) {
     const services = [api, database, hyve, vitruveo];
     const healthyCount = services.filter((service) => service.ok).length;
     const ok = healthyCount === services.length;
+    let sync = { chains: {}, ingestionFailure: null, metadataFailures: 0 };
+    try {
+        const [{ rows }, listingResult, hyveHead, vitruveoHead] = await Promise.all([
+            query(`SELECT key, last_block, updated_at FROM marketplace_sync_meta WHERE key = 'listing_events' OR key LIKE 'listing_events:%'`),
+            query(`SELECT COUNT(*)::int AS count FROM marketplace_listings WHERE active = true`),
+            rpcHead(rpcTargets.hyve),
+            rpcHead(rpcTargets.vitruveo),
+        ]);
+        const runtime = syncRuntime();
+        sync = {
+            chains: buildSyncHealth({ rows, heads: { hyve: hyveHead, vitruveo: vitruveoHead }, runtime, listingCount: listingResult.rows[0]?.count || 0 }),
+            ingestionFailure: runtime.lastError ? { range: runtime.failedRange, retryCount: runtime.retryCount, error: runtime.lastError } : null,
+            metadataFailures: runtime.metadataFailures,
+        };
+    } catch (error) {
+        sync.ingestionFailure = { range: null, retryCount: 0, error: `Health collection failed: ${error.message}` };
+    }
 
     return {
         ok,
@@ -88,6 +148,7 @@ async function collectHealthSnapshot({ healthCheck, rpcTargets }) {
         uptimeSeconds: Math.floor(process.uptime()),
         version: packageInfo.version,
         services,
+        sync,
     };
 }
 
@@ -577,4 +638,4 @@ function renderHealthPage(snapshot) {
 </html>`;
 }
 
-module.exports = { collectHealthSnapshot, renderHealthPage, formatDuration };
+module.exports = { collectHealthSnapshot, renderHealthPage, formatDuration, buildSyncHealth };

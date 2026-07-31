@@ -47,6 +47,16 @@ const CONFIG = {
 };
 
 let provider, marketplaces;
+const syncStatus = {
+    chainId: Number(process.env.VITE_CHAIN_ID || 7847),
+    lastSuccessfulRange: null,
+    failedRange: null,
+    retryCount: 0,
+    lastError: null,
+    discoveredListings: 0,
+    persistedListings: 0,
+    metadataFailures: 0,
+};
 
 function init() {
     const rpcUrl = process.env.VITE_RPC_URL || 'https://rpc.vitruveo.xyz';
@@ -74,6 +84,9 @@ async function queryEvents(filterName, fromBlock, toBlock) {
             }
         }
     }
+    syncStatus.failedRange = { fromBlock, toBlock };
+    syncStatus.retryCount = (CONFIG.RPC_RETRIES + 1) * marketplaces.length;
+    syncStatus.lastError = lastError?.message || 'RPC unavailable';
     throw new Error(`${filterName} ${fromBlock}-${toBlock} failed: ${lastError?.message || 'RPC unavailable'}`);
 }
 
@@ -121,16 +134,20 @@ async function fetchCanceledListings(fromBlock, toBlock) {
 }
 
 async function fetchListingOnChain(listingId) {
-    try {
-        const data = await marketplaces[0].listings(listingId);
-        if (data.seller === ethers.ZeroAddress) return null;
-        return {
-            id: listingId, seller: data.seller, nftContract: data.nftContract,
-            tokenId: data.tokenId.toString(), quantity: data.quantity.toString(),
-            pricePerUnit: data.pricePerUnit.toString(), paymentToken: data.paymentToken,
-            isERC1155: data.isERC1155, active: data.active,
-        };
-    } catch (err) { console.warn(`listing ${listingId}:`, err.message); return null; }
+    let lastError;
+    for (const contract of marketplaces) {
+        try {
+            const data = await contract.listings(listingId);
+            if (data.seller === ethers.ZeroAddress) throw new Error('listing returned an empty seller');
+            return {
+                id: listingId, seller: data.seller, nftContract: data.nftContract,
+                tokenId: data.tokenId.toString(), quantity: data.quantity.toString(),
+                pricePerUnit: data.pricePerUnit.toString(), paymentToken: data.paymentToken,
+                isERC1155: data.isERC1155, active: data.active,
+            };
+        } catch (error) { lastError = error; }
+    }
+    throw new Error(`listing ${listingId} failed: ${lastError?.message || 'RPC unavailable'}`);
 }
 
 async function fetchNFTMetadata(nftContract, tokenId) {
@@ -144,7 +161,11 @@ async function fetchNFTMetadata(nftContract, tokenId) {
         const meta = await fetchJson(tokenURI, CONFIG.METADATA_TIMEOUT);
         if (meta.image?.startsWith('ipfs://')) meta.image = `https://ipfs.io/ipfs/${meta.image.slice(7)}`;
         return { metadata: meta, name: meta.name || `Token #${tokenId}`, description: meta.description || null, image: meta.image || null };
-    } catch (err) { console.warn(`metadata ${nftContract}:${tokenId}:`, err.message); return {}; }
+    } catch (err) {
+        syncStatus.metadataFailures += 1;
+        console.warn(`metadata ${nftContract}:${tokenId}:`, err.message);
+        return {};
+    }
 }
 
 async function upsertListingRows(rows) {
@@ -175,7 +196,7 @@ async function persistRange(fromBlock, effectiveToBlock, liteSync = false) {
     const listingsMap = new Map();
     for (let i = 0; i < newIds.length; i += CONFIG.MAX_PARALLEL) {
         const chunk = newIds.slice(i, i + CONFIG.MAX_PARALLEL);
-        await Promise.allSettled(chunk.map(async (id) => {
+        await Promise.all(chunk.map(async (id) => {
             const onchain = await fetchListingOnChain(id);
             if (onchain) listingsMap.set(id, onchain);
         }));
@@ -201,6 +222,7 @@ async function persistRange(fromBlock, effectiveToBlock, liteSync = false) {
     }));
 
     if (upsertRows.length > 0) await upsertListingRows(upsertRows);
+    if (upsertRows.length !== newIds.length) throw new Error(`Persisted ${upsertRows.length} of ${newIds.length} discovered listings`);
 
     if (canceled.size > 0) {
         for (const cId of canceled) {
@@ -229,11 +251,24 @@ async function syncListings(fullRescan = false, liteSync = false) {
     const rangeLimit = liteSync ? Math.min(CONFIG.MAX_BLOCK_RANGE, 10000) : CONFIG.MAX_BLOCK_RANGE;
     const effectiveToBlock = Math.min(latest, fromBlock + rangeLimit - 1);
     if (fromBlock > latest) return { newListingIds: 0, processedListings: 0, upserted: 0, canceled: 0, latestBlock: latest, fromBlock, effectiveToBlock: latest, partialSync: false, liteMode: liteSync };
-    const stats = await commitCoveredRange(
-        () => persistRange(fromBlock, effectiveToBlock, liteSync),
-        setLastSyncMeta,
-        effectiveToBlock,
-    );
+    let stats;
+    try {
+        stats = await commitCoveredRange(
+            () => persistRange(fromBlock, effectiveToBlock, liteSync),
+            setLastSyncMeta,
+            effectiveToBlock,
+        );
+    } catch (error) {
+        syncStatus.failedRange ||= { fromBlock, toBlock: effectiveToBlock };
+        syncStatus.lastError = error.message;
+        throw error;
+    }
+    syncStatus.lastSuccessfulRange = { fromBlock, toBlock: effectiveToBlock, completedAt: new Date().toISOString() };
+    syncStatus.failedRange = null;
+    syncStatus.retryCount = 0;
+    syncStatus.lastError = null;
+    syncStatus.discoveredListings = stats.newListingIds;
+    syncStatus.persistedListings = stats.upserted;
     return { ...stats, latestBlock: latest, partialSync: effectiveToBlock < latest };
 }
 
@@ -263,3 +298,4 @@ module.exports = async function handler(req, res) {
 };
 module.exports.syncListings = async (opts = {}) => { init(); return syncListings(opts.fullRescan === true, opts.liteSync !== false); };
 module.exports.commitCoveredRange = commitCoveredRange;
+module.exports.getSyncStatus = () => ({ ...syncStatus });

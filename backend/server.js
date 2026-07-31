@@ -30,7 +30,7 @@ const express = require('express');
 const cors = require('cors');
 const sharp = require('sharp');
 
-const { healthCheck } = require('./db/pgClient');
+const { healthCheck, query } = require('./db/pgClient');
 const dbRouter = require('./routes/db');
 const { corsOptions, rateLimit, securityHeaders } = require('./middleware/security');
 
@@ -169,7 +169,7 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 
 // ── Health ─────────────────────────────────────────────────────────────────
 app.get('/api/health', async (req, res) => {
-    const snapshot = await collectHealthSnapshot({ healthCheck, rpcTargets: RPC_TARGETS });
+    const snapshot = await collectHealthSnapshot({ healthCheck, rpcTargets: RPC_TARGETS, query, syncRuntime: syncListings.getSyncStatus });
     res.set('Cache-Control', 'no-store, max-age=0');
 
     const wantsHtml = req.query.format !== 'json' && req.accepts(['html', 'json']) === 'html';
