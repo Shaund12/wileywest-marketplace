@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeNFTMetadata } from '../../src/utils/nftUtils.js';
-import { loadNFTMetadata, resolveImageUrl } from '../../src/utils/metadataLoader.js';
+import { fastResolveIPFS, loadNFTMetadata, resolveImageUrl } from '../../src/utils/metadataLoader.js';
 
 describe('metadata failure states', () => {
     it('keeps the canonical image empty when metadata has no image', () => {
@@ -35,5 +35,21 @@ describe('metadata failure states', () => {
 
         expect(result.primary).toBe('custom://collection/7');
         expect(result.fallbacks).toEqual([]);
+    });
+
+    it('canonicalizes repeated IPFS route segments without adding another prefix', async () => {
+        const cid = 'bafybeideh5xixahobrmnpfjscjmo76t3pjjjwhbbmaljd4mg6z4lp4f67u';
+
+        const result = await loadNFTMetadata('0x89e5d3b458b95a3f8bc67caa16ee14b38e5a7447', '0', null, {
+            name: 'Pixel Ninja Cats #0',
+            image: `/api/ipfs/ipfs/ipfs/${cid}`,
+        });
+
+        expect(result.image).toBe(`/api/ipfs/ipfs/${cid}`);
+        expect(result.imageUrl).toBe(`/api/ipfs/ipfs/${cid}`);
+    });
+
+    it('rejects a poisoned cached IPFS path after its CID has been lost', () => {
+        expect(fastResolveIPFS('/api/ipfs/ipfs/ipfs')).toBeNull();
     });
 });

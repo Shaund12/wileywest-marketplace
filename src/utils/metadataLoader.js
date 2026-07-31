@@ -96,9 +96,13 @@ const loadMetadataInternal = async (contractAddress, tokenId, provider, existing
     let loadingStrategy = 'unknown';
 
     try {
+        const existingImage = existingMetadata?.image || existingMetadata?.imageUrl || null;
+        const usableExistingImage = existingImage?.includes('/ipfs/')
+            ? fastResolveIPFS(existingImage)
+            : existingImage;
         // Strategy 1: Use existing metadata if provided and complete
-        if (existingMetadata?.name && existingMetadata?.image) {
-            metadata = existingMetadata;
+        if (existingMetadata?.name && usableExistingImage) {
+            metadata = { ...existingMetadata, image: usableExistingImage, imageUrl: usableExistingImage };
             loadingStrategy = 'provided';
         }
         
@@ -328,19 +332,22 @@ const fastNormalizeMetadata = (metadata, contractAddress, tokenId) => {
  * Enhanced IPFS resolution using multiple gateways for reliability
  * Prioritizes fast gateways but provides fallback URLs for robust loading
  */
-const fastResolveIPFS = (ipfsUrl) => {
+export const fastResolveIPFS = (ipfsUrl) => {
     if (!ipfsUrl) return null;
-    
-    let hash = ipfsUrl;
+
+    let path = ipfsUrl;
     if (ipfsUrl.startsWith('ipfs://')) {
-        hash = ipfsUrl.replace('ipfs://', '');
+        path = ipfsUrl.slice(7);
     } else if (ipfsUrl.includes('/ipfs/')) {
-        hash = ipfsUrl.split('/ipfs/')[1];
+        path = ipfsUrl.slice(ipfsUrl.indexOf('/ipfs/') + '/ipfs/'.length);
     }
-    
+
+    path = path.replace(/^(?:ipfs\/)+/i, '');
+    if (!path || path.toLowerCase() === 'ipfs') return null;
+
     // Return the most reliable gateway for immediate display
     // This aligns with ListingCard's successful gateway strategy
-    return `/api/ipfs/ipfs/${hash}`;
+    return `/api/ipfs/ipfs/${path}`;
 };
 
 /**
