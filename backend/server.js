@@ -47,6 +47,12 @@ const { collectHealthSnapshot, renderHealthPage } = require('./healthPage');
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '8787', 10);
+// Bind to loopback by default. nginx terminates TLS and proxies to
+// 127.0.0.1:8787, and it is what applies the per-IP rate limits and the
+// security response headers — so a backend listening on 0.0.0.0 would let
+// anything on the network reach the API with all of that bypassed.
+// Override with BIND_HOST only when something else fronts this process.
+const HOST = process.env.BIND_HOST || '127.0.0.1';
 
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback');
@@ -425,8 +431,8 @@ function startCrons() {
     setInterval(runPrewarm, 2 * 60 * 1000);
 }
 
-app.listen(PORT, () => {
-    console.log(`🚀 BlockDust backend listening on http://127.0.0.1:${PORT}`);
+app.listen(PORT, HOST, () => {
+    console.log(`🚀 BlockDust backend listening on http://${HOST}:${PORT}`);
     console.log(`   Serving SPA from: ${distDir}`);
     healthCheck().then((ok) => console.log(`   Postgres: ${ok ? 'connected ✅' : 'NOT reachable ❌ (set DATABASE_URL / create db)'}`));
     startCrons();
