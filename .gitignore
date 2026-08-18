@@ -1,27 +1,76 @@
+# ── Secrets ────────────────────────────────────────────────────────────────
+# Broad by design: a credential reaching a tracked file is the failure mode
+# this repo has already hit once. Allowlist the safe examples explicitly
+# rather than narrowing the patterns.
 .env
-# Environment variables should not be committed to the repository
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
+!.env.test
 
-# Build output
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+id_rsa*
+id_ecdsa*
+id_ed25519*
+*.jks
+*.keystore
+secrets.*
+*credentials*
+*.secret
+
+# Runtime env files referenced by the systemd unit; never in the repo.
+backend.env
+blockdust-backend.env
+
+# ── Dependencies & build output ────────────────────────────────────────────
+node_modules/
 dist/
 build/
+.vite/
+*.tsbuildinfo
 
-# Dependencies
-node_modules/
+# ── Test & coverage output ─────────────────────────────────────────────────
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
 
-# Temporary files
+# ── Logs ───────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+
+# ── Editor & OS noise ──────────────────────────────────────────────────────
+/.vs
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ── Temporary files ────────────────────────────────────────────────────────
 *.tmp
 *.temp
-/.vs
+.cache/
 
-# Local debugging artifacts (Playwright/agent screenshots, scratch notes)
+# ── Local agent/debugging artifacts ────────────────────────────────────────
 .playwright-mcp/
 .omo/
+.codegraph
+.superpowers/
 .debug-journal.md
+.claude/settings.local.json
+
+# Screenshots land in the repo root during debugging; keep real app images.
 *.png
 !src/**/*.png
 !public/**/*.png
