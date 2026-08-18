@@ -60,6 +60,7 @@ function PricingTransparencyPage() {
   const pct = formatPct(bps);
   const chainName = activeChain()?.name || 'the active chain';
   const hasVibe = chainHasFeature('vibe');
+  const symbol = activeChain()?.symbol || 'the native token';
 
   // Worked example, recomputed from whatever rate is in effect.
   const examplePlatformFee = (100 * bps) / 10000;
@@ -138,34 +139,34 @@ function PricingTransparencyPage() {
           </section>
 
           <section className="content-section">
-            <h2>100 VTRU Example</h2>
+            <h2>100 {symbol} Example</h2>
             <p>
               This example uses the {pct}% platform fee shown above and an illustrative 5% NFT
               royalty. The actual royalty is determined by the NFT contract.
             </p>
             <div className="example-box">
-              <h4>Seller proceeds from a 100 VTRU sale</h4>
+              <h4>Seller proceeds from a 100 {symbol} sale</h4>
               <div className="example-row">
                 <span>Sale price</span>
-                <span>100.000 VTRU</span>
+                <span>100.000 {symbol}</span>
               </div>
               <div className="example-row">
                 <span>Platform fee ({pct}%)</span>
-                <span>−{fmt(examplePlatformFee)} VTRU</span>
+                <span>−{fmt(examplePlatformFee)} {symbol}</span>
               </div>
               <div className="example-row">
                 <span>Illustrative creator royalty (5%)</span>
-                <span>−{fmt(exampleRoyalty)} VTRU</span>
+                <span>−{fmt(exampleRoyalty)} {symbol}</span>
               </div>
               <div className="example-row total-row">
                 <span><strong>Seller receives</strong></span>
-                <span><strong>{fmt(exampleSellerNet)} VTRU</strong></span>
+                <span><strong>{fmt(exampleSellerNet)} {symbol}</strong></span>
               </div>
             </div>
             <p className="note">
-              In this example, the buyer may be required to authorize {fmt(exampleBuyerTotal)} VTRU
-              plus gas: 100 VTRU price + {fmt(examplePlatformFee)} VTRU platform fee
-              + {fmt(exampleRoyalty)} VTRU royalty. The transaction screen
+              In this example, the buyer may be required to authorize {fmt(exampleBuyerTotal)} {symbol}
+              plus gas: 100 {symbol} price + {fmt(examplePlatformFee)} {symbol} platform fee
+              + {fmt(exampleRoyalty)} {symbol} royalty. The transaction screen
               and wallet confirmation show the amount to approve.
             </p>
           </section>

@@ -7,7 +7,8 @@
  * "allow all" policies), so a plain pooled connection is sufficient.
  *
  * Reuses the same local Postgres server as the sibling projects but a
- * SEPARATE database (`blockdust`). Override with DATABASE_URL in prod.
+ * SEPARATE database (`blockdust`). DATABASE_URL is required — there is no
+ * default connection string; see the note above getPool().
  */
 
 const pg = require('pg');
