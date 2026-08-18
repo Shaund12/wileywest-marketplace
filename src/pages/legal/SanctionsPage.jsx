@@ -14,21 +14,24 @@ function SanctionsPage() {
           <section className="content-section">
             <h2>What is Sanctions Screening?</h2>
             <p>
-              BlockDust implements sanctions screening to comply with U.S. and international
-              regulations, including OFAC (Office of Foreign Assets Control) requirements.
-              This helps ensure our platform is not used for illicit activities or by
-              sanctioned entities.
+              Sanctions screening checks a connecting wallet address against published
+              sanctions lists, including the OFAC (Office of Foreign Assets Control)
+              Specially Designated Nationals list. It is intended to reduce the risk that
+              this interface is used by sanctioned entities.
             </p>
           </section>
 
           <section className="content-section">
             <h2>When Are Checks Performed?</h2>
-            <p>We perform sanctions checks at the following touchpoints:</p>
+            <p>When screening is enabled, we check a wallet address at this touchpoint:</p>
             <ul>
-              <li><strong>Wallet Connection:</strong> When you connect your wallet to our platform</li>
-              <li><strong>Listing Creation:</strong> Before you can list an NFT for sale</li>
-              <li><strong>Purchase:</strong> Before completing a buy transaction</li>
+              <li><strong>Wallet Connection:</strong> when you connect your wallet to BlockDust</li>
             </ul>
+            <p className="note">
+              Screening applies to the BlockDust web interface only. It does not and cannot
+              restrict the underlying smart contracts, which are public and can be used
+              directly by anyone without going through this site.
+            </p>
           </section>
 
           <section className="content-section">
@@ -44,7 +47,7 @@ function SanctionsPage() {
             <ul>
               <li>Contact our compliance team at <a href="mailto:compliance@blockdust.xyz">compliance@blockdust.xyz</a></li>
               <li>Provide your wallet address and explanation</li>
-              <li>We will review your case within 3-5 business days</li>
+              <li>We will review your case and respond as promptly as we reasonably can</li>
             </ul>
           </section>
 
@@ -55,8 +58,7 @@ function SanctionsPage() {
             </p>
             <ul>
               <li>OFAC (Office of Foreign Assets Control) Specially Designated Nationals list</li>
-              <li>Third-party blockchain intelligence providers (when enabled)</li>
-              <li>Internal risk assessment database</li>
+              <li>A third-party screening provider, where one is configured</li>
             </ul>
           </section>
 
@@ -77,7 +79,7 @@ function SanctionsPage() {
             <ol>
               <li>Submit an appeal to <a href="mailto:compliance@blockdust.xyz">compliance@blockdust.xyz</a></li>
               <li>Include your wallet address and supporting documentation</li>
-              <li>Our compliance team will review within 3-5 business days</li>
+              <li>Our compliance team will review your submission</li>
               <li>You'll receive a response via email with next steps</li>
             </ol>
           </section>

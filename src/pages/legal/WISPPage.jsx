@@ -13,54 +13,51 @@ BlockDust maintains this Written Information Security Program (WISP) to protect 
 ## 2. Data We Collect
 
 - Wallet addresses (public blockchain data)
-- Transaction history (on-chain data)
-- Optional: Email addresses for notifications
-- IP addresses for security purposes
+- Transaction and listing data mirrored from the blockchain
+- Server request logs, including IP addresses, for security and abuse prevention
+- Email addresses only when you voluntarily submit them (for example, in a DMCA notice or a support request)
 
 ## 3. Security Measures
 
 ### Technical Safeguards
-- End-to-end encryption for sensitive communications
-- Secure API endpoints with rate limiting
-- Regular security audits and penetration testing
-- Multi-factor authentication for admin access
+- Parameterized SQL for all database access
+- A strict server-side allowlist controlling which tables, columns, and functions are reachable from the browser
+- Rate limiting on API, RPC, IPFS, and media endpoints
+- Security response headers, including X-Frame-Options: DENY
+- Allowlisted upstream proxies for blockchain RPC and IPFS requests
+- Transport encryption (HTTPS) in production
 
 ### Administrative Safeguards
-- Employee security training
-- Access control policies
+- Access control policies for production systems
 - Incident response procedures
-- Regular policy reviews
-
-### Physical Safeguards
-- Cloud infrastructure with SOC 2 compliance
-- Encrypted data at rest and in transit
-- Redundant backups
+- Periodic review of this program
 
 ## 4. Data Retention
 
-- Transaction data: Retained indefinitely (blockchain immutability)
-- User preferences: Retained while account is active
-- Logs: Retained for 90 days
+- On-chain transaction data: permanent and outside our control (blockchain immutability)
+- Database records mirroring on-chain state: retained while the listing or collection remains relevant
+- Server logs: retained only as long as needed for security and operational purposes
 
 ## 5. Third-Party Services
 
-- Supabase: Database and authentication
-- Vercel: Hosting and edge functions
-- Vitruveo: Blockchain network
+- Self-hosted PostgreSQL: application database
+- Self-hosted Express and nginx: application server and static hosting
+- Hyve and Vitruveo: blockchain networks
+- Public IPFS gateways: retrieval of NFT metadata and media
 
 ## 6. Incident Response
 
 In the event of a security incident:
-1. Immediate containment and assessment
-2. User notification within 72 hours
-3. Investigation and remediation
+1. Containment and assessment
+2. Investigation and remediation
+3. Notification of affected users and any applicable regulators, as required by law and without unreasonable delay
 4. Post-incident review
 
 ## 7. Contact
 
 For security concerns: security@blockdust.xyz
 
-**Last Updated:** January 2025
+**Last Updated:** August 2026
 **Version:** 1.0`;
 
 function WISPPage() {
@@ -96,9 +93,14 @@ function WISPPage() {
         console.warn('[WISP] Database error, using default content:', error.message);
         setContent(DEFAULT_WISP_CONTENT);
         setUsingFallback(true);
-      } else {
-        setContent(data?.content_md || DEFAULT_WISP_CONTENT);
+      } else if (data?.content_md) {
+        setContent(data.content_md);
         setUsingFallback(false);
+      } else {
+        // legal_docs is not a live table (see SOFT_MISSING in backend/routes/db.js),
+        // so an empty result is the normal case, not an error.
+        setContent(DEFAULT_WISP_CONTENT);
+        setUsingFallback(true);
       }
     } catch (error) {
       console.error('[WISP] Failed to load:', error);
@@ -180,7 +182,7 @@ function WISPPage() {
             marginBottom: '1.5rem'
           }}>
             <p style={{ color: 'rgba(255, 255, 255, 0.9)', margin: 0 }}>
-              📄 Displaying default WISP document. For the latest version, ensure Supabase is configured.
+              📄 Displaying the built-in version of this document.
             </p>
           </div>
         )}
