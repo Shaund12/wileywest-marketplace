@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "schema": "psql \"${DATABASE_URL:-postgresql://USER:PASSWORD@127.0.0.1:5432/blockdust}\" -f db/schema.sql"
+    "schema": "psql \"${DATABASE_URL:?set DATABASE_URL first}\" -f db/schema.sql"
   },
   "dependencies": {
     "cors": "^2.8.5",

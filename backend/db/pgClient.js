@@ -12,9 +12,16 @@
 
 const pg = require('pg');
 
-const connectionString =
-    process.env.DATABASE_URL ||
-    'postgresql://USER:PASSWORD@127.0.0.1:5432/blockdust';
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+    throw new Error(
+        'DATABASE_URL is not set. Configure it in the systemd unit ' +
+        '(EnvironmentFile) or your shell before starting the backend. ' +
+        'There is deliberately no default: a hardcoded fallback put a ' +
+        'real credential into this file once already.'
+    );
+}
 
 const pool = new pg.Pool({ connectionString, max: 10 });
 

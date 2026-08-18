@@ -22,7 +22,9 @@ RestartSec=5
 
 # --- Configuration (edit these) ---
 Environment=PORT=8787
-Environment=DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/blockdust
+# Keep the connection string out of this file — it is tracked in git.
+# Put DATABASE_URL=... in /etc/blockdust/backend.env (root-owned, chmod 0600).
+EnvironmentFile=/etc/blockdust/backend.env
 Environment=VITE_RPC_URL=https://rpc.hyvechain.com
 # Default production chain: Hyve (7847).
 Environment=VITE_MARKETPLACE_ADDRESS=0x89610b27E8f5685681666edf901Ad5c69d89DfB6
