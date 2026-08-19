@@ -128,10 +128,12 @@ describe('feature gating', () => {
         }
     });
 
-    it('enables auctions on both chains', async () => {
+    // Auctions are off on both chains: the deployed marketplace escrows the
+    // NFT and the bid funds, and the replacement contract drops them.
+    it('disables auctions on both chains', async () => {
         const { chainHasFeature } = await loadChains();
-        expect(chainHasFeature('auctions', HYVE)).toBe(true);
-        expect(chainHasFeature('auctions', VITRUVEO)).toBe(true);
+        expect(chainHasFeature('auctions', HYVE)).toBe(false);
+        expect(chainHasFeature('auctions', VITRUVEO)).toBe(false);
     });
 
     it('returns false for unknown features and unknown chains', async () => {

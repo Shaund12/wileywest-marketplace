@@ -56,6 +56,7 @@ import { WagmiProvider } from 'wagmi';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { wagmiAdapter } from './config/appkit';
 import { activeChain, chainHasFeature } from './config/chains.js';
+import { isAuctionsEnabled } from './utils/featureFlags';
 
 const _activeChain = activeChain();
 const rpcUrl = _activeChain.rpcUrl;
@@ -350,10 +351,13 @@ function App() {
                                                             {/* NFT detail routes */}
                                                             <Route path="/nft/:contractAddress/:tokenId" element={<NFTDetailPage />} />
 
-                                                            {/* Auction routes - always enabled */}
-                                                            <Route path="/auctions/create" element={<CreateAuctionPage />} />
-                                                            <Route path="/auctions/:id" element={<AuctionDetailPage />} />
-                                                            <Route path="/my-auctions" element={<MyAuctionsRedirect />} />
+                                                            {/* Auctions are disabled: the deployed marketplace escrows the
+                                                                NFT and the bid funds, and the replacement contract drops
+                                                                them entirely. Redirect rather than render, so the pages are
+                                                                not reachable by typing the URL. */}
+                                                            <Route path="/auctions/create" element={isAuctionsEnabled() ? <CreateAuctionPage /> : <Navigate to="/sell" replace />} />
+                                                            <Route path="/auctions/:id" element={isAuctionsEnabled() ? <AuctionDetailPage /> : <Navigate to="/" replace />} />
+                                                            <Route path="/my-auctions" element={isAuctionsEnabled() ? <MyAuctionsRedirect /> : <Navigate to="/profile" replace />} />
                                                             <Route path="/admin/paths" element={<Navigate to="/" replace />} />
                                                             {/* VIBE is Vitruveo-only — on chains without it (Hyve), redirect home */}
                                                             <Route path="/vibe-dashboard" element={chainHasFeature('vibe') ? <VibeDashboardPage /> : <Navigate to="/" replace />} />

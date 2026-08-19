@@ -1,6 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
 import { useSearchParams, Link } from 'react-router-dom';
+import { isAuctionsEnabled } from '../utils/featureFlags';
 import { useMarketplace } from '../context/MarketplaceContext';
 import { useWallet } from '../context/WalletContext';
 import { useSupabase } from '../context/SupabaseContext';
@@ -1273,9 +1274,11 @@ function SellPage() {
                     <p className="options-intro">Choose how you want to sell:</p>
                     <div className="sell-buttons">
                         <span className="current-option">📋 Fixed Price Listing</span>
-                        <Link to="/auctions/create" className="alt-option">
-                            🔨 Create Auction
-                        </Link>
+                        {isAuctionsEnabled() && (
+                            <Link to="/auctions/create" className="alt-option">
+                                🔨 Create Auction
+                            </Link>
+                        )}
                     </div>
                 </div>
             </div>

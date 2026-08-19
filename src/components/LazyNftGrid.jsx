@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { isAuctionsEnabled } from '../utils/featureFlags';
 import { getCachedMetadata, getProxyImageUrl, batchPrewarm } from '../utils/edgeCacheUtils';
 import { debugLog, debugWarn } from '../utils/debugUtils';
 import { isVShareContract, getVShareMetadata, vShareLpSvgDataUrl } from '../utils/vShareUtils';
@@ -337,7 +338,7 @@ function LazyNftGrid({
                                 >
                                     List for Sale
                                 </button>
-                                <button
+                                {isAuctionsEnabled() && <button
                                     className="secondary-button full-width"
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -346,7 +347,7 @@ function LazyNftGrid({
                                     style={{ marginTop: '0.5rem' }}
                                 >
                                     Create Auction
-                                </button>
+                                </button>}
                             </div>
                         )}
                     </div>
@@ -412,12 +413,12 @@ function LazyNftGrid({
                             >
                                 List for Sale
                             </button>
-                            <button
+                            {isAuctionsEnabled() && <button
                                 className="secondary-button"
                                 onClick={() => navigate(`/auctions/create?contract=${nft.contractAddress}&tokenId=${nft.tokenId}`)}
                             >
                                 Create Auction
-                            </button>
+                            </button>}
                             <button
                                 className="secondary-button"
                                 onClick={(e) => {

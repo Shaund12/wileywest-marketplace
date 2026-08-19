@@ -47,7 +47,7 @@ export const CHAINS = {
       revShare: false,
       wvtru: false,
       uniswapPricing: false,
-      auctions: true,
+      auctions: false,
     },
     // Vitruveo-only addresses are absent on Hyve.
     addresses: {},
@@ -71,7 +71,7 @@ export const CHAINS = {
       revShare: true,
       wvtru: true,
       uniswapPricing: true,
-      auctions: true,
+      auctions: false,
     },
     // Vitruveo-specific contract addresses (legacy env vars still honored).
     addresses: {

@@ -1,6 +1,7 @@
 // HomePage.jsx
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
+import { isAuctionsEnabled } from '../utils/featureFlags';
 import { ethers } from 'ethers';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, TrendingUp, Users, DollarSign, BarChart3, RefreshCw } from 'lucide-react';
@@ -1028,9 +1029,11 @@ function HomePage() {
                             <Button asChild variant="neon" size="lg" className="btn-hover-glow">
                                 <Link to="/sell">List Your NFT</Link>
                             </Button>
-                            <Button asChild variant="neon-pink" size="lg" className="btn-hover-glow">
-                                <Link to="/auctions/create">Create Auction</Link>
-                            </Button>
+                            {isAuctionsEnabled() && (
+                                <Button asChild variant="neon-pink" size="lg" className="btn-hover-glow">
+                                    <Link to="/auctions/create">Create Auction</Link>
+                                </Button>
+                            )}
                             <Button
                                 variant="ghost"
                                 size="lg"
@@ -1277,10 +1280,10 @@ function HomePage() {
                         icon="🏷️"
                         title="No Live Auctions"
                         description="Create or participate in auctions to see them here."
-                        actionText="Create Auction"
-                        onAction={() => (window.location.href = '/auctions/create')}
-                        secondaryActionText="View All Auctions"
-                        onSecondaryAction={() => (window.location.href = '/my-auctions')}
+                        actionText={isAuctionsEnabled() ? "Create Auction" : undefined}
+                        onAction={isAuctionsEnabled() ? () => (window.location.href = '/auctions/create') : undefined}
+                        secondaryActionText={isAuctionsEnabled() ? "View All Auctions" : undefined}
+                        onSecondaryAction={isAuctionsEnabled() ? () => (window.location.href = '/my-auctions') : undefined}
                     />
                 )}
             </motion.section>

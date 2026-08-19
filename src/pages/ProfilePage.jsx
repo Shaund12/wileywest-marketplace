@@ -2808,12 +2808,14 @@ function ProfilePage() {
                                     >
                                         Create a Listing
                                     </button>
-                                    <button
-                                        className="secondary-button"
-                                        onClick={() => navigate('/auctions/create')}
-                                    >
-                                        Create Auction
-                                    </button>
+                                    {isAuctionsEnabled() && (
+                                        <button
+                                            className="secondary-button"
+                                            onClick={() => navigate('/auctions/create')}
+                                        >
+                                            Create Auction
+                                        </button>
+                                    )}
                                 </div>
                             </div>
                         )}

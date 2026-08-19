@@ -11,6 +11,7 @@ import { Button } from './ui/button';
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { cn } from '../lib/utils';
 import { chainHasFeature, activeChain } from '../config/chains.js';
+import { isAuctionsEnabled } from '../utils/featureFlags';
 import { useTheme } from '../context/ThemeContext';
 import logo from '../assets/blockdust-logo.png';
 import {
@@ -233,7 +234,7 @@ export default function Navigation() {
         { to: "/marketplace", label: "Marketplace" },
         { to: "/explore", label: "Explore NFTs" },
         { to: "/sell", label: "Sell NFT" },
-        { to: "/auctions/create", label: "Create Auction" },
+        ...(isAuctionsEnabled() ? [{ to: "/auctions/create", label: "Create Auction" }] : []),
         // VIBE is a Vitruveo-only feature — hide it on chains without it (Hyve).
         ...(chainHasFeature('vibe') ? [{ to: "/vibe-dashboard", label: "VIBE" }] : []),
     ];
