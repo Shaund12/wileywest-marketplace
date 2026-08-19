@@ -1,0 +1,10 @@
+node_modules/
+cache/
+.openzeppelin/
+
+# Build output for the new contract. The legacy VTRUNFTMarketplace.sol
+# artifacts are committed deliberately — scripts/deploy-marketplace.mjs
+# reads bytecode from them, and there is no source to rebuild them from.
+artifacts/contracts/
+artifacts/build-info/
+artifacts/@openzeppelin/
