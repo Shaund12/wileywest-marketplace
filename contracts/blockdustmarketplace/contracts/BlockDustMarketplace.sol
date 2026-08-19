@@ -59,6 +59,13 @@ contract BlockDustMarketplace is
     uint16  public vibeShareBps;
     address public feeRecipient;
 
+    /// @notice Ceiling on the ERC-2981 royalty a listed NFT may claim, in bps.
+    /// @dev royaltyInfo() is answered by the NFT contract, which the seller
+    ///      does not necessarily control. Without a cap, a hostile collection
+    ///      can name a royalty just under the sale price and take nearly the
+    ///      whole payment while the sale still "succeeds".
+    uint16 public maxRoyaltyBps;
+
     IVibeFeeProcessor public feeProcessor;
 
     // ---------- Listings ----------
@@ -77,7 +84,7 @@ contract BlockDustMarketplace is
 
     /// @dev Storage gap so future versions can add state without colliding
     ///      with anything appended below in an upgrade.
-    uint256[45] private __gap;
+    uint256[44] private __gap;
 
     // ---------- Events ----------
     event ListingCreated(
@@ -138,6 +145,7 @@ contract BlockDustMarketplace is
         uint256 amount
     );
     event PlatformFeeUpdated(uint256 newBps);
+    event MaxRoyaltyUpdated(uint16 newBps);
     event FeeRecipientUpdated(address newRecipient);
     event VibeShareUpdated(uint16 newBps);
     event FeeProcessorUpdated(address processor);
@@ -162,6 +170,7 @@ contract BlockDustMarketplace is
         // is a footgun, so the safe value is set here instead.
         platformFeeBps = 250; // 2.5%
         vibeShareBps = 0;
+        maxRoyaltyBps = 1000; // 10%
 
         _nextListingId = 1;
     }
@@ -178,6 +187,11 @@ contract BlockDustMarketplace is
         require(bps <= 1000, "fee too high");
         platformFeeBps = bps;
         emit PlatformFeeUpdated(bps);
+    }
+    function setMaxRoyaltyBps(uint16 bps) external onlyOwner {
+        require(bps <= 10_000, "bad bps");
+        maxRoyaltyBps = bps;
+        emit MaxRoyaltyUpdated(bps);
     }
     function setVibeShareBps(uint16 bps) external onlyOwner {
         require(bps <= 10_000, "bad bps");
@@ -289,6 +303,13 @@ contract BlockDustMarketplace is
         FeeCtx memory f;
         f.platformFee = (totalPrice * platformFeeBps) / 10_000;
         (f.royaltyReceiver, f.royaltyAmount) = _royaltyInfo(l.nftContract, l.tokenId, totalPrice);
+
+        // Clamp rather than revert: a seller should still be able to sell an
+        // NFT whose collection reports an unreasonable royalty, and the buyer
+        // pays the listed price either way.
+        uint256 royaltyCap = (totalPrice * maxRoyaltyBps) / 10_000;
+        if (f.royaltyAmount > royaltyCap) f.royaltyAmount = royaltyCap;
+
         require(f.platformFee + f.royaltyAmount <= totalPrice, "fees exceed price");
         f.sellerProceeds = totalPrice - f.platformFee - f.royaltyAmount;
 

@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC1155} from "@openzeppelin/contracts/token/ERC1155/ERC1155.sol";
 import {IERC2981} from "@openzeppelin/contracts/interfaces/IERC2981.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
@@ -45,4 +46,9 @@ contract MockFeeProcessor {
     function forwardNative() external payable returns (uint256) { return msg.value; }
     function convertHeldERC20ToVTRUAndForward(address, uint256 amountIn)
         external pure returns (uint256, uint256) { return (amountIn, amountIn); }
+}
+
+contract Mock1155 is ERC1155 {
+    constructor() ERC1155("") {}
+    function mint(address to, uint256 id, uint256 amt) external { _mint(to, id, amt, ""); }
 }
